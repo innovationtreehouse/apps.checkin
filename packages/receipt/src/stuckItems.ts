@@ -11,7 +11,8 @@ import { stuckSince, stuckUndelivered } from "./repositories/receipt";
 const FLOW = "flow";
 const PUSH = "push to mapping";
 const OUTCOME_EMAIL = "outcome email";
-const MAIL_MESSAGE = "mail message";
+/** The Problems list's step for a captured email left unprocessed. */
+export const MAIL_MESSAGE = "mail message";
 
 /** How long a captured email or a queued receipt waits before the Problems list shows it: past one daily run. */
 export const WAITING_NOTICE_MS = 25 * 60 * 60_000;
@@ -25,19 +26,22 @@ const STUCK_IN = {
 export const STILL_STUCK = "Retried, and it failed again; the receipt's page shows why";
 
 /**
- * Captured emails unprocessed more than WAITING_NOTICE_MS after capture and still inside their stored copy's
- * retention, which a replay can still process.
+ * Captured emails unprocessed more than WAITING_NOTICE_MS after capture, including those whose stored copy
+ * has expired: they stay listed until a person dismisses them.
  */
 const stuckMail = (orgId: string, now = Date.now()): Prisma.ReceiptMailMessageWhereInput => ({
   orgId,
   processedAt: null,
-  capturedAt: { lt: new Date(now - WAITING_NOTICE_MS), gt: new Date(now - rawMailRetentionDays() * DAY_MS) },
+  capturedAt: { lt: new Date(now - WAITING_NOTICE_MS) },
 });
+
+/** Whether a captured email's stored copy is past retention, by the same rule a replay applies. */
+const copyExpired = (capturedAt: Date, now = Date.now()): boolean => now - capturedAt.getTime() >= rawMailRetentionDays() * DAY_MS;
 
 /**
  * Receipts stuck in the flow (`flow_error`) or finalized and not delivered to mapping, timed by
  * `stuckSince`; outcome emails that failed to send, timed by their first failure; and captured
- * emails left unprocessed, timed from capture.
+ * emails left unprocessed, timed from capture and marked `expired` once their stored copy is gone.
  */
 export async function stuckItems(): Promise<StuckItem[]> {
   const orgId = await getOrgId();
@@ -50,14 +54,17 @@ export async function stuckItems(): Promise<StuckItem[]> {
   return [
     ...steps.flatMap((step, i) => [...since[i]].map(([id, failedAt]) => ({ id, step, href: `/receipts/${id}`, failedAt }))),
     ...notices.flatMap((n) => (n.firstFailedAt ? [{ id: String(n.id), step: OUTCOME_EMAIL, href: `/receipts/${n.receiptId}`, failedAt: n.firstFailedAt }] : [])),
-    ...mail.map((m) => ({ id: String(m.id), step: MAIL_MESSAGE, href: "/receipts/mail", failedAt: m.capturedAt })),
+    ...mail.map((m) => ({ id: String(m.id), step: MAIL_MESSAGE, href: "/receipts/mail", failedAt: m.capturedAt, ...(copyExpired(m.capturedAt) && { expired: true }) })),
   ];
 }
 
 /** What a replay from the Problems list that left the email unprocessed answers, with no error text. */
 export const MAIL_STILL_STUCK = "Processed again, and it is still not done";
 
-/** Replays one stuck captured email; 404 unless it is listed, 409 when it is still not processed afterwards. */
+/**
+ * Replays one stuck captured email; 404 unless it is listed, 409 when it is still not processed afterwards,
+ * carrying the expiry message when its stored copy has expired.
+ */
 async function retryMail(id: string, by: ProblemRetrier | null): Promise<void> {
   const messageId = Number(id);
   const stuck = Number.isInteger(messageId) && (await db.receiptMailMessage.count({ where: { id: messageId, ...stuckMail(await getOrgId()) } })) > 0;

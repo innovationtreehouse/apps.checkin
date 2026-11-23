@@ -37,6 +37,7 @@ function afterMerge(over: Partial<ReceiptConfig> = {}): void {
     households,
     submitterConfirmations: {
       awaiting: async () => awaiting,
+      awaitingFor: async (ids) => awaiting.filter((a) => ids.includes(a.reimburseePersonId)),
       confirm: async (_id, reimburseeId) => {
         confirmedFor.push(reimburseeId);
         return true;
@@ -228,7 +229,7 @@ describeDb("after merging A into B", () => {
   });
 
   it("the Board cannot confirm on behalf of a reimbursee who names nobody live", async () => {
-    const noAccount = { reimbursees: { ...inertReimbursees, hasAccount: async () => false } };
+    const noAccount = { reimbursees: { ...inertReimbursees, withoutAccount: async (ids: number[]) => ids } };
     const id = await aliceIn("submitter_review", { needsReimbursement: true });
     await db.receipt.update({ where: { id }, data: { uploadedByUserId: BOB.id, reimburseePersonId: GONE } });
     afterMerge(noAccount);

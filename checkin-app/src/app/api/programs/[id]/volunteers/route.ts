@@ -7,8 +7,15 @@ import { apiError } from "@/lib/api-response";
 import { isKnownAdult } from "@/lib/programAge";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
-import { httpError, isComponentHttpError, parseId, ServiceError } from "@checkin/component-kit";
+import { isComponentHttpError, parseId, ServiceError } from "@checkin/component-kit";
 import { personActor, recordAudit } from "@/lib/auditActor";
+import { emailAfterAssignment, gatePositionCheck } from "@/lib/membership/positionCheck";
+import { parseParticipantId, readObjectBody } from "@/app/api/programs/[id]/requestBody";
+
+/** A ServiceError's answer, keeping its code so the picker can ask for the check acknowledgement. */
+function serviceErrorResponse(error: ServiceError) {
+    return NextResponse.json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, { status: error.status });
+}
 
 /**
  * A volunteer row confers volunteer standing and core grants scopes over enrolled
@@ -22,12 +29,6 @@ async function refuseOwnHousehold(actorId: number, personId: number, programId: 
     return refused ? apiError(SELF_GRANT_REFUSAL_MESSAGE, 403) : null;
 }
 
-function parseParticipantId(raw: unknown): number {
-    if (raw === undefined || raw === null) throw httpError(400, "participantId is required");
-    if (typeof raw !== "number") throw httpError(400, "Invalid participantId");
-    return parseId(String(raw), "participantId");
-}
-
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
     const { id } = await params;
@@ -35,8 +36,9 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
     try {
         const programId = parseId(id, "program ID");
 
-        const body = await req.json();
+        const body = await readObjectBody(req);
         const participantId = parseParticipantId(body.participantId);
+        const { acknowledgeCheck } = body;
 
         const currentProgram = await prisma.program.findUnique({ where: { id: programId } });
         if (!currentProgram) {
@@ -56,7 +58,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
         // No eligibility gate (age/membership): a plain volunteer can be anyone.
         // Being made core (PATCH) is what requires a known adult.
-        const assignment = await prisma.$transaction(async (tx) => {
+        const { assignment, ackId } = await prisma.$transaction(async (tx) => {
             await lockLiveHouseholdsOf(tx, [participantId]);
             const created = await tx.programVolunteer.create({
                 data: {
@@ -72,8 +74,10 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
                 secondaryAffectedEntity: programId,
                 newData: created
             });
-            return created;
+            const ackId = await gatePositionCheck(tx, { personId: participantId, position: 'PROGRAM_VOLUNTEER', programId, actorId: currentUserId, acknowledged: acknowledgeCheck === true });
+            return { assignment: created, ackId };
         });
+        await emailAfterAssignment(ackId === null ? [] : [ackId], currentUserId);
 
         return NextResponse.json({ success: true, assignment });
     } catch (error) {
@@ -83,7 +87,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // P2002 = unique violation on @@id([programId, participantId]). Benign
         // double-submit re-assigns the same volunteer; 409 instead of 500.
         if (error instanceof ServiceError) {
-            return apiError(error.message, error.status);
+            return serviceErrorResponse(error);
         }
         if (isPrismaError(error, 'P2002')) {
             return apiError("Participant is already a volunteer for this program.", 409);
@@ -105,7 +109,7 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
     try {
         const programId = parseId(id, "program ID");
 
-        const body = await req.json();
+        const body = await readObjectBody(req);
         const participantId = parseParticipantId(body.participantId);
 
         const currentProgram = await prisma.program.findUnique({ where: { id: programId } });
@@ -155,20 +159,18 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
     const { id } = await params;
 
     try {
-        const programId = parseInt(id, 10);
-        if (isNaN(programId)) {
-            return apiError("Invalid program ID", 400);
-        }
+        const programId = parseId(id, "program ID");
 
-        const body = await req.json();
-        const { participantId, isCore } = body;
+        const body = await readObjectBody(req);
+        const { isCore, acknowledgeCheck } = body;
 
-        if (!participantId || isCore === undefined) {
+        if (!body.participantId || isCore === undefined) {
             return apiError("participantId and isCore are required", 400);
         }
-        if (typeof participantId !== 'number' || typeof isCore !== 'boolean') {
+        if (typeof body.participantId !== 'number' || typeof isCore !== 'boolean') {
             return apiError("participantId must be a number and isCore a boolean", 400);
         }
+        const participantId = parseParticipantId(body.participantId);
 
         const currentProgram = await prisma.program.findUnique({ where: { id: programId } });
         if (!currentProgram) {
@@ -196,8 +198,12 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
             }
         }
 
-        const assignment = await prisma.$transaction(async (tx) => {
+        const { assignment, ackId } = await prisma.$transaction(async (tx) => {
             if (isCore) await lockLiveHouseholdsOf(tx, [participantId]);
+            const before = await tx.programVolunteer.findUnique({
+                where: { programId_personId: { programId, personId: participantId } },
+                select: { isCore: true }
+            });
             const updated = await tx.programVolunteer.update({
                 where: {
                     programId_personId: {
@@ -216,13 +222,21 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
                 secondaryAffectedEntity: programId,
                 newData: updated
             });
-            return updated;
+            const becameCore = isCore && before?.isCore === false;
+            const ackId = becameCore
+                ? await gatePositionCheck(tx, { personId: participantId, position: 'CORE_VOLUNTEER', programId, actorId: currentUserId, acknowledged: acknowledgeCheck === true })
+                : null;
+            return { assignment: updated, ackId };
         });
+        await emailAfterAssignment(ackId === null ? [] : [ackId], currentUserId);
 
         return NextResponse.json({ success: true, assignment });
     } catch (error) {
-        if (error instanceof ServiceError) {
+        if (isComponentHttpError(error)) {
             return apiError(error.message, error.status);
+        }
+        if (error instanceof ServiceError) {
+            return serviceErrorResponse(error);
         }
         logger.error("Volunteer toggle error:", error);
         return apiError("Failed to toggle volunteer", 500);

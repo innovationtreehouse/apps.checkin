@@ -40,7 +40,7 @@ beforeEach(() => {
         { job: 'nightly', _max: { finishedAt: LAST_SUCCESS } },
     ]);
     prisma.cronRunLog.findMany = jest.fn().mockResolvedValue([]);
-    prisma.boardSettings.findUnique = jest.fn().mockResolvedValue({ alertEmailAddress: null });
+    prisma.boardSettings.findUnique = jest.fn().mockResolvedValue({ financeAlertEmailAddress: null, boardEmailAddress: 'board@example.org' });
 });
 
 const req = () => new Request('http://localhost/api/system-status/config-health');
@@ -69,7 +69,7 @@ describe('GET /api/system-status/config-health — auth gate', () => {
         // Never leaks secret values — only booleans + labels + detail.
         for (const c of body.checks) {
             expect(typeof c.ok).toBe('boolean');
-            expect(Object.keys(c).sort()).toEqual(['detail', 'id', 'label', 'ok']);
+            expect(Object.keys(c).filter((k) => k !== 'href').sort()).toEqual(['detail', 'id', 'label', 'ok']);
         }
     });
 
@@ -78,10 +78,19 @@ describe('GET /api/system-status/config-health — auth gate', () => {
         expect(res.status).toBe(200);
     });
 
-    it('reports an unset alert address as a failing check', async () => {
+    it('reports each unset Settings → Email address as a failing check linking to the page', async () => {
         const res = await call({ type: 'session', user: { isSysadmin: false, isBoardMember: true } });
         const body = await res.json();
-        expect(body.checks).toContainEqual(expect.objectContaining({ id: 'alert-address', ok: false }));
+        const addressChecks = body.checks
+            .filter((c: { href?: string }) => c.href === '/settings/email')
+            .map(({ id, ok }: { id: string; ok: boolean }) => ({ id, ok }));
+        expect(addressChecks).toEqual([
+            { id: 'finance-alert-address', ok: false },
+            { id: 'board-address', ok: true },
+            { id: 'sysadmin-address', ok: false },
+            { id: 'bg-reviewer-address', ok: false },
+            { id: 'finance-contact-address', ok: false },
+        ]);
     });
 
     it('carries the cron run ledger alongside the config checks', async () => {

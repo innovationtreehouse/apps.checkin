@@ -1,4 +1,5 @@
 import prisma from "./prisma";
+import { householdLeadsWhere } from "./household/leads";
 import { runPaced } from "./email";
 import { formatTime, formatDate } from "./time";
 import { resolveDisplayTimezone } from "./appSettings";
@@ -164,7 +165,7 @@ export async function sendCheckinNotifications(participantId: number, type: 'che
         // 2. Notify household leads if the participant is in a household
         if (participant.householdId) {
             const householdLeads = await prisma.person.findMany({
-                where: { householdId: participant.householdId, isHouseholdLead: true },
+                where: householdLeadsWhere(participant.householdId),
                 select: {
                     id: true,
                     email: true,

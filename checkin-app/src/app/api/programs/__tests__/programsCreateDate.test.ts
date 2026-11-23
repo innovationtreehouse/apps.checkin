@@ -14,6 +14,7 @@ import { POST } from '@/app/api/programs/route';
 import { getServerSession } from 'next-auth/next';
 import { formatDateOnly } from '@/lib/time';
 import prisma from '@/lib/prisma';
+import { LEADER_NEEDS_EMAIL } from '@/lib/programs/leaderEligibility';
 import { ArchivedHouseholdError, lockLiveHouseholdsOf } from '@/lib/household/archiveGuard';
 
 // The archived-household guard has its own tests; here every household is live.
@@ -58,7 +59,7 @@ const mockAuditLogCreate = jest.fn().mockResolvedValue({});
 jest.mock('@/lib/prisma', () => {
     const db = {
         person: {
-            findUnique: jest.fn().mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true }),
+            findUnique: jest.fn().mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true, email: 'lead@example.com' }),
         },
         household: {
             count: jest.fn().mockResolvedValue(1),
@@ -99,6 +100,14 @@ describe('POST /api/programs — name', () => {
     ])('refuses %s', async (_label, name) => {
         const res = await post(name);
         expect(res.status).toBe(400);
+        expect(mockProgramCreate).not.toHaveBeenCalled();
+    });
+
+    it('refuses a leader with no email on file, creating nothing', async () => {
+        (prisma.person.findUnique as jest.Mock).mockResolvedValueOnce({ dateOfBirth: null, isDeclaredAdult: true, email: null });
+        const res = await post('Woodshop');
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe(LEADER_NEEDS_EMAIL);
         expect(mockProgramCreate).not.toHaveBeenCalled();
     });
 

@@ -21,16 +21,27 @@ export async function upload<T>(form: FormData): Promise<T> {
   return receipt;
 }
 
+/** What a saved step that ran the intake flow shows when the flow failed after it. */
+export const FLOW_FAILED_MESSAGE = "The receipt's next step failed. It is listed under Problems, where finance can restart it.";
+
+/** The red chip for a step that saved and whose intake flow then left the receipt in `flow_error`. */
+export function showFlowFailed(success: string): void {
+  showError(FLOW_FAILED_MESSAGE, { title: `${success}, but the next step failed` });
+}
+
 /**
  * Sends a write, toasts the outcome, and reports whether it succeeded. A success tells the
  * host nav to refetch its pills, since a write can move a receipt into or out of the caller's hands.
  * A failure stays on screen until dismissed, titled `failed` with the server's reason below it.
+ * With `runsFlow`, a saved write that answers with the receipt in `flow_error` raises the red
+ * flow-failed chip in place of the green one.
  */
-export async function send(path: string, method: string, body: unknown, success: string, failed: string): Promise<boolean> {
+export async function send(path: string, method: string, body: unknown, success: string, failed: string, { runsFlow = false } = {}): Promise<boolean> {
   try {
-    await api(path, { method, body: JSON.stringify(body) });
+    const answer = await api<{ state?: string } | null>(path, { method, body: JSON.stringify(body) });
     notifyNavCounts();
-    showSuccess(success);
+    if (runsFlow && answer?.state === "flow_error") showFlowFailed(success);
+    else showSuccess(success);
     return true;
   } catch (err) {
     showError(errorMessage(err), { title: failed });

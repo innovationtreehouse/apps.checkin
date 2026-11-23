@@ -8,7 +8,7 @@ jest.mock("next/navigation", () => ({ useParams: () => ({ id: "7" }), useRouter:
 const mockShow = jest.fn();
 const mockApi = jest.fn();
 
-jest.mock("@mantine/notifications", () => ({ notifications: { show: (...args: unknown[]) => mockShow(...args), update: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: (...args: unknown[]) => mockShow(...args), update: jest.fn(), hide: jest.fn() } }));
 let mockIsManager = true;
 let mockIsBoard = false;
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1, isInventoryManager: mockIsManager, isBoardMember: mockIsBoard } } }) }));
@@ -276,10 +276,15 @@ describe("the receiving page for one receipt", () => {
 
     /**
      * Opens the Wood glue line's associate panel and searches. The shared catalog search fetches
-     * directly, so `results` (or an `HttpError`'s status and message) answers through `fetch`.
+     * directly, so `results` (or an `HttpError`'s status and message) answers through `fetch`;
+     * `parts` (or an error) answers the org's provisional-parts search.
      */
-    function search(term: string, results: unknown) {
-      mockApi.mockResolvedValue(null);
+    function search(term: string, results: unknown, parts: unknown = []) {
+      mockApi.mockImplementation(async (path: string) => {
+        if (!path.startsWith("/provisional-parts")) return null;
+        if (parts instanceof Error) throw parts;
+        return parts;
+      });
       const [status, body] = results instanceof HttpError ? [results.status, { error: results.message }] : [200, results];
       global.fetch = jest.fn(async () => ({ ok: status < 400, status, text: async () => JSON.stringify(body) })) as unknown as typeof fetch;
       fireEvent.click(within(screen.getByRole("row", { name: /Wood glue/ })).getByRole("button", { name: "Associate" }));
@@ -350,6 +355,76 @@ describe("the receiving page for one receipt", () => {
       await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/receipts/7/lines/11/associate", expect.objectContaining({
         body: JSON.stringify({ gtin13: hub.gtin13, conversionFactor: 1 }),
       })));
+    });
+  });
+
+  describe("the org's local-only and pending parts in the associate search", () => {
+    const hub = { gtin13: "0022222222220", name: "Power Hub", category: { name: "Electronics" }, subcategory: { name: "Control" } };
+    const localOnly = { gtin13: "0200002701237", name: "Power strip", status: "rejected" };
+    const pending = { gtin13: "0200002700001", name: "Power bar", status: "pending" };
+    const SEARCH = "Search the catalog by name, Part ID or category";
+
+    const realFetch = global.fetch;
+    afterEach(() => { global.fetch = realFetch; });
+
+    function search(term: string, parts: unknown, catalog: unknown[] = [hub]) {
+      mockApi.mockImplementation(async (path: string) => {
+        if (!path.startsWith("/provisional-parts")) return null;
+        if (parts instanceof Error) throw parts;
+        return parts;
+      });
+      global.fetch = jest.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify(catalog) })) as unknown as typeof fetch;
+      fireEvent.click(within(screen.getByRole("row", { name: /Wood glue/ })).getByRole("button", { name: "Associate" }));
+      fireEvent.change(screen.getByPlaceholderText(SEARCH), { target: { value: term } });
+    }
+
+    it("lists them below the catalog matches, marking a rejected part Local only", async () => {
+      wrap();
+      search(" power ", [localOnly, pending]);
+      const strip = await screen.findByRole("radio", { name: "Power strip (Local only) · P000123" });
+      const bar = screen.getByRole("radio", { name: "Power bar · P000000" });
+      const catalog = await screen.findByRole("radio", { name: /Power Hub/ });
+      expect(catalog.compareDocumentPosition(strip)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(strip.compareDocumentPosition(bar)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(mockApi).toHaveBeenCalledWith("/provisional-parts?q=power");
+    });
+
+    it("shows no empty-state copy when only the org's parts match", async () => {
+      wrap();
+      search("power", [localOnly], []);
+      expect(await screen.findByRole("radio", { name: "Power strip (Local only) · P000123" })).toBeInTheDocument();
+      await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+      await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+      expect(screen.queryByText("No matching catalog items")).not.toBeInTheDocument();
+    });
+
+    it("associates a chosen local-only part through the associate route", async () => {
+      wrap();
+      search("power", [localOnly]);
+      fireEvent.click(await screen.findByRole("radio", { name: /Power strip/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/receipts/7/lines/11/associate", expect.objectContaining({
+        body: JSON.stringify({ gtin13: localOnly.gtin13, conversionFactor: 1 }),
+      })));
+    });
+
+    it("raises a standing red chip naming the failed search, and still lists the catalog matches", async () => {
+      wrap();
+      search("power", new HttpError("The catalog couldn't be reached; try again", 502));
+      await waitFor(() => expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({
+        color: "red",
+        message: "Couldn't load your local and pending parts: The catalog couldn't be reached; try again",
+        autoClose: false,
+      })));
+      expect(await screen.findByRole("radio", { name: /Power Hub/ })).toBeInTheDocument();
+      expect(screen.queryByText("Your local and pending parts")).not.toBeInTheDocument();
+    });
+
+    it("does not search them for text shorter than the minimum", async () => {
+      wrap();
+      search("p", [localOnly]);
+      await act(async () => { await new Promise((r) => setTimeout(r, 300)); });
+      expect(mockApi).not.toHaveBeenCalledWith(expect.stringMatching(/^\/provisional-parts/));
     });
   });
 

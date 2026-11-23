@@ -7,7 +7,7 @@ import { canReviewBackgroundChecks, reviewQueueCounts } from "@/lib/membership/r
 import { awaitingBgReview, openProcess, refundableApplication, SETTLES_ON_SIGNATURE } from "@/lib/membership/lifecycle";
 import { getLeadConflicts } from "@/lib/attendanceConflicts";
 import { pickAddress, validateAddress } from "@/lib/address";
-import { alertAddressCheck, getConfigHealth, openConfigIssues } from "@/lib/configHealth";
+import { emailAddressChecks, getConfigHealth, openConfigIssues, REQUIRED_EMAIL_SELECT } from "@/lib/configHealth";
 import { countUnhealthyCronJobs } from "@/lib/cronRuns";
 import { programCheckoutBrokenWhere } from "@/lib/programCheckout";
 import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
@@ -21,6 +21,7 @@ import { collectLibraryCounts, type LibraryCounts } from "@/lib/navLibraryCounts
 import { variantSlotYears } from "@/lib/programYear";
 import { liveMembershipYear } from "@/lib/membership/renewal";
 import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
+import { householdLeadsWhere } from "@/lib/household/leads";
 
 /**
  * Aggregate "things to do" counts for the left-nav badges. Every count is scoped
@@ -201,7 +202,7 @@ async function memberCounts(user: AuthenticatedUser): Promise<TodoCounts["member
     // From the DB, not the session claim, so a lead change applies at once.
     const [isLead, seesPayments] = await Promise.all([
         prisma.person.findFirst({
-            where: { id: user.id, householdId, isHouseholdLead: true },
+            where: { id: user.id, ...householdLeadsWhere(householdId) },
             select: { id: true },
         }).then((p) => p !== null),
         seesHouseholdPaymentStatus(user.id),
@@ -233,7 +234,7 @@ async function memberCounts(user: AuthenticatedUser): Promise<TodoCounts["member
         // page highlights the member box; this drives the nav badge count.
         isLead
             ? prisma.person.findMany({
-                  where: { householdId, isHouseholdLead: true, OR: [{ phone: null }, { phone: "" }] },
+                  where: { ...householdLeadsWhere(householdId), OR: [{ phone: null }, { phone: "" }] },
                   select: { id: true, name: true },
               })
             : Promise.resolve([]),
@@ -542,7 +543,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         // a null orgMembershipYearBoundary means the renewal cycle has no anchor date.
         prisma.boardSettings.findUnique({
             where: { id: 1 },
-            select: { volunteerFamilyDiscountCode: true, bgRecheckMonths: true, orgMembershipYearBoundary: true, alertEmailAddress: true },
+            select: { volunteerFamilyDiscountCode: true, bgRecheckMonths: true, orgMembershipYearBoundary: true, ...REQUIRED_EMAIL_SELECT },
         }),
         // Cron sweeps that stopped running, plus ones running but failing rows. The
         // schedule lives in a separate infra repo, so this is the app's only way to
@@ -556,9 +557,9 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         (boardSettings?.orgMembershipYearBoundary ? 0 : 1);
     return {
         admin: { membership, applicationsTotal, applicationsIncomplete, applicationsAwaitingRefund, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, settingsMisconfig, programsMisconfig, openPaymentExceptions },
-        // Env-var/deploy gaps and the alert address (presence checks), cron sweeps that
+        // Env-var/deploy gaps and unset Settings → Email addresses (presence checks), cron sweeps that
         // stopped running or stopped working all fold into the single red
         // System Status pill.
-        configHealth: { openIssues: openConfigIssues([...getConfigHealth(), alertAddressCheck(boardSettings?.alertEmailAddress)]), unhealthyCronJobs },
+        configHealth: { openIssues: openConfigIssues([...getConfigHealth(), ...emailAddressChecks(boardSettings)]), unhealthyCronJobs },
     };
 }

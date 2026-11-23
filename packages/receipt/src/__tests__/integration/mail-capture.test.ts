@@ -274,13 +274,27 @@ describeDb("a captured email stuck on the Problems list", () => {
     expect(await stuckItems()).toEqual([{ id: String(id), step: "mail message", href: "/receipts/mail", failedAt: capturedAt }]);
   });
 
-  it("leaves out one captured within 25 hours, one processed, and one past its stored copy's retention", async () => {
+  it("leaves out one captured within 25 hours and one processed", async () => {
     const { id } = await stuckMessage(WAITING_NOTICE_MS - 60_000);
-    expect(await stuckItems()).toEqual([]);
-    await db.receiptMailMessage.update({ where: { id }, data: { capturedAt: new Date(Date.now() - 31 * DAY_MS) } });
     expect(await stuckItems()).toEqual([]);
     await db.receiptMailMessage.update({ where: { id }, data: { capturedAt: new Date(Date.now() - 2 * DAY_MS), processedAt: new Date() } });
     expect(await stuckItems()).toEqual([]);
+  });
+
+  it("keeps listing one whose stored copy has expired, marked expired", async () => {
+    const { id, capturedAt } = await stuckMessage(31 * DAY_MS);
+    expect(await stuckItems()).toEqual([{ id: String(id), step: "mail message", href: "/receipts/mail", failedAt: capturedAt, expired: true }]);
+  });
+
+  it("answers Retry on an expired one 409 with the expiry message, and keeps it listed", async () => {
+    const { id } = await stuckMessage(31 * DAY_MS);
+    bind();
+    await expect(retryStuckItem({ id: String(id), step: "mail message" }, BY)).rejects.toMatchObject({
+      status: 409,
+      message: "This email's stored copy expired 30 days after capture.",
+    });
+    expect(await db.receiptMailMessage.findUniqueOrThrow({ where: { id } })).toMatchObject({ processedAt: null });
+    expect(await stuckItems()).toEqual([expect.objectContaining({ id: String(id), expired: true })]);
   });
 
   it("Retry replays it from the stored copy, audited with who pressed it, and it leaves the list", async () => {
@@ -303,5 +317,56 @@ describeDb("a captured email stuck on the Problems list", () => {
   it("answers 404 for an id that is not a stuck captured email", async () => {
     await expect(retryStuckItem({ id: "not-a-number", step: "mail message" }, BY)).rejects.toMatchObject({ status: 404 });
     await expect(retryStuckItem({ id: "12345", step: "mail message" }, BY)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describeDb("the mail page's list of captured emails not yet processed", () => {
+  /** Captures each id unprocessed, then dates its capture `ageMs` ago. */
+  async function captured(id: string, ageMs: number) {
+    const row = await db.receiptMailMessage.create({
+      data: { orgId: TEST_ORG_ID, gmailMessageId: id, receivedAt: new Date(Date.now() - ageMs - 60_000), capturedAt: new Date(Date.now() - ageMs), rawKey: `mail-raw/${id}`, rawSha256: "x", rawSize: 1 },
+    });
+    return { id: row.id, receivedAt: row.receivedAt, capturedAt: row.capturedAt };
+  }
+
+  it("lists every unprocessed email oldest capture first, flagging those past retention, with no key or error", async () => {
+    bind({ rawMailRetentionDays: 30 });
+    const fresh = await captured("fresh", 60_000);
+    const old = await captured("old", 31 * DAY_MS);
+    const stuck = await captured("stuck", 2 * DAY_MS);
+    await db.receiptMailMessage.update({ where: { id: stuck.id }, data: { processError: "system: people lookup down" } });
+    expect(await mailQueueService.listUnprocessed()).toEqual([
+      { ...old, expired: true },
+      { ...stuck, expired: false },
+      { ...fresh, expired: false },
+    ]);
+  });
+
+  it("leaves out an email the host reports dismissed from the Problems list, asking by step, id and capture time", async () => {
+    const dismissedSince = await captured("dismissed", 2 * DAY_MS);
+    const kept = await captured("kept", 2 * DAY_MS);
+    const asked: { step: string; id: string; failedAt: Date }[] = [];
+    bind({
+      problemDismissals: {
+        withoutDismissed: async (step, items) => {
+          asked.push(...items.map(({ id, failedAt }) => ({ step, id, failedAt })));
+          return items.filter((i) => i.id !== String(dismissedSince.id));
+        },
+      },
+    });
+    expect(await mailQueueService.listUnprocessed()).toEqual([{ ...kept, expired: false }]);
+    expect(asked).toEqual([
+      { step: "mail message", id: String(dismissedSince.id), failedAt: dismissedSince.capturedAt },
+      { step: "mail message", id: String(kept.id), failedAt: kept.capturedAt },
+    ]);
+  });
+
+  it("leaves out processed emails and other orgs' emails", async () => {
+    const done = await captured("done", 60_000);
+    await db.receiptMailMessage.update({ where: { id: done.id }, data: { processedAt: new Date() } });
+    await db.receiptMailMessage.create({
+      data: { orgId: "00000000-0000-0000-0000-000000000002", gmailMessageId: "theirs", receivedAt: new Date(), rawKey: "mail-raw/theirs", rawSha256: "x", rawSize: 1 },
+    });
+    expect(await mailQueueService.listUnprocessed()).toEqual([]);
   });
 });

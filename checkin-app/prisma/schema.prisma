@@ -648,10 +648,37 @@ model OrgMembershipProcess {
   noteAckAt             DateTime?               @ignore
 
   attestations BackgroundCheckAttestation[]
+  clearanceStepFailures ClearanceStepFailure[]
 
   @@index([orgMembershipId])
   @@index([requestedForHouseholdId])
   @@index([status])
+}
+
+/// A step owed after a clearance committed that failed: listed on the Problems list,
+/// with a Retry, until the step succeeds and the row is deleted.
+model ClearanceStepFailure {
+  /// @sensitivity:public
+  id        Int                  @id @default(autoincrement())
+  /// @sensitivity:internal
+  processId Int
+  process   OrgMembershipProcess @relation(fields: [processId], references: [id], onDelete: Cascade)
+  /// @sensitivity:internal
+  step      ClearanceStep
+  /// When the step first failed; also the time the step is re-run as of.
+  /// @sensitivity:internal
+  failedAt  DateTime             @default(now())
+  /// The latest failure's error. Never leaves the server.
+  /// @sensitivity:internal
+  error     String
+
+  @@unique([processId, step])
+}
+
+enum ClearanceStep {
+  REFUNDED_ORDER_RAISE
+  PERSON_BG_TRIGGER
+  PERSON_AGREEMENT_TRIGGER
 }
 
 /// The Shopify variant that sells each membership year. One row per year.
@@ -775,6 +802,13 @@ model BoardSettings {
   boardEmailAddress          String?
   /// The address members see for finance questions. @sensitivity:public
   financeContactEmail        String?
+  /// Finance's group address: finance alerts, the daily Problems email, and
+  /// scholarship and payment-plan requests. @sensitivity:internal
+  financeAlertEmailAddress   String?
+  /// The sysadmins' group address. @sensitivity:internal
+  sysadminEmailAddress       String?
+  /// The background-check reviewers' group address. @sensitivity:internal
+  bgReviewerEmailAddress     String?
   /// Subject line for the scholarship / payment-plan request ACK — the applicant's
   /// only automatic email (scholarshipEmails.ts). NULL or blank = the default copy
   /// in lib/scholarshipEmails.ts. Set on Settings → Email, same section as
@@ -2252,4 +2286,25 @@ model QuickBooksPostingQueue {
 
   @@unique([orgId, lane])
   @@map("quickbooks_posting_queue")
+}
+
+/// A stuck item a person dismissed from the Problems list, keyed by the item's failure time:
+/// the same item failing again later carries a new failedAt and is listed again.
+model ProblemDismissal {
+  /// @sensitivity:internal
+  id            Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  library       String
+  /// @sensitivity:internal
+  step          String
+  /// @sensitivity:internal
+  itemId        String
+  /// @sensitivity:internal
+  failedAt      DateTime
+  /// @sensitivity:internal
+  dismissedById Int
+  /// @sensitivity:internal
+  dismissedAt   DateTime @default(now())
+
+  @@unique([library, step, itemId, failedAt])
 }

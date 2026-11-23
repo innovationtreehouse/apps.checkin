@@ -3,16 +3,18 @@
  * orchestrator. All real work lives in sync/* so it runs identically from the CLI.
  *
  * Triggered by EventBridge. The event selects the mode:
- *   { "mode": "incremental" }  (default) — delta pull since the watermark
+ *   { "mode": "incremental" }  (default) — delta pull since the watermark, then the
+ *                                         capped retention pass (sync/retention.ts)
  *   { "mode": "backfill" }                — Bulk Operation backfill / poll step
  */
 import { z } from "zod";
-import { prisma, loadDbConfig, loadShopifyConfig, reapStaleRuns, logger, ConcurrentRunError } from "@checkin/s-ingest-core";
+import { prisma, loadDbConfig, loadShopifyConfig, reapStaleRuns, runRetention, logger, ConcurrentRunError } from "@checkin/s-ingest-core";
 import { createShopifyClient } from "./shopify/client.js";
 import { ensureStore } from "./sync/store.js";
 import { runIncremental } from "./sync/incremental.js";
 import { runBackfill } from "./sync/backfill.js";
 import { buildHeartbeatSink } from "./monitoring.js";
+import { syncDeadlineMinutes } from "./deadline.js";
 
 /**
  * The EventBridge invocation contract. Validated with Zod at the boundary — the Lambda
@@ -34,7 +36,7 @@ export type SyncEvent = z.input<typeof SyncEventSchema>;
  * ingest steps on very large stores may need more than the default 55m).
  */
 export function armSyncDeadline(mode: string): void {
-  const minutes = Math.max(1, Number(process.env.SYNC_DEADLINE_MINUTES) || 55);
+  const minutes = syncDeadlineMinutes();
   const timer = setTimeout(() => {
     logger.error("sync deadline exceeded — exiting so the task cannot run unbounded", { mode, minutes });
     process.exit(1);
@@ -68,12 +70,24 @@ export async function handler(event: unknown = {}): Promise<Record<string, unkno
     if (mode === "backfill") {
       return await runBackfill(prisma, client, storeId, shopifyCfg, heartbeat);
     }
-    return await runIncremental(prisma, client, storeId, shopifyCfg, heartbeat);
+    const synced = await runIncremental(prisma, client, storeId, shopifyCfg, heartbeat);
+    return { ...synced, retention: await retentionOrSkip(storeId) };
   } catch (err) {
     if (err instanceof ConcurrentRunError) {
       logger.warn("sync skipped: another run is already in progress for this store", { storeId, mode });
       return { skipped: true, mode, reason: "another sync run is already in progress for this store" };
     }
     throw err;
+  }
+}
+
+/** The daily retention pass, taken after the sync releases the store's run lock. */
+async function retentionOrSkip(storeId: string): Promise<Record<string, unknown>> {
+  try {
+    return await runRetention(prisma, storeId);
+  } catch (err) {
+    if (!(err instanceof ConcurrentRunError)) throw err;
+    logger.warn("retention skipped: another run is already in progress for this store", { storeId });
+    return { skipped: true };
   }
 }

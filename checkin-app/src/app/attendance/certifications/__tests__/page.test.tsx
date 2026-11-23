@@ -5,6 +5,8 @@ jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 import { notifications, notificationsStore } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, resetRtl, setSearchParams } from "@/test-helpers/rtl";
 import { jsonBody } from "@/test-helpers/jsonBody";
+import { pinTimezone } from "@/test-helpers/tz";
+import { TimezoneProvider } from "@/components/TimezoneProvider";
 import KioskCertificationsDisplay from "../page";
 
 beforeEach(() => resetRtl());
@@ -65,6 +67,23 @@ describe("KioskCertificationsDisplay", () => {
         } finally {
             jest.useRealTimers();
         }
+    });
+
+    describe("in an org whose zone is not the browser's", () => {
+        pinTimezone("America/Chicago");
+
+        it("shows the clock in the org's zone", async () => {
+            jest.useFakeTimers({ now: new Date("2026-10-10T15:04:30Z"), doNotFake: ["nextTick", "setImmediate"] });
+            try {
+                mockFetchJson({ "/api/kioskdisplay/certifications": { participants, tools } });
+                renderWithProviders(<KioskCertificationsDisplay />, {
+                    wrapper: ({ children }) => <TimezoneProvider value="Asia/Tokyo">{children}</TimezoneProvider>,
+                });
+                expect(await screen.findByText("12:04 AM")).toBeInTheDocument();
+            } finally {
+                jest.useRealTimers();
+            }
+        });
     });
 
     it("says the kiosk is resting, not that nobody was found, on a 204 with no grid yet", async () => {

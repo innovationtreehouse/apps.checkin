@@ -36,7 +36,7 @@ export default function ConfirmationList({ empty = null }: { empty?: React.React
   if (list.data.length === 0) return <>{empty}</>;
   const confirm = async (c: ReceiptConfirmation) => {
     const body = c.onBehalf ? { reason: reasons[c.id]?.trim() } : {};
-    if (await send(`/${c.id}/confirmation`, "POST", body, "Confirmed", "Couldn't confirm this receipt")) list.reload();
+    if (await send(`/${c.id}/confirmation`, "POST", body, "Confirmed", "Couldn't confirm this receipt", { runsFlow: true })) list.reload();
   };
   return (
     <Stack mb="lg">

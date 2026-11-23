@@ -5,8 +5,7 @@ import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailHouseholdLeads } from "@/lib/emailRecipients";
 import { logBackendError, logger } from "@/lib/logger";
 import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
-import { openPersonBgForNewMember } from "@/lib/membership/personBgTriggers";
-import { openPersonAgreementForNewMember } from "@/lib/membership/personAgreementTriggers";
+import { runClearanceStep } from "@/lib/membership/clearanceSteps";
 import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 import { asHouseholdProcess, fromWhere } from "@/lib/membership/lifecycle";
@@ -302,10 +301,12 @@ async function settle(
         const { householdId, isInitial } = result;
         await afterActivationCommitted("congrats email", processId, householdId, () => sendCongrats(householdId, isInitial));
         // A brand-new (INITIAL) member just activated: open PERSON_BG for the
-        // household's check-obligated adults, and the per-adult agreements.
+        // household's check-obligated adults, and the per-adult agreements. A failed
+        // trigger becomes a stuck item on the Problems list.
         if (isInitial) {
-            await afterActivationCommitted("person background-check trigger", processId, householdId, () => openPersonBgForNewMember(householdId, new Date()));
-            await afterActivationCommitted("person agreement trigger", processId, householdId, () => openPersonAgreementForNewMember(householdId, new Date()));
+            const asOf = new Date();
+            await runClearanceStep("PERSON_BG_TRIGGER", { processId, householdId, shopifyOrderId: null, asOf });
+            await runClearanceStep("PERSON_AGREEMENT_TRIGGER", { processId, householdId, shopifyOrderId: null, asOf });
         }
     }
     if (result.outcome === "denied") {

@@ -81,21 +81,32 @@ async function waitingSeats(client: Db, expense: Expense, signerUserId: number, 
   return { waiting, refusal: null };
 }
 
+/** The org's reimbursements whose expense waits for the submitter seat, for the given stored reimbursee ids or for anyone. */
+async function awaitingConfirmation(reimburseePersonIds?: number[]): Promise<Array<{ receiptId: string; reimburseePersonId: number; changedFields: string[] }>> {
+  if (reimburseePersonIds?.length === 0) return [];
+  const expenses = await db.expense.findMany({
+    where: {
+      orgId: await getOrgId(),
+      ...TAKES_SUBMITTER_SEAT,
+      reimburseePersonId: { not: null, ...(reimburseePersonIds ? { in: reimburseePersonIds } : {}) },
+      lineItems: { some: { signoffs: { none: { seat: "SUBMITTER" } } } },
+    },
+    select: { id: true, reimburseePersonId: true },
+  });
+  const voids = await db.expenseAuditLog.findMany({
+    where: { expenseId: { in: expenses.map((e) => e.id) }, action: SUBMITTER_CONFIRMATION_VOIDED },
+    orderBy: { id: "desc" },
+    select: { expenseId: true, fieldChanged: true },
+  });
+  const latest = new Map<string, string[]>();
+  for (const v of voids) if (!latest.has(v.expenseId)) latest.set(v.expenseId, v.fieldChanged ? v.fieldChanged.split(",") : []);
+  return expenses.map((e) => ({ receiptId: e.id, reimburseePersonId: e.reimburseePersonId!, changedFields: latest.get(e.id) ?? [] }));
+}
+
 export const submitterConfirmations: SubmitterConfirmations = {
-  async awaiting() {
-    const expenses = await db.expense.findMany({
-      where: { orgId: await getOrgId(), ...TAKES_SUBMITTER_SEAT, reimburseePersonId: { not: null }, lineItems: { some: { signoffs: { none: { seat: "SUBMITTER" } } } } },
-      select: { id: true, reimburseePersonId: true },
-    });
-    const voids = await db.expenseAuditLog.findMany({
-      where: { expenseId: { in: expenses.map((e) => e.id) }, action: SUBMITTER_CONFIRMATION_VOIDED },
-      orderBy: { id: "desc" },
-      select: { expenseId: true, fieldChanged: true },
-    });
-    const latest = new Map<string, string[]>();
-    for (const v of voids) if (!latest.has(v.expenseId)) latest.set(v.expenseId, v.fieldChanged ? v.fieldChanged.split(",") : []);
-    return expenses.map((e) => ({ receiptId: e.id, reimburseePersonId: e.reimburseePersonId!, changedFields: latest.get(e.id) ?? [] }));
-  },
+  awaiting: () => awaitingConfirmation(),
+
+  awaitingFor: (reimburseePersonIds) => awaitingConfirmation(reimburseePersonIds),
 
   /** `reimburseePersonId` is the id the expense stores, as `awaiting` gives it. */
   async confirm(receiptId, reimburseePersonId, person, reason) {

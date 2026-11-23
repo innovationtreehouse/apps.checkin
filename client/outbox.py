@@ -325,10 +325,12 @@ def _backoff_seconds(retry_after_header, current_backoff):
     return max(1.0, base + jitter)
 
 
-def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, protocol_ok_fn=lambda: True):
+def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, protocol_ok_fn=lambda: True,
+                 clock_check_fn=lambda: False):
     """Single drain thread: pulls pending rows in scanned_at order,
     resubmits each one (send_fn re-signs per call), and applies the
-    ack/retry outcome. Runs forever; call in a background thread."""
+    ack/retry outcome. clock_check_fn returns True when the wall clock has
+    stepped since its last call. Runs forever; call in a background thread."""
     backoff = MIN_BACKOFF_SECONDS
     protocol_hold_logged = False
     while True:
@@ -345,6 +347,12 @@ def replay_drain(outbox, send_fn, push_fn=None, sleep_fn=time.sleep, protocol_ok
         if protocol_hold_logged:
             log.info("Outbox drain resumed: server advertises the replay protocol")
             protocol_hold_logged = False
+
+        # A step seen before the next badge still flags the rows stamped
+        # before it, so none is sent with an unflagged wrong scannedAt.
+        if clock_check_fn():
+            outbox.mark_clock_suspect()
+            log.warning("Large clock step detected by the drain; marking queued scans clockSuspect")
 
         rows = outbox.pending_rows(skip_inflight=True)
         if not rows:

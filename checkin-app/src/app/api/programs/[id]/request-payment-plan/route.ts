@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
+import { isComponentHttpError, parseId } from "@checkin/component-kit";
 import { isKnownAdult } from "@/lib/programAge";
 import { changeProgramStockWith, StockNotRecordedError } from "@/lib/shopify/stock";
 import { ENROLLMENT_WRITES } from "@/lib/programs/enrollmentState";
@@ -12,34 +13,36 @@ import { resolveScholarshipRecipients, notifyReviewTeam, sendScholarshipAck } fr
 import { config } from "@/lib/config";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { householdMayEnrol, NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergencyContacts/service";
+import { parseParticipantId, readObjectBody } from "@/app/api/programs/[id]/requestBody";
+
+function isScholarshipRequestKind(value: unknown): value is ScholarshipRequestKind {
+    return Object.values<unknown>(ScholarshipRequestKind).includes(value);
+}
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
     const { id } = await params;
 
     try {
-        const programId = parseInt(id, 10);
-        if (isNaN(programId)) {
-            return apiError("Invalid program ID", 400);
-        }
+        const programId = parseId(id, "program ID");
 
-        const body = await req.json();
-        const { participantId, kind } = body;
-
-        if (!participantId) {
+        const body = await readObjectBody(req);
+        if (!body.participantId) {
             return apiError("participantId is required", 400);
         }
+        const participantId = parseParticipantId(body.participantId);
+        const kind = body.kind ?? null;
 
         // An absent kind records as null rather than 400: during a rolling deploy's
         // drain window a stale tab still POSTs without one, and losing the request
         // is worse than not knowing which ask it was. A present-but-wrong kind is
         // still a client bug, so that does fail.
-        if (kind !== undefined && kind !== null && !Object.values(ScholarshipRequestKind).includes(kind)) {
+        if (kind !== null && !isScholarshipRequestKind(kind)) {
             return apiError("kind must be SCHOLARSHIP, PAYMENT_PLAN or UNSURE", 400);
         }
         // Spread, not a plain value: writing `null` would let a kind-less hold-failed
         // retry erase a kind the family already stated. A retry that carries one overwrites.
-        const kindData = kind ? { scholarshipRequestKind: kind as ScholarshipRequestKind } : {};
+        const kindData = kind ? { scholarshipRequestKind: kind } : {};
 
         const participant = await prisma.programParticipant.findUnique({
             where: {
@@ -213,6 +216,9 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         if (warning) responseObj.warning = warning;
         return NextResponse.json(responseObj);
     } catch (error) {
+        if (isComponentHttpError(error)) {
+            return apiError(error.message, error.status);
+        }
         logger.error("Payment plan request error:", error);
         return apiError("Failed to request payment plan", 500);
     }

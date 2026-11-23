@@ -141,7 +141,7 @@ describe('a failed email', () => {
         expect(await holds(grantee.id)).toBe(true);
         const [ack] = await acks(grantee.id);
         const item = { library: 'background check', step: 'check email', id: String(ack.id) };
-        expect(await checkEmailStuckItems()).toContainEqual(expect.objectContaining({ id: item.id, step: item.step }));
+        expect(await checkEmailStuckItems()).toContainEqual(expect.objectContaining({ id: item.id, step: item.step, href: '/membership-ops/roles' }));
 
         await expect(retryProblem(item, { userId: boardId, username: null })).rejects.toMatchObject({ status: 409 });
         expect(await checkEmailStuckItems()).toContainEqual(expect.objectContaining({ id: item.id }));

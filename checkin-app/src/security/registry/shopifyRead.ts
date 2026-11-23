@@ -1,5 +1,5 @@
-// Shopify-mirror (s-read) route policy: the board's payment queue and the
-// /api/finance-ops/s-read/* sync, diagnose and match-audit routes. Aggregated by ../registry.ts.
+// Shopify-mirror (s-read) route policy: the board's payment queue, its reconcile
+// action, and the /api/finance-ops/s-read/* sync, diagnose and match-audit routes. Aggregated by ../registry.ts.
 import { defineRoute, type Authorize, type OrderedViewEntry } from '../core';
 
 // Every route admits BOARD only. No sysadmin view: payment and match-audit data
@@ -21,6 +21,7 @@ const BOARD_AUDIT_VIEW: readonly OrderedViewEntry[] = [
 defineRoute({ endpoint: 'GET /api/finance-ops/payments', authorize: BOARD, envelope: null, returns: ['PaymentQueueRow', 'PaymentQueueLiveOrder'], orderedView: BOARD_QUEUE_VIEW, financeView: { records: [{ key: 'PaymentQueueRow', id: 'id', model: 'PaymentException' }] } });
 defineRoute({ endpoint: 'GET /api/finance-ops/s-read/sync', authorize: BOARD, envelope: 'run', returns: ['SyncRun'], orderedView: BOARD_VIEW });
 defineRoute({ endpoint: 'POST /api/finance-ops/s-read/sync', authorize: BOARD, envelope: null, returns: ['SReadSyncTrigger'], orderedView: BOARD_VIEW });
+defineRoute({ endpoint: 'POST /api/finance-ops/payments/reconcile', authorize: BOARD, envelope: null, returns: ['PaymentReconcileRun'], orderedView: BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/finance-ops/s-read/diagnose', authorize: BOARD, envelope: 'steps', returns: ['SReadDiagnoseStep'], orderedView: BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/finance-ops/s-read/match-audit', authorize: BOARD, envelope: null, returns: ['MatchAuditReport', 'MatchAuditVariantCoverage', 'MatchAuditOrderRow', 'MatchAuditMembershipRow', 'MatchAuditEnrollmentRow'], orderedView: BOARD_AUDIT_VIEW, financeView: { records: [{ key: 'MatchAuditReport', id: 'orders[].orderLegacyId', model: 'ShopOrder' }, { key: 'MatchAuditReport', id: 'memberships[].processId', model: 'OrgMembershipProcess' }, { key: 'MatchAuditReport', id: 'memberships[].membershipId', model: 'OrgMembership' }, { key: 'MatchAuditReport', id: ['enrollments[].programId', 'enrollments[].personId'], model: 'ProgramParticipant' }] } });
 defineRoute({ endpoint: 'POST /api/finance-ops/s-read/match-audit/track', authorize: BOARD, envelope: null, returns: ['MatchAuditTrackResult'], orderedView: BOARD_VIEW });

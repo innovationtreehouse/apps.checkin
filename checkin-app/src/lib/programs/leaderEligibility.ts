@@ -24,6 +24,34 @@ export async function programLeaderIneligibility(personId: number, person: { las
     return leaderIneligibilityReason(await isActiveOrgMember(personId), checkStanding(person.lastBackgroundCheck, reviews, threshold), threshold);
 }
 
+export const LEADER_NEEDS_EMAIL = "A program leader needs an email on file. Add one first.";
+export const LEADER_EMAIL_REQUIRED = "This person leads a program, so their email can't be removed. Name another leader first.";
+
+/** True for an email value that leaves the person with no address: null, or blank. */
+export function isBlankEmail(email: unknown): boolean {
+    return email === null || (typeof email === "string" && email.trim() === "");
+}
+
+/** Leader notices go by email, so a person with none on file may not be newly named a program's leader. */
+export function leaderEmailRefusal(person: { email: string | null }): string | null {
+    return isBlankEmail(person.email) ? LEADER_NEEDS_EMAIL : null;
+}
+
+/** Whether any of `personIds` leads a program that hasn't finished. */
+export async function leadsUnfinishedProgram(db: DbClient, personIds: readonly number[]): Promise<boolean> {
+    if (!personIds.length) return false;
+    return await db.program.count({ where: { leadMentorId: { in: [...personIds] }, phase: { not: "FINISHED" } } }) > 0;
+}
+
+/**
+ * Why a save that writes `email` (undefined when the save leaves it alone) over `stored`
+ * must be refused, or null: a sitting leader of an unfinished program keeps the address they have.
+ */
+export async function leaderEmailClearRefusal(db: DbClient, personId: number, email: unknown, stored: string | null): Promise<string | null> {
+    if (email === undefined || !isBlankEmail(email) || isBlankEmail(stored)) return null;
+    return await leadsUnfinishedProgram(db, [personId]) ? LEADER_EMAIL_REQUIRED : null;
+}
+
 /** leaderIneligibilityReason for each of `people` leading a program of membership year `year`, keyed by id, in two queries. */
 export async function leaderIneligibilities(
     db: DbClient,

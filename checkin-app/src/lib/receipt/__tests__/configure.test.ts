@@ -339,3 +339,35 @@ describe('receipt runtime: person ids', () => {
         expect(prisma.personMerge.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { toId: 2 } }));
     });
 });
+
+describe('receipt runtime: Problems list dismissals', () => {
+    const CAPTURED = new Date('2026-11-01T09:00:00Z');
+    type Wanted = { library: string; step: string; itemId: string; failedAt: Date };
+    const dismissedAt = (rows: Wanted[]) =>
+        jest.fn().mockImplementation(async ({ where }: { where: { OR: Wanted[] } }) =>
+            rows.filter((d) => where.OR.some((w) => w.library === d.library && w.step === d.step && w.itemId === d.itemId && w.failedAt.getTime() === d.failedAt.getTime())));
+    const emails = [
+        { id: '3', failedAt: CAPTURED, receivedAt: CAPTURED },
+        { id: '7', failedAt: CAPTURED, receivedAt: CAPTURED },
+    ];
+
+    afterEach(() => jest.clearAllMocks());
+
+    it('hides a captured email the Board dismissed at its capture time and keeps one not dismissed', async () => {
+        prisma.problemDismissal.findMany = dismissedAt([{ library: 'receipt', step: 'mail message', itemId: '3', failedAt: CAPTURED }]);
+        await expect(boundConfig().problemDismissals?.withoutDismissed('mail message', emails)).resolves.toEqual([emails[1]]);
+    });
+
+    it('keeps a captured email whose dismissal was recorded at a different failure time', async () => {
+        prisma.problemDismissal.findMany = dismissedAt([{ library: 'receipt', step: 'mail message', itemId: '3', failedAt: new Date('2026-10-01T09:00:00Z') }]);
+        await expect(boundConfig().problemDismissals?.withoutDismissed('mail message', emails)).resolves.toEqual(emails);
+    });
+
+    it('keeps a captured email when only another library or step is dismissed under its id', async () => {
+        prisma.problemDismissal.findMany = dismissedAt([
+            { library: 'expense', step: 'mail message', itemId: '3', failedAt: CAPTURED },
+            { library: 'receipt', step: 'flow', itemId: '3', failedAt: CAPTURED },
+        ]);
+        await expect(boundConfig().problemDismissals?.withoutDismissed('mail message', emails)).resolves.toEqual(emails);
+    });
+});

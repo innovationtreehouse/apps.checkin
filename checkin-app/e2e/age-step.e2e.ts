@@ -26,7 +26,7 @@ test.describe("age step", () => {
       await expect(page).toHaveURL(/\/my-household$/);
     });
 
-    const { json } = await api<{ Person: { isDeclaredAdult: boolean } }>(await loginAs(email), "/api/profile");
-    expect(json.Person.isDeclaredAdult).toBe(true);
+    const { json } = await api<{ profile: { isDeclaredAdult: boolean } }>(await loginAs(email), "/api/profile");
+    expect(json.profile.isDeclaredAdult).toBe(true);
   });
 });

@@ -1,7 +1,9 @@
 import prisma from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { MEMBERSHIP_FEE_SETTLED_PERSON_WHERE } from "@/lib/orgMembership";
-import { handler, notFound, badRequest } from "@/security/handler";
+import { handler, notFound } from "@/security/handler";
+import { parseId } from "@checkin/component-kit";
+import { toApiResponseError } from "@/lib/components/route";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 import { checkProgramAge } from "@/lib/programAge";
@@ -13,8 +15,12 @@ import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 // youth included), and matches on name or id, never email. The age check runs
 // here so the picker can warn without a date of birth leaving the server.
 export const GET = handler<{ id: string }>('GET /api/programs/[id]/eligible-participants', async ({ req, params }) => {
-    const programId = parseInt(params.id, 10);
-    if (isNaN(programId)) throw badRequest('Invalid program ID');
+    let programId: number;
+    try {
+        programId = parseId(params.id, "program ID");
+    } catch (error) {
+        throw toApiResponseError(error);
+    }
 
     const currentProgram = await prisma.program.findUnique({ where: { id: programId } });
     if (!currentProgram) throw notFound('Program not found');

@@ -331,6 +331,7 @@ export interface ReimbursementStatus {
  */
 export interface SubmitterConfirmations {
   awaiting(): Promise<Array<{ receiptId: string; reimburseePersonId: number; changedFields: string[] }>>;
+  awaitingFor(reimburseePersonIds: number[]): Promise<Array<{ receiptId: string; reimburseePersonId: number; changedFields: string[] }>>;
   confirm(receiptId: string, reimburseePersonId: number, signer: { id: number; name: string | null }, reason: string | null): Promise<boolean>;
   confirmable(receiptIds: string[], signerUserId: number): Promise<string[]>;
 }

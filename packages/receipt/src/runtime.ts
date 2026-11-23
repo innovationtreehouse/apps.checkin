@@ -10,6 +10,7 @@ import type {
   ReceiptAlerts,
   ReceiptPeople,
   ReceiptPersonNames,
+  ReceiptProblemDismissals,
   ReceiptReplies,
   ReceiptReimbursees,
   ReceiptPrincipal,
@@ -52,6 +53,7 @@ export const inertPurchaseOutcomes: PurchaseOutcomes = {
 /** Knows no expense: nothing waits on a submitter there, and a confirmation is not delivered. */
 export const inertSubmitterConfirmations: SubmitterConfirmations = {
   awaiting: async () => [],
+  awaitingFor: async () => [],
   confirm: async () => {
     throw new NotWiredError("SubmitterConfirmations.confirm");
   },
@@ -83,7 +85,7 @@ export const inertPersonNames: ReceiptPersonNames = {
 export const inertReimbursees: ReceiptReimbursees = {
   search: async () => [],
   byId: async () => null,
-  hasAccount: async () => true,
+  withoutAccount: async () => [],
   addNonMemberAdult: async () => {
     throw new Error("No people directory is bound to add a person");
   },
@@ -97,6 +99,11 @@ export const inertAlerts: ReceiptAlerts = {
   mailAgingOut: async (event) => {
     console.warn("[receipt] mail is leaving the window unread; finance alerts are not bound:", event);
   },
+};
+
+/** Knows no dismissals: every item stays listed. */
+export const inertProblemDismissals: ReceiptProblemDismissals = {
+  withoutDismissed: async (_step, items) => items,
 };
 
 export const inertOcr: OcrProvider = {
@@ -141,6 +148,7 @@ export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" 
     personNames: r.personNames ?? inertPersonNames,
     reimbursees: r.reimbursees ?? inertReimbursees,
     alerts: r.alerts ?? inertAlerts,
+    problemDismissals: r.problemDismissals ?? inertProblemDismissals,
   };
 }
 

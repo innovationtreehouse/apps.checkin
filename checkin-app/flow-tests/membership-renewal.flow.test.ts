@@ -152,5 +152,5 @@ describe("flow: annual membership renewal (CUJS A2)", () => {
         const again = await api<Sweep>(board, "/api/settings/membership/bulk-open-renewals", { method: "POST" });
         expect(again.status).toBe(200);
         expect(again.json.opened).toBe(0);
-    });
+    }, 60_000);
 });

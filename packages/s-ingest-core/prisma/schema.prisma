@@ -1,7 +1,8 @@
 // shopify-read-function — dedicated Postgres for Shopify orders & payouts.
 //
 // Two layers:
-//   1. shopify_raw_event  — append-only diagnosis log (never updated/deleted).
+//   1. shopify_raw_event  — append-only diagnosis log (never updated; superseded entries
+//                           are deleted once retention ends, sync/retention.ts).
 //   2. shop_*             — idempotent live tables, keyed on stable Shopify GIDs.
 //
 // Live tables are keyed on (store_id, Shopify GID): a GID is unique only WITHIN a
@@ -107,9 +108,9 @@ model ShopifyRawEvent {
 /// Verbatim Bulk Operation result (the raw JSONL exactly as Shopify returned it), captured
 /// BEFORE reassembly. This is the durable pre-transform record for the backfill path: if the
 /// reassembly logic is later found wrong, the orders can be re-reassembled and re-projected
-/// from here without re-pulling from Shopify (see reingestBulkExports). Append-only.
-/// NOTE: the JSONL contains the same customer PII as shop_order — covered by the same
-/// retention/erasure policy decision.
+/// from here without re-pulling from Shopify (see reingestBulkExports). Never updated; deleted
+/// 90 days after its run ended (sync/retention.ts), since the JSONL holds the same buyer
+/// details as shop_order.
 model ShopifyBulkExport {
   /// @sensitivity:internal
   id              BigInt      @id @default(autoincrement())

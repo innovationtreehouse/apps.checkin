@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { householdLeadsWhere } from "@/lib/household/leads";
 import { runPaced } from "@/lib/email";
 import { sendTemplated } from "@/lib/email-templates/send";
 import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
@@ -59,7 +60,7 @@ function fanOutEmails<K extends TemplateKey>(emails: string[], key: K, ctx: Temp
 export async function emailHouseholdLeads<K extends TemplateKey>(householdId: number, key: K, ctx: TemplateCtx<K>, errorLabel: string): Promise<void> {
     try {
         const leads = await prisma.person.findMany({
-            where: { householdId, isHouseholdLead: true },
+            where: householdLeadsWhere(householdId),
             select: { email: true },
         });
         const emails = leads.map((l) => l.email).filter((e): e is string => !!e);

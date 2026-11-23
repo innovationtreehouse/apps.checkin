@@ -262,6 +262,9 @@ export interface MirrorSyncRun {
     error: string | null;
 }
 
+/** s-read's daily retention pass (s-ingest-core RETENTION_SCOPE): recorded as a run, but not a sync. */
+const RETENTION_SCOPE = "retention";
+
 /**
  * The most recent sync run, or null when the mirror has never run one (or is
  * unconfigured). Ordered by started_at — s-read stamps it on insert, so it is
@@ -271,6 +274,7 @@ export async function latestSyncRun(): Promise<MirrorSyncRun | null> {
     const db = await getClient();
     if (!db) return null;
     return db.syncRun.findFirst({
+        where: { objectScope: { not: RETENTION_SCOPE } },
         orderBy: { startedAt: "desc" },
         select: { status: true, kind: true, startedAt: true, finishedAt: true, counts: true, error: true },
     });

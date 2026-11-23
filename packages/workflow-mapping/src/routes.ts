@@ -1,5 +1,5 @@
 /**
- * Route factories for the 12 registered /api/workflow-mapping/* endpoints. The host mounts each
+ * Route factories for the 13 registered /api/workflow-mapping/* endpoints. The host mounts each
  * under its handler(), which admits the caller and strips the returned model bag; bag keys are
  * the registry's `returns` model names.
  */
@@ -56,6 +56,11 @@ export const auditLog: WorkflowRouteHandler = async ({ req }) => {
     }),
   };
 };
+
+/** `?q=` searches the org's pending and local-only provisional parts for the associate picker. */
+export const provisionalParts: WorkflowRouteHandler = async ({ req }) => ({
+  WorkflowProvisionalPart: await lineItemService.searchProvisionalParts(new URL(req.url).searchParams.get("q") ?? ""),
+});
 
 export const proceed: WorkflowRouteHandler = async ({ params }) => {
   const id = receiptId(params);

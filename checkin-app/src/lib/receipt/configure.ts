@@ -78,6 +78,13 @@ function toPrincipal(id: number, name: string, isAdult: boolean): ReceiptPrincip
   return { id, name, firstName: given, lastName, isAdult };
 }
 
+/** The items the Board has not dismissed from the Problems list, by the Problems list's own check. */
+async function withoutDismissed<T extends { id: string; failedAt: Date }>(step: string, items: T[]): Promise<T[]> {
+  const problems = await import("@/lib/problems");
+  const kept = await problems.withoutDismissed(items.map((item) => ({ item, library: problems.RECEIPT_LIBRARY, step, id: item.id, failedAt: item.failedAt })));
+  return kept.map(({ item }) => item);
+}
+
 /** Each person's name; the library passes ids already resolved through merges. */
 async function personNames(personIds: number[]): Promise<Map<number, string>> {
   const { default: prisma } = await import("@/lib/prisma");
@@ -164,9 +171,12 @@ async function reimburseeById(personId: number): Promise<(ReimburseeOption & { i
 }
 
 /** Whether a live person has an account to sign in with. */
-async function reimburseeHasAccount(personId: number): Promise<boolean> {
+async function reimburseesWithoutAccount(personIds: number[]): Promise<number[]> {
+  if (personIds.length === 0) return [];
   const [{ default: prisma }, { SIGN_IN_VERIFIED_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
-  return (await prisma.person.count({ where: { id: personId, ...SIGN_IN_VERIFIED_PERSON } })) > 0;
+  const withAccount = await prisma.person.findMany({ where: { id: { in: personIds }, ...SIGN_IN_VERIFIED_PERSON }, select: { id: true } });
+  const signsIn = new Set(withAccount.map((p) => p.id));
+  return personIds.filter((id) => !signsIn.has(id));
 }
 
 async function addNonMemberReimbursee(name: string, actorId: number): Promise<ReimburseeOption> {
@@ -248,7 +258,8 @@ export function configureRuntime(): void {
     personIds: { liveIds, storedIdsOf },
     people: { submitterByEmail, rememberMailAlias },
     personNames: { namesOf: personNames },
-    reimbursees: { search: searchReimbursees, byId: reimburseeById, hasAccount: reimburseeHasAccount, addNonMemberAdult: addNonMemberReimbursee },
+    problemDismissals: { withoutDismissed },
+    reimbursees: { search: searchReimbursees, byId: reimburseeById, withoutAccount: reimburseesWithoutAccount, addNonMemberAdult: addNonMemberReimbursee },
     alerts,
     mailbox: receiptMailbox(),
     // Matches the mail-raw/ lifecycle rule on each environment's receipt bucket: 90 days in prod, 30 in dev and staging.

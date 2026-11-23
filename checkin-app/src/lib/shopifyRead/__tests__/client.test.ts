@@ -151,6 +151,11 @@ describe('latestSyncRun', () => {
         expect(await freshClient().latestSyncRun()).toEqual(run);
         expect(db.syncRun.findFirst.mock.calls[0][0].orderBy).toEqual({ startedAt: 'desc' });
     });
+
+    it('skips the retention pass, which is recorded as a run but is not a sync', async () => {
+        await freshClient().latestSyncRun();
+        expect(db.syncRun.findFirst.mock.calls[0][0].where).toEqual({ objectScope: { not: 'retention' } });
+    });
 });
 
 describe('countSyncRuns (the diagnose route\'s probe)', () => {

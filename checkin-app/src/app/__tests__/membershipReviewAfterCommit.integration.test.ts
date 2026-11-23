@@ -5,7 +5,7 @@
  * What a saved clearance owes after its transaction. An approval on a denied household
  * is refused before anything is saved; a failed new-member trigger, run when the
  * household's settle activates it, leaves the reviewer with a success, since the
- * clearance saved.
+ * clearance saved, and stays as a stuck item.
  */
 
 import { attest } from '@/lib/membership/review';
@@ -101,16 +101,14 @@ describe('after a clearance commits', () => {
         expect(await prisma.backgroundCheckAttestation.count({ where: { processId: reviewId, result: 'REJECT' } })).toBe(1);
     });
 
-    it('reports success for a saved activation when a new-member trigger fails', async () => {
+    it('reports success for a saved activation when a new-member trigger fails, and keeps the trigger stuck', async () => {
         const { processId, reviewId } = await makeApplicant({ membership: 'NONE', paid: true });
         (openPersonBgForNewMember as jest.Mock).mockRejectedValue(new Error('db down'));
-        const logged = jest.spyOn(console, 'error').mockImplementation();
 
         await attest(revA, reviewId, { result: 'APPROVE' });
         await expect(attest(revB, reviewId, { result: 'APPROVE' })).resolves.toMatchObject({ status: 'ACTIVE' });
 
-        expect(logged).toHaveBeenCalledWith('clearance person background-check trigger failed:', expect.anything(), expect.any(Error));
-        logged.mockRestore();
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe('ACTIVE');
+        expect(await prisma.clearanceStepFailure.findMany({ where: { processId }, select: { step: true, error: true } })).toEqual([{ step: 'PERSON_BG_TRIGGER', error: 'db down' }]);
     });
 });

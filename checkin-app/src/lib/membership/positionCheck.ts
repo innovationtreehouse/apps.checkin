@@ -35,11 +35,16 @@ const ROLE_POSITION_LABELS = {
 /** Every position that needs a current check, by the name the audit row and the email use. */
 export const POSITION_LABELS = {
     ...ROLE_POSITION_LABELS,
+    PROGRAM_VOLUNTEER: "Volunteer",
+    CORE_VOLUNTEER: "Core volunteer",
     BUDGET_OWNER: "Budget bucket owner",
     BUDGET_TREASURER: "Budget bucket treasurer",
 } as const;
 
 export type Position = keyof typeof POSITION_LABELS;
+
+/** A program position's acknowledgement also names the program, for the email and the Problems link. */
+type AckData = { position?: string; programId?: number };
 
 /** The earliest check date valid at the start of the membership year served now; null while the Board has set no interval or boundary. */
 export async function positionCheckThreshold(db: DbClient, now = new Date()): Promise<Date | null> {
@@ -63,14 +68,14 @@ export async function lacksCurrentCheck(db: DbClient, personId: number, now = ne
  */
 export async function gatePositionCheck(
     tx: TxClient,
-    { personId, position, actorId, acknowledged }: { personId: number; position: Position; actorId: number; acknowledged: boolean },
+    { personId, position, programId, actorId, acknowledged }: { personId: number; position: Position; programId?: number; actorId: number; acknowledged: boolean },
 ): Promise<number | null> {
     if (!(await lacksCurrentCheck(tx, personId))) return null;
     if (!acknowledged) {
         throw new ServiceError(409, "This person isn't current on their background check, which this position needs. Acknowledge to assign it anyway; they'll be emailed how to start a check.", CHECK_ACKNOWLEDGEMENT_CODE);
     }
     const row = await tx.auditLog.create({
-        data: { ...personActor(actorId), action: "CREATE", tableName: ACK_TABLE, affectedEntityId: personId, newData: { position } },
+        data: { ...personActor(actorId), action: "CREATE", tableName: ACK_TABLE, affectedEntityId: personId, newData: { position, ...(programId === undefined ? {} : { programId }) } },
         select: { id: true },
     });
     return row.id;
@@ -88,10 +93,15 @@ export async function sendCheckEmail(ackIds: readonly number[], actorId: number)
     let ok = false;
     try {
         const acks = await prisma.auditLog.findMany({ where: { id: { in: [...ackIds] }, tableName: ACK_TABLE }, select: { affectedEntityId: true, newData: true }, orderBy: { id: "asc" } });
-        const positions = acks
-            .map((a) => (a.newData as { position?: string } | null)?.position)
-            .filter((p): p is Position => !!p && p in POSITION_LABELS)
-            .map((p) => POSITION_LABELS[p]);
+        const data = acks.map((a) => (a.newData ?? {}) as AckData);
+        const programIds = data.flatMap((d) => (d.programId === undefined ? [] : [d.programId]));
+        const programNames = new Map((programIds.length ? await prisma.program.findMany({ where: { id: { in: programIds } }, select: { id: true, name: true } }) : []).map((p) => [p.id, p.name]));
+        const positions = data
+            .filter((d): d is AckData & { position: Position } => !!d.position && d.position in POSITION_LABELS)
+            .map((d) => {
+                const program = d.programId === undefined ? undefined : programNames.get(d.programId);
+                return program ? `${POSITION_LABELS[d.position]} for ${program}` : POSITION_LABELS[d.position];
+            });
         const person = acks.length ? await prisma.person.findUnique({ where: { id: acks[0].affectedEntityId }, select: { name: true, email: true } }) : null;
         if (person?.email && positions.length) {
             ok = await sendTemplated("membership.positionNeedsCheck", person.email, {
@@ -136,9 +146,19 @@ async function stuckEmails(): Promise<Map<number, { ackIds: number[]; failedAt: 
     return failed;
 }
 
-/** Each email that failed and has not since gone out, timed by its first failure. */
+/** The page a position is assigned on: its program, the budgets page for a bucket position, otherwise the roles page. */
+export function positionPageHref({ position, programId }: AckData): string {
+    if (programId !== undefined) return `/program-ops/programs/${programId}`;
+    if (position === "BUDGET_OWNER" || position === "BUDGET_TREASURER") return "/budgets";
+    return "/membership-ops/roles";
+}
+
+/** Each email that failed and has not since gone out, timed by its first failure, linked to the page its position is assigned on. */
 export async function checkEmailStuckItems(): Promise<StuckItem[]> {
-    return [...(await stuckEmails())].map(([id, { failedAt }]) => ({ id: String(id), step: CHECK_EMAIL_STEP, href: "/membership-ops/roles", failedAt }));
+    const stuck = await stuckEmails();
+    const acks = stuck.size ? await prisma.auditLog.findMany({ where: { id: { in: [...stuck.keys()] }, tableName: ACK_TABLE }, select: { id: true, newData: true } }) : [];
+    const ackOf = new Map(acks.map((a) => [a.id, (a.newData ?? {}) as AckData]));
+    return [...stuck].map(([id, { failedAt }]) => ({ id: String(id), step: CHECK_EMAIL_STEP, href: positionPageHref(ackOf.get(id) ?? {}), failedAt }));
 }
 
 /** Retry for a stuck check email: 404 when it isn't stuck, 409 when it fails again. */

@@ -346,6 +346,21 @@ defineRoute({
     ],
 });
 
+// Board runs the waiting-application settle sweep once: every household
+// application waiting on its background check is settled, as the bg-settle cron
+// does. Board-only, as refund here and review-override's withAuth gate: settling
+// moves membership state. The bag is { ApplicationSettleCounts }, three counts,
+// sent unwrapped.
+defineRoute({
+    endpoint: 'POST /api/membership-ops/applications/settle-waiting',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: null,
+    returns: ['ApplicationSettleCounts'],
+    orderedView: [
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+
 // Board's in-flight membership applications. Exposes every applicant household's
 // PII (parents + children names/emails), so only isSysadmin/board may see it, and
 // the field grant is explicit per role.
@@ -912,6 +927,21 @@ defineRoute({
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'results',
     returns: ['ProblemRetryResult'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:internal']],
+        ['isBoardMember', ['everyones:internal']],
+    ],
+});
+
+// Dismiss on the Problems list: takes each named stuck item off the list and
+// answers whether it left. Admits the people who see System Status; each
+// step's own role check runs inside the route. No error text leaves (see
+// problemsSyntheticClassifications.ts), so neither view needs a personal grant.
+defineRoute({
+    endpoint: 'POST /api/system-status/problems/dismiss',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: 'results',
+    returns: ['ProblemDismissResult'],
     orderedView: [
         ['isSysadmin',    ['everyones:internal']],
         ['isBoardMember', ['everyones:internal']],

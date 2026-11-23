@@ -16,11 +16,16 @@ operations over the same core.
 EventBridge (cron)  ─▶  handler  ─┬─ incremental sync (orders + payouts, updated_at cursor)
                                    └─ backfill (Bulk Operation lifecycle, from cutover date)
                                             │
-   Shopify Admin GraphQL  ──fetch──▶  shopify_raw_event   (append-only log, never mutated)
+   Shopify Admin GraphQL  ──fetch──▶  shopify_raw_event   (append-only log, never updated)
                                             │  (separate, replayable step)
                                    loader / projection  ──upsert by GID──▶  shop_* live tables
 ```
 
+- **Retention** runs after each daily incremental sync, capped per run and recorded as an
+  ADMIN `sync_run` (`retention`). A raw event is deleted seven years after the Form 990
+  deadline for its store event's fiscal year, and only once a later entry for the same gid
+  supersedes it, so a replay still rebuilds every live row. A bulk export is deleted 90 days
+  after its run ended.
 - **`shopify_raw_event`** is an append-only diagnosis log. Every row records how it
   arrived via the `source` column (`BACKFILL` / `INCREMENTAL` / `HAND_LOADED` /
   `TEST_LOADED`), so synthetic rows stay distinguishable from real API data forever.
@@ -38,6 +43,12 @@ EventBridge (cron)  ─▶  handler  ─┬─ incremental sync (orders + payout
   balance-transaction pull filters on `processed_at` — documented (2026-04) as the same
   instant as the node's `transactionDate`, which is the field the watermark advances on, so
   the filter axis matches the watermark axis (no skips, no full re-pull).
+- Payouts are pulled by `issued_at` and balance transactions by `processed_at`, and a later
+  payout status change or payout assignment moves neither. So after the forward pull every
+  incremental run also re-reads the last 30 days of both (`REREAD_WINDOW_DAYS` in
+  `src/sync/streams.ts`). An unchanged node appends nothing; a changed one is appended and
+  projected like any other read. The re-read never moves the watermark, and it stops once the
+  run has used half of its deadline, leaving the rest of the window to the next run.
 
 ## Where to put credentials
 

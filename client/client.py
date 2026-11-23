@@ -13,6 +13,7 @@ import html
 import email.utils
 import json
 import os
+import queue
 import secrets
 import sqlite3
 import subprocess
@@ -299,19 +300,31 @@ SCAN_PROTOCOL_VERSION = 7
 
 
 class ClockWatch:
-    """Detect a large step in wall time that would stamp scannedAt wrong."""
+    """Detect a large step in wall time that would stamp scannedAt wrong.
+    The scanner and the drain both call check(), so it takes a lock."""
 
     def __init__(self):
+        self._lock = threading.Lock()
         self._last_wall = time.time()
         self._last_mono = time.monotonic()
 
     def check(self):
-        wall = time.time()
-        mono = time.monotonic()
-        jumped = abs((wall - self._last_wall) - (mono - self._last_mono)) > CLOCK_STEP_SECONDS
-        self._last_wall = wall
-        self._last_mono = mono
-        return jumped
+        with self._lock:
+            wall = time.time()
+            mono = time.monotonic()
+            jumped = abs((wall - self._last_wall) - (mono - self._last_mono)) > CLOCK_STEP_SECONDS
+            self._last_wall = wall
+            self._last_mono = mono
+            return jumped
+
+
+def open_outbox(path):
+    """The outbox with every queued scan marked clockSuspect. Monotonic time
+    restarts with the Pi, so a step while the client was down can't be
+    measured; a queued row may carry a scannedAt from before such a step."""
+    outbox = Outbox(path)
+    outbox.mark_clock_suspect()
+    return outbox
 
 
 class AttendanceState:
@@ -492,16 +505,18 @@ class AttendanceState:
             self.local_close_banner = None
             return mine
 
-    def is_repeat_read(self, participant_id):
+    def is_repeat_read(self, participant_id, read_at=None):
         """True for a read of this badge within REPEAT_READ_SECONDS of its last
         read: the scanner re-reading one touch, or a badge held to the reader.
-        Every read becomes the latest, so the window slides while it is held."""
+        Every read becomes the latest, so the window slides while it is held.
+        Judged by read time (monotonic, default now), not by when the read is
+        handled: a read queued behind a slow scan is still the same touch."""
         pid = int(participant_id)
-        now = time.monotonic()
+        read_at = time.monotonic() if read_at is None else read_at
         with self.lock:
             last = self.last_read.get(pid)
-            self.last_read[pid] = now
-            return last is not None and now - last < REPEAT_READ_SECONDS
+            self.last_read[pid] = read_at
+            return last is not None and read_at - last < REPEAT_READ_SECONDS
 
     def close_decision(self, participant_id):
         """For a badge leaving, from what the kiosk shows (roster plus queued
@@ -601,6 +616,7 @@ class AttendanceState:
         with self.lock:
             self.presence_seq += 1
             self.present_ids.add(int(participant_id))
+        self.save_view_if_changed()
 
     def seed_from_attendance(self, att_data, pending=(), since_seq=None):
         """Replace the local presence view with the server roster, plus this
@@ -1273,7 +1289,22 @@ def _full_roster(text):
 # ---------------------------------------------------------------------------
 # USB scanner listener
 # ---------------------------------------------------------------------------
-def usb_scanner_listener(backend, state, outbox, device_path):
+def scan_worker(backend, state, outbox, reads):
+    """Handles queued reads in order, each judged by the time it was read, so
+    a slow live POST never makes a double read look like a second scan. A
+    scan that fails asks the person to scan again; the worker keeps going."""
+    while True:
+        participant_id, read_at = reads.get()
+        try:
+            handle_scan(backend, state, outbox, participant_id, read_at=read_at)
+        except Exception:
+            log.exception(f"Scan of {participant_id} failed")
+            state.push_event({"html": BADGE_NOT_READ_HTML})
+        finally:
+            reads.task_done()
+
+
+def usb_scanner_listener(state, reads, device_path):
     try:
         import evdev
     except ImportError:
@@ -1355,7 +1386,7 @@ def usb_scanner_listener(backend, state, outbox, device_path):
                     if buffer.strip():
                         participant_id = buffer.strip()
                         log.info(f"Scanned ID: {participant_id}")
-                        handle_scan(backend, state, outbox, participant_id)
+                        reads.put((participant_id, time.monotonic()))
                     buffer = ""
                 elif key_event.scancode in KEY_MAP:
                     buffer += KEY_MAP[key_event.scancode]
@@ -1373,7 +1404,7 @@ def usb_scanner_listener(backend, state, outbox, device_path):
                 pass
             dev = None
 
-def stdin_scanner_listener(backend, state, outbox):
+def stdin_scanner_listener(reads):
     log.info("USB device not configured — reading scans from stdin")
     while True:
         try:
@@ -1381,7 +1412,7 @@ def stdin_scanner_listener(backend, state, outbox):
             participant_id = line.strip()
             if participant_id:
                 log.info(f"Stdin scan: {participant_id}")
-                handle_scan(backend, state, outbox, participant_id)
+                reads.put((participant_id, time.monotonic()))
         except EOFError:
             break
 
@@ -1483,17 +1514,19 @@ def _saved_banner_html(queued, intent=None):
 # Server ids are Postgres int4. A longer read is two badges run together (a
 # lost Enter) or a product barcode -- never a person, and must not be queued.
 MAX_PARTICIPANT_ID = 2147483647
+BADGE_NOT_READ_HTML = '<div class="banner banner-error">✗ Badge not read — please scan again</div>'
 
 def _is_valid_participant_id(participant_id):
     raw = str(participant_id)
     return raw.isascii() and raw.isdigit() and 0 < int(raw) <= MAX_PARTICIPANT_ID
 
-def handle_scan(backend, state, outbox, participant_id):
+def handle_scan(backend, state, outbox, participant_id, read_at=None):
+    """read_at is the monotonic time the scanner read the badge; None means now."""
     if not _is_valid_participant_id(participant_id):
         log.warning(f"Rejected malformed scan: {participant_id!r}")
-        state.push_event({"html": '<div class="banner banner-error">✗ Badge not read — please scan again</div>'})
+        state.push_event({"html": BADGE_NOT_READ_HTML})
         return
-    if state.is_repeat_read(participant_id) or state.in_close_wait(participant_id):
+    if state.is_repeat_read(participant_id, read_at) or state.in_close_wait(participant_id):
         # One scan, filtered before it is queued or sent, so online and offline
         # agree: a double-read never toggles back nor confirms a close. A held
         # badge restarts its own close prompt, wait first, from its last read.
@@ -1847,7 +1880,7 @@ def main():
 
     backend = BackendClient(backend_url, signing_key, attendance_path or None)
     state = AttendanceState()
-    outbox = Outbox(config.get("outbox_path", DEFAULT_OUTBOX_PATH))
+    outbox = open_outbox(config.get("outbox_path", DEFAULT_OUTBOX_PATH))
     log.info(f"Outbox:  {outbox.path} ({outbox.pending_count()} pending on start)")
 
     state.restore_from(outbox)
@@ -1889,14 +1922,20 @@ def main():
     # re-signing and resubmitting each one, once the backend is reachable.
     drain = threading.Thread(
         target=replay_drain, args=(outbox, backend.post_scan, state.push_event),
-        kwargs={"protocol_ok_fn": lambda: state.scan_protocol >= SCAN_PROTOCOL_VERSION}, daemon=True
+        kwargs={"protocol_ok_fn": lambda: state.scan_protocol >= SCAN_PROTOCOL_VERSION,
+                "clock_check_fn": state.clock_watch.check},
+        daemon=True
     )
     drain.start()
 
+    # The listener only reads and stamps; the worker handles the reads, so a
+    # slow scan never delays the read time of the one behind it.
+    reads = queue.Queue()
+    threading.Thread(target=scan_worker, args=(backend, state, outbox, reads), daemon=True).start()
     if usb_device:
-        scanner = threading.Thread(target=usb_scanner_listener, args=(backend, state, outbox, usb_device), daemon=True)
+        scanner = threading.Thread(target=usb_scanner_listener, args=(state, reads, usb_device), daemon=True)
     else:
-        scanner = threading.Thread(target=stdin_scanner_listener, args=(backend, state, outbox), daemon=True)
+        scanner = threading.Thread(target=stdin_scanner_listener, args=(reads,), daemon=True)
     scanner.start()
 
     KioskHandler.state = state

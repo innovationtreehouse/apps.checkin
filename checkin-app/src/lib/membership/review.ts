@@ -10,16 +10,15 @@ import { notifyBoardCheckRejected } from "@/lib/membership/boardAlerts";
 import type { SettleStep } from "@/lib/membership/settleHouseholdBg";
 import { config } from "@/lib/config";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
-import { openPersonBgForNewMember } from "@/lib/membership/personBgTriggers";
-import { openPersonAgreementForNewMember } from "@/lib/membership/personAgreementTriggers";
+import { runClearanceStep } from "@/lib/membership/clearanceSteps";
 import { personActor, type AuditActor } from "@/lib/auditActor";
 import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { type DbClient, type TxClient } from "@/lib/db-client";
 import { awaitingBgReview, fromWhere, personBgOpen } from "@/lib/membership/lifecycle";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import { lockHouseholdRows } from "@/lib/household/archiveGuard";
+import { householdLeadsWhere } from "@/lib/household/leads";
 import { lockPersonRows, lockProcessRows } from "@/lib/lockOrder";
-import { raisePaymentException } from "@/lib/finance/reconcile/exceptions";
 import { SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
 import { householdCheckStarted, jsonField, reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
@@ -151,7 +150,7 @@ export async function reviewHouseholds(db: DbClient, process: ReviewTarget): Pro
 
 /** The adults a consent review may name: the requested household's live leads. */
 async function liveHouseholdLeadIds(db: DbClient, householdId: number): Promise<number[]> {
-    const leads = await db.person.findMany({ where: { householdId, isHouseholdLead: true }, select: { id: true } });
+    const leads = await db.person.findMany({ where: householdLeadsWhere(householdId), select: { id: true } });
     return leads.map((l) => l.id);
 }
 
@@ -597,7 +596,7 @@ export async function clearBackgroundCheck(
     const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...expected.where }, data: { bgClearedAt: now, status: "ACTIVE", stageEnteredAt: now } });
     if (!count) throw movedOn();
     await audit(tx, personActor(actorId), processId, { status: process.status }, { status: "ACTIVE", bgCleared: true, subjectPersonId: process.subjectPersonId });
-    return { status: "ACTIVE", activated: false, householdId: null, isInitial: false };
+    return { status: "ACTIVE", activated: false, processId, householdId: null, isInitial: false };
 }
 
 /** An unlocked writer (archive) can still move the row between the locked read and the write. */
@@ -615,14 +614,15 @@ async function throwIfOwnHousehold(tx: TxClient, actorId: number, subject: Grant
 export type ClearanceOutcome = {
     status: OrgMembershipProcessStatus;
     activated: boolean;
+    processId: number;
     householdId: number | null;
     isInitial: boolean;
     /** Set when the paid order was refunded: held unactivated, and the board is owed an item. */
-    refunded?: { processId: number; shopifyOrderId: string };
+    refunded?: { shopifyOrderId: string };
 };
 
 /**
- * Runs a step whose failure must not change what the clearance reports: it has
+ * Runs an email whose failure must not change what the clearance reports: it has
  * committed, and retrying the attestation is refused, so a throw would only tell the
  * reviewer a saved clearance failed.
  */
@@ -630,24 +630,23 @@ async function afterClearanceCommitted(step: string, outcome: ClearanceOutcome, 
     try {
         await run();
     } catch (error) {
-        const context = { householdId: outcome.householdId, processId: outcome.refunded?.processId };
+        const context = { householdId: outcome.householdId, processId: outcome.processId };
         logger.error(`clearance ${step} failed:`, context, error);
         await logBackendError(error, `clearance ${step}`, context);
     }
 }
 
 /**
- * The sends every clearance owes after it commits: the board item for a refunded
- * order, congrats + the new-member triggers
- * on activation, else the payment-open notice. Never throws. What a failed step leaves
- * behind is picked up later: the daily reconcile raises a refunded order, the nightly
- * agreement sweep opens a missed agreement, and a missed background-check opening
- * still shows on the compliance page, where the Board can start the check.
+ * The steps every clearance owes after it commits: the board item for a refunded
+ * order, congrats + the new-member triggers on activation, else the payment-open
+ * notice. Never throws. A failed raise or trigger becomes a stuck item on the
+ * Problems list (runClearanceStep); a failed email is logged.
  */
 export async function notifyClearanceOutcome(outcome: ClearanceOutcome, opts?: { paymentOpenNotice?: (householdId: number) => Promise<void> }) {
-    const { refunded, householdId } = outcome;
+    const { refunded, processId, householdId } = outcome;
+    const asOf = new Date();
     if (refunded) {
-        await afterClearanceCommitted("refunded order raise", outcome, () => raisePaymentException("REVERSED_BEFORE_ACTIVATION", { ...refunded, severity: "CRITICAL" }));
+        await runClearanceStep("REFUNDED_ORDER_RAISE", { processId, householdId, shopifyOrderId: refunded.shopifyOrderId, asOf });
         return;
     }
     if (outcome.activated && householdId) {
@@ -656,8 +655,8 @@ export async function notifyClearanceOutcome(outcome: ClearanceOutcome, opts?: {
         // for any program-attached ≥18 person in the household, and the agreement
         // side, where an adult child signs their own.
         if (outcome.isInitial) {
-            await afterClearanceCommitted("person background-check trigger", outcome, () => openPersonBgForNewMember(householdId, new Date()));
-            await afterClearanceCommitted("person agreement trigger", outcome, () => openPersonAgreementForNewMember(householdId, new Date()));
+            await runClearanceStep("PERSON_BG_TRIGGER", { processId, householdId, shopifyOrderId: null, asOf });
+            await runClearanceStep("PERSON_AGREEMENT_TRIGGER", { processId, householdId, shopifyOrderId: null, asOf });
         }
     } else if (householdId) {
         // Household process cleared into PENDING_PAYMENT (a PERSON_BG has no
@@ -690,7 +689,7 @@ export function matchesVolunteerDesignation(parentEmails: string[], designationE
 export async function applyVolunteerFamilyStatus(db: DbClient, orgMembershipId: number, householdId: number, markedByReviewer: boolean) {
     let isVolunteerFamily = markedByReviewer;
     if (!isVolunteerFamily) {
-        const parents = await db.person.findMany({ where: { householdId, isHouseholdLead: true, email: { not: null }, ...SIGN_IN_VERIFIED_PERSON }, select: { email: true } });
+        const parents = await db.person.findMany({ where: { ...householdLeadsWhere(householdId), email: { not: null }, ...SIGN_IN_VERIFIED_PERSON }, select: { email: true } });
         const designations = await db.volunteerDesignation.findMany({ select: { email: true } });
         isVolunteerFamily = matchesVolunteerDesignation(parents.map((p) => p.email!), designations.map((d) => d.email));
     }

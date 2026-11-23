@@ -17,7 +17,7 @@ Three idempotent operations:
   `s-read-function` re-pulls a range from Shopify. Safe because re-pulls upsert by GID.
 - **`reingest-bulk`** — re-reassemble and re-project the stored verbatim bulk exports (no
   Shopify calls). Use after a reassembly-logic fix to repair backfilled orders; watermarks
-  untouched.
+  untouched. Exports are kept 90 days after their run ended, so only recent ones remain.
 
 All three are safe to run repeatedly and are recorded as `sync_run` rows with kind `ADMIN`.
 

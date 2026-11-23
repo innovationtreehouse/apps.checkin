@@ -43,4 +43,20 @@ describe.each(["POST", "DELETE"] as const)("%s /api/programs/[id]/participants m
         expect(res.status).toBe(400);
         expect(await res.json()).toEqual(expect.objectContaining({ error: "participantId is required" }));
     });
+
+    it.each([
+        ["not JSON", "{participantId: 5"],
+        ["JSON null", "null"],
+        ["a JSON array", "[5]"],
+        ["a JSON number", "5"],
+        ["a JSON string", '"5"'],
+    ])("refuses a body that is %s with a 400 before reading anything", async (_label, raw) => {
+        const res = await handlers[method](
+            new Request("http://x/api/programs/1/participants", { method, body: raw }),
+            { params: Promise.resolve({ id: "1" }) },
+        );
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual(expect.objectContaining({ error: "Invalid JSON body" }));
+        expect(prisma.program.findUnique).not.toHaveBeenCalled();
+    });
 });

@@ -36,6 +36,7 @@ export function configureRuntime(): void {
     catalogReader: {
       ...catalogReader,
       getOrgProvisionalItem: async (gtin13) => readService.getOrgProvisionalItem((await getOrg()).id, gtin13),
+      searchOrgProvisionalItems: async (q) => readService.searchOrgProvisionalItems((await getOrg()).id, q),
     },
     catalogSubmissions: createCatalogSubmissions(getOrg),
     inventorySink: createLocalInventorySink(getOrg),

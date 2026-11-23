@@ -11,6 +11,7 @@ import { goesBy } from "@/lib/person/name";
 import { ToolLevelBadge, toToolLevel, toolLevelDot } from "@/components/ToolLevelBadge";
 
 import { PageLoader } from "@/components/ui/PageLoader";
+import { useOrgTime } from "@/components/TimezoneProvider";
 
 type ToolStatusLevel = "BASIC" | "DOF" | "CERTIFIED" | "INSTRUCTOR" | "MAY_CERTIFY_OTHERS";
 
@@ -65,6 +66,7 @@ function KioskCertificationsInner() {
   const isKioskMode = searchParams.get('mode') === 'kiosk' || !!sig;
   const minute = useSyncExternalStore(subscribeToClock, currentMinute, noMinute);
   const currentTime = minute === null ? null : new Date(minute * 60000);
+  const { formatTime } = useOrgTime();
 
   // A 401 here reaches a kiosk, which is never sent to sign in.
   const load = useLoad<unknown>(`/api/kioskdisplay/certifications?limit_to_present=${limitToPresent}`, {
@@ -188,7 +190,7 @@ function KioskCertificationsInner() {
                 </Text>
               )}
               <Text fz="clamp(2rem, 5vw, 3.5rem)" fw={700} lh={1} style={{ fontVariantNumeric: 'tabular-nums' }}>
-                {currentTime.toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" })}
+                {formatTime(currentTime, { hour: "numeric", minute: "2-digit" })}
               </Text>
             </Group>
           )}

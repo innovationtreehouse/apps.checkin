@@ -3,9 +3,11 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
+jest.mock("@mantine/modals", () => ({ ...jest.requireActual("@mantine/modals"), modals: { openConfirmModal: jest.fn() } }));
 
 import { act, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
+import { modals } from "@mantine/modals";
 import { jsonBody } from "@/test-helpers/jsonBody";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import ProgramDetailsPage from "../page";
@@ -386,6 +388,75 @@ describe("ProgramDetailsPage", () => {
         expect.objectContaining({ method: "DELETE", body: JSON.stringify({ participantId: 201 }) }),
       ),
     );
+  });
+
+  describe("a volunteer whose background check isn't current", () => {
+    const warning = { error: "This person isn't current on their background check.", code: "CHECK_ACKNOWLEDGEMENT_REQUIRED" };
+    // Answers the warning until the request carries the acknowledgement.
+    const warnUntilAcknowledged = (method: string) => ({
+      url: "/api/programs/1/volunteers",
+      method,
+      result: () => {
+        const calls = (global.fetch as jest.Mock).mock.calls.filter(([u, i]) => String(u).includes("/volunteers") && (i as RequestInit | undefined)?.method === method);
+        const body = JSON.parse((calls[calls.length - 1][1] as RequestInit).body as string);
+        return body.acknowledgeCheck ? { ok: true, body: {} } : { ok: false, status: 409, body: warning };
+      },
+    });
+    const bodiesSent = (fetchMock: jest.Mock, method: string) => fetchMock.mock.calls
+      .filter(([u, i]) => String(u).includes("/volunteers") && (i as RequestInit | undefined)?.method === method)
+      .map(([, i]) => JSON.parse((i as RequestInit).body as string));
+
+    beforeEach(() => { jest.mocked(modals.openConfirmModal).mockClear(); jest.mocked(notifications.show).mockClear(); });
+
+    it("warns on add, and adds with the acknowledgement on Got it", async () => {
+      setSession({ id: 1, isSysadmin: true });
+      const fetchMock = routedFetch([
+        { url: "/api/programs/1/eligible-participants", method: "GET", result: { ok: true, body: { members: [{ id: 555, name: "Wendy West", ageWarning: null }] } } },
+        warnUntilAcknowledged("POST"),
+        { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
+      ]);
+      renderPage();
+      await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+      fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+      fireEvent.change((await screen.findAllByPlaceholderText("Start typing to search..."))[0], { target: { value: "Wendy" } });
+      fireEvent.click(await screen.findByText("Wendy West"));
+      fireEvent.click(screen.getAllByRole("button", { name: "Add" })[0]);
+
+      await waitFor(() => expect(modals.openConfirmModal).toHaveBeenCalledTimes(1));
+      const ack = jest.mocked(modals.openConfirmModal).mock.calls[0][0];
+      expect(ack.title).toBe("Wendy West isn't current on their background check");
+      expect(ack.labels).toEqual({ confirm: "Got it", cancel: "Cancel" });
+      expect(notifications.show).not.toHaveBeenCalled();
+      expect(screen.getByDisplayValue("Wendy West")).toBeInTheDocument();
+
+      await act(async () => { await ack.onConfirm?.(); });
+
+      expect(bodiesSent(fetchMock, "POST")).toEqual([{ participantId: 555 }, { participantId: 555, acknowledgeCheck: true }]);
+      expect(screen.queryByDisplayValue("Wendy West")).not.toBeInTheDocument();
+      expect(notifications.show).not.toHaveBeenCalled();
+    });
+
+    it("warns on making core, and saves with the acknowledgement on Got it", async () => {
+      setSession({ id: 1, isSysadmin: true });
+      const plain = { ...programData, volunteers: [{ ...programData.volunteers[0], isCore: false }] };
+      const fetchMock = routedFetch([
+        warnUntilAcknowledged("PATCH"),
+        { url: "/api/programs/1", method: "GET", result: { ok: true, body: plain } },
+      ]);
+      renderPage();
+      await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+      fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+      fireEvent.click(await screen.findByLabelText("Core Volunteer"));
+
+      await waitFor(() => expect(modals.openConfirmModal).toHaveBeenCalledTimes(1));
+      const ack = jest.mocked(modals.openConfirmModal).mock.calls[0][0];
+      expect(ack.title).toBe("Vera Volunteer isn't current on their background check");
+
+      await act(async () => { await ack.onConfirm?.(); });
+
+      expect(bodiesSent(fetchMock, "PATCH")).toEqual([{ participantId: 201, isCore: true }, { participantId: 201, isCore: true, acknowledgeCheck: true }]);
+      expect(notifications.show).not.toHaveBeenCalled();
+    });
   });
 
   it("keeps the volunteer selection when the add request fails", async () => {

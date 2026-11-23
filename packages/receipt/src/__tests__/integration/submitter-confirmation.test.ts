@@ -21,6 +21,7 @@ const refuses = (receiptId: string, signerId: number) => refused.get(receiptId)?
 
 const confirmations: SubmitterConfirmations = {
   awaiting: async () => awaiting,
+  awaitingFor: async (ids) => awaiting.filter((a) => ids.includes(a.reimburseePersonId)),
   confirm: async (receiptId, reimburseePersonId, signer, reason) => {
     if (!awaiting.some((a) => a.receiptId === receiptId && a.reimburseePersonId === reimburseePersonId)) return false;
     if (refuses(receiptId, signer.id)) throw new ServiceError(403, "signer already signs another step on this expense");
@@ -38,7 +39,7 @@ const reimbursees: ReceiptReimbursees = {
     const name = new Map([[BOB.id, "Bob Baker"], [NO_ACCOUNT.id, NO_ACCOUNT.name], [LAPSED.id, "Lee Lapsed"]]).get(id);
     return name ? { id, name, isAdult: true } : null;
   },
-  hasAccount: async (id) => id !== NO_ACCOUNT.id,
+  withoutAccount: async (ids) => ids.filter((id) => id === NO_ACCOUNT.id),
   addNonMemberAdult: async (name) => ({ id: 301, name, isAdult: true }),
 };
 

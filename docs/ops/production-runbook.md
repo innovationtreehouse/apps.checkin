@@ -164,4 +164,9 @@ or a late job has waited over 14 days. The email carries ids, steps and dates
 only. With no address set, nothing is sent.
 
 **Retry is manual.** Nothing on the list retries by itself: a stuck item stays
-until a person retries it.
+until a person retries or dismisses it.
+
+**Dismiss.** Whoever may retry an item may dismiss it instead, taking it off the
+list and out of the daily email. A dismissed item that later fails again is
+listed again. A captured email whose stored copy expired before it was processed
+stays listed as "expired, can't be replayed", with Dismiss only.

@@ -62,7 +62,7 @@ describe("receipts — route auth", () => {
       expect([path, [401, 403].includes((await api(null, path)).status)]).toEqual([path, true]);
     }
     expect([401, 403]).toContain((await upload(null, `anon ${stamp}`)).status);
-  });
+  }, 60_000);
 
   it("denies a youth outside the submitter audience", async () => {
     const member = await loginAs(NON_SUBMITTER);
@@ -92,7 +92,7 @@ describe("receipts — route auth", () => {
     for (const path of ["/receipts", "/receipts/upload", "/finance/review", "/receipts/settings"]) {
       expect([path, (await api(finance, path)).status]).toEqual([path, 200]);
     }
-  });
+  }, 60_000);
 });
 
 describe("receipts — submitter journey", () => {
@@ -108,7 +108,7 @@ describe("receipts — submitter journey", () => {
       post(submitter, `/api/receipts/${id}/submitter-confirm`),
       post(submitter, `/api/receipts/${id}/push-to-inventory`),
     ]);
-  });
+  }, 60_000);
 
   it("auto-reads an upload, finalizes it on confirm, and lists it with the owed one, which stays when completed are hidden", async () => {
     const submitter = await loginAs(SUBMITTER);
@@ -170,7 +170,7 @@ describe("receipts — submitter journey", () => {
     const push = await post(finance, `/api/receipts/${auto.json.id}/push-to-inventory`);
     expect(push.status).toBe(200);
     expect(push.json).toEqual({ pushed: true });
-  });
+  }, 60_000);
 });
 
 describe("receipts — finance review", () => {

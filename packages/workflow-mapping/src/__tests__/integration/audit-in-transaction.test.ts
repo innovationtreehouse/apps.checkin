@@ -38,6 +38,7 @@ beforeEach(async () => {
         lookups.map((l) => ({ index: l.index, gtin13: GTIN, itemReferenceId: 1, conversionFactor: 1, conversionVersion: 1 })),
       checkReferences: async () => { throw new Error("unused"); },
       getOrgProvisionalItem: async () => null,
+      searchOrgProvisionalItems: async () => [],
       getActiveItem: async () => { throw new Error("unused"); },
     },
   });
