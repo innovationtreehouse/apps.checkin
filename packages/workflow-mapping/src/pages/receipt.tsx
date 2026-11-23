@@ -3,11 +3,10 @@ import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Radio, ScrollArea, Select, SimpleGrid, Stack, Table, Text, TextInput, Textarea, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { formatGtinDisplay } from "@checkin/gtin";
 import {
-  CatalogNamesUnavailable, HttpError, MIN_CATALOG_SEARCH_LENGTH, NO_CATALOG_NAMES, catalogItemLabel, catalogSearchTerm, useCatalogSearch, withLookup, withProvisionalNames,
-  type CatalogItem, type CatalogNames,
+  CatalogNamesUnavailable, HttpError, MIN_CATALOG_SEARCH_LENGTH, NO_CATALOG_NAMES, catalogItemLabel, catalogSearchTerm, useCatalogSearch, withLookup, withProvisionalNames, provisionalLabel, type ProvisionalName,
+  showError, showSuccess, showWarning, type CatalogItem, type CatalogNames,
 } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
 import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, api, stateColor, stateLabel, errorMessage, notifyNavCounts, useCanCloseOut, useCanManage, useLoad } from "../components/api";
@@ -88,7 +87,7 @@ interface SubcategoryOption {
   categoryId: number;
 }
 /** The provisional names GET /api/inventory/org-items/{gtin13} returns beside the row. */
-interface OrgItemNames { InventoryProvisionalItem?: { provisionalGtin13: string; name: string }[] }
+interface OrgItemNames { InventoryProvisionalItem?: ProvisionalName[] }
 
 /** A part's catalog name, else its provisional name from org-items, else the error the catalog or org-items read threw. */
 async function partName(gtin13: string): Promise<unknown> {
@@ -101,7 +100,8 @@ async function partName(gtin13: string): Promise<unknown> {
     // A 404 means the org has no row for the part; any other failure leaves the name unknown.
     if (!(e instanceof HttpError && e.status === 404)) return e;
   }
-  return row?.InventoryProvisionalItem?.find((p) => p.provisionalGtin13 === gtin13)?.name ?? catalog;
+  const provisional = row?.InventoryProvisionalItem?.find((p) => p.provisionalGtin13 === gtin13);
+  return provisional ? provisionalLabel(provisional) : catalog;
 }
 
 /** Part names by GTIN, one lookup per distinct GTIN, with the GTINs the catalog lacks or failed to answer for. */
@@ -136,7 +136,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
   /** Returns to the page the receipt was opened from once the receipt is resolved. */
   function leaveIfResolved(state: string): boolean {
     if (state !== "resolved") return false;
-    notifications.show({ message: "Receipt resolved", color: "green" });
+    showSuccess("Receipt resolved");
     router.push(backHref);
     return true;
   }
@@ -151,15 +151,15 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
       });
       if (res?.validationNotes) {
         const title = res.state === "applying" ? "Apply didn't finish" : "Apply failed";
-        notifications.show({ title, message: res.validationNotes, color: "red", autoClose: false });
+        showError(res.validationNotes, { title });
         return true;
       }
       // An unreadable state leaves the page as it is; the reload below reports the failure.
       const after = lineDecision ? await api<Detail>(`/receipts/${id}`).catch(() => null) : null;
-      if (!(after && leaveIfResolved(after.ReceivedReceipt.state))) notifications.show({ message, color: "green" });
+      if (!(after && leaveIfResolved(after.ReceivedReceipt.state))) showSuccess(message);
       return true;
     } catch (err) {
-      notifications.show({ title: "Couldn't save", message: errorMessage(err), color: "red", autoClose: false });
+      showError(errorMessage(err), { title: "Couldn't save" });
       return false;
     } finally {
       setBusy(false);
@@ -189,13 +189,13 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
       const after = await api<Detail>(base);
       if (leaveIfResolved(after.ReceivedReceipt.state)) return;
       if (after.ReceivedReceipt.matchingPendingSince) {
-        notifications.show({ message: `Matching still couldn't run because ${matchingPendingReason(after.ReceivedReceipt)}. Try again later, or map the lines by hand.`, color: "gray" });
+        showWarning(`Matching still couldn't run because ${matchingPendingReason(after.ReceivedReceipt)}. Try again later, or map the lines by hand.`, { autoClose: 4000 });
       } else {
         const matched = after.ReceivedReceiptLineStatus.filter((ls) => undecided.has(ls.id) && ls.recognitionStatus === "recognized").length;
-        notifications.show({ message: `${matched} ${matched === 1 ? "line" : "lines"} matched`, color: "green" });
+        showSuccess(`${matched} ${matched === 1 ? "line" : "lines"} matched`);
       }
     } catch (err) {
-      notifications.show({ title: "Couldn't run matching", message: errorMessage(err), color: "red", autoClose: false });
+      showError(errorMessage(err), { title: "Couldn't run matching" });
     } finally {
       setBusy(false);
       detail.reload();

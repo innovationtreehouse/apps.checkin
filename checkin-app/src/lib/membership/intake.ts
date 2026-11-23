@@ -12,7 +12,7 @@ import { householdApplicationOpenOrBlockedWhere } from "@/lib/membership/renewal
 import { ensureHouseholdMembership, lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
-import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
+import { settleAfterEvent } from "@/lib/membership/settleHouseholdBg";
 import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, HouseholdLeadYouthError, MAX_HOUSEHOLD_LEADS } from "@/lib/household/leads";
 import { upsertPrimaryContact, reconcileHouseholdConflicts } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
@@ -120,13 +120,18 @@ export async function getIntakeState(userId: number) {
     const primary = parents.find((p) => p.id === userId) ?? null;
     const secondary = parents.find((p) => p.id !== userId) ?? null;
 
+    // Someone who may edit the household gets every detail back; another member gets
+    // names and the address, but no ages, allergies, emails or emergency contact.
+    const mayEdit = leadIds.has(userId) || user.isSysadmin;
+    const contact = household?.emergencyContacts[0];
+
     const shape = (p: { id: number; name: string | null; email: string | null; dateOfBirth: Date | null; isDeclaredAdult: boolean; allergies: string | null }) => ({
         id: p.id,
         name: p.name,
-        email: p.email,
-        dob: p.dateOfBirth ? p.dateOfBirth.toISOString().slice(0, 10) : null,
-        over25: !p.dateOfBirth && !!p.isDeclaredAdult,
-        allergies: p.allergies,
+        email: mayEdit ? p.email : null,
+        dob: mayEdit && p.dateOfBirth ? p.dateOfBirth.toISOString().slice(0, 10) : null,
+        over25: mayEdit && !p.dateOfBirth && !!p.isDeclaredAdult,
+        allergies: mayEdit ? p.allergies : null,
     });
 
     const external = process ? await getExternalStatus(process) : null;
@@ -146,6 +151,7 @@ export async function getIntakeState(userId: number) {
         external,
         personAgreement: ownAgreement ? { id: ownAgreement.id, started: !!ownAgreement.zohoEnvelopeId } : null,
         ownBackgroundCheck,
+        hasEmergencyContact: !!(contact?.name?.trim() && contact?.phone?.trim()),
         prefill: {
             household: household
                 ? {
@@ -153,9 +159,9 @@ export async function getIntakeState(userId: number) {
                       ...pickAddress(household),
                       // The primary (lowest-priority) contact backs the single-field
                       // form. Shown even when flagged invalid so the lead can fix it.
-                      emergencyContactName: household.emergencyContacts[0]?.name ?? null,
-                      emergencyContactPhone: household.emergencyContacts[0]?.phone ?? null,
-                      emergencyContactEmail: household.emergencyContacts[0]?.email ?? null,
+                      emergencyContactName: mayEdit ? contact?.name ?? null : null,
+                      emergencyContactPhone: mayEdit ? contact?.phone ?? null : null,
+                      emergencyContactEmail: mayEdit ? contact?.email ?? null : null,
                   }
                 : null,
             primaryParent: primary ? shape(primary) : null,
@@ -588,11 +594,7 @@ export async function submitIntake(userId: number) {
 
     // A household that already qualifies on its people's checks is stamped cleared here,
     // so the applicant only signs and pays; one with a disputed adult is blocked.
-    try {
-        await settleHouseholdBg(household.id);
-    } catch (error) {
-        await logBackendError(error, "household background-check settle after intake", { householdId: household.id, processId: process.id });
-    }
+    await settleAfterEvent(household.id, "intake", {}, { processId: process.id });
 
     // The external actions (contract sign, a lead's check started) can already be
     // satisfied the moment we land at PENDING_EXTERNAL_ACTION: settle stamps

@@ -11,7 +11,7 @@ const program: ProgramDetail = {
 };
 
 const renderCard = (p: ProgramDetail) => renderWithProviders(
-  <ProgramDetailsCard program={p} ageRange={null} enrolledCount={0} isFull={false} myEnrolled={[]} viewerIsYouth={false} isClosed={false} hasEnded={false} onPayNow={() => {}} />,
+  <ProgramDetailsCard program={p} ageRange={null} enrolledCount={0} isFull={false} myEnrolled={[]} seesPayment isClosed={false} hasEnded={false} onPayNow={() => {}} />,
 );
 
 describe("ProgramDetailsCard prices", () => {

@@ -439,7 +439,11 @@ describe('in-kind gift detail routes', () => {
         inventoryLoadedAt: '2026-10-01T12:00:00.000Z',
         qbFirstFailedAt: '2026-10-03T00:00:00.000Z',
         qbLastError: 'QuickBooks 500',
-        lines: [{ id: 2, gtin13: '0000000000017', description: 'Bench vise', quantity: 3, valueCents: 900, suggestedValueCents: 800 }],
+        capitalReviewNeeded: true,
+        lines: [{
+            id: 2, gtin13: '0000000000017', description: 'Bench vise', quantity: 3, valueCents: 900, suggestedValueCents: 800,
+            isCapital: true, depreciationYears: 5, capitalBucketId: 4, capitalDecidedAt: '2026-10-04T00:00:00.000Z', registeredAt: '2026-10-05T00:00:00.000Z',
+        }],
         events: [{ id: 5, eventType: 'IN_KIND_DECIDED', actorUsername: 'fin', occurredAt: '2026-10-02T00:00:00.000Z', payload: '{"outcome":"ACCEPTED"}' }],
     };
     const donor = { donorFirstName: 'Pat', donorLastName: 'Doe', donorCompanyName: 'Acme' };
@@ -451,7 +455,7 @@ describe('in-kind gift detail routes', () => {
                 ...gift,
                 ...donor,
                 uploadedByUserId: 9,
-                lines: [{ ...gift.lines[0], donorLastName: 'Doe' }],
+                lines: [{ ...gift.lines[0], donorLastName: 'Doe', capitalDecidedByUserId: 7 }],
                 events: [{ ...gift.events[0], actorUserId: 7, orgId: 'treehouse' }],
             },
         }));

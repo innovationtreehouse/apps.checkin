@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { Card, Center, Divider, Group, SimpleGrid, Stack, Text } from "@mantine/core";
-import { LoadError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError } from "@checkin/component-ui";
 import { useCheckinEnv } from "@/components/EnvProvider";
-import { useLoad } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
 import { RoleBadge } from "@/components/ui/RoleBadge";
 
 interface Persona {
@@ -47,10 +47,13 @@ export default function DevLoginPicker({ callbackUrl = "/" }: { callbackUrl?: st
   // as it via the same persona-mint. Exercises the auth-first first-time intake path on a laptop.
   const handleNewRegistrant = async () => {
     setSigningIn("__new__");
-    const res = await fetch("/api/auth/dev-personas", { method: "POST" });
-    if (!res.ok) { setSigningIn(null); return; }
-    const { personaId } = await res.json();
-    signIn("persona-mint", { personaId: String(personaId), mode: "impersonate", callbackUrl });
+    try {
+      const { personaId } = await api<{ personaId: number }>("/api/auth/dev-personas", { method: "POST" });
+      signIn("persona-mint", { personaId: String(personaId), mode: "impersonate", callbackUrl });
+    } catch (e) {
+      setSigningIn(null);
+      showError(errorMessage(e));
+    }
   };
 
   // The four participant-role badges render through the shared RoleBadge (its ROLE_META

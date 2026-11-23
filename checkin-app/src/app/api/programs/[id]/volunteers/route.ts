@@ -7,7 +7,7 @@ import { apiError } from "@/lib/api-response";
 import { isKnownAdult } from "@/lib/programAge";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
-import { ServiceError } from "@checkin/component-kit";
+import { httpError, isComponentHttpError, parseId, ServiceError } from "@checkin/component-kit";
 import { personActor, recordAudit } from "@/lib/auditActor";
 
 /**
@@ -22,22 +22,21 @@ async function refuseOwnHousehold(actorId: number, personId: number, programId: 
     return refused ? apiError(SELF_GRANT_REFUSAL_MESSAGE, 403) : null;
 }
 
+function parseParticipantId(raw: unknown): number {
+    if (raw === undefined || raw === null) throw httpError(400, "participantId is required");
+    if (typeof raw !== "number") throw httpError(400, "Invalid participantId");
+    return parseId(String(raw), "participantId");
+}
+
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
     const { id } = await params;
 
     try {
-        const programId = parseInt(id, 10);
-        if (isNaN(programId)) {
-            return apiError("Invalid program ID", 400);
-        }
+        const programId = parseId(id, "program ID");
 
         const body = await req.json();
-        const { participantId } = body;
-
-        if (!participantId || typeof participantId !== 'number') {
-            return apiError("participantId is required", 400);
-        }
+        const participantId = parseParticipantId(body.participantId);
 
         const currentProgram = await prisma.program.findUnique({ where: { id: programId } });
         if (!currentProgram) {
@@ -78,6 +77,9 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
         return NextResponse.json({ success: true, assignment });
     } catch (error) {
+        if (isComponentHttpError(error)) {
+            return apiError(error.message, error.status);
+        }
         // P2002 = unique violation on @@id([programId, participantId]). Benign
         // double-submit re-assigns the same volunteer; 409 instead of 500.
         if (error instanceof ServiceError) {
@@ -101,17 +103,10 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
     const { id } = await params;
 
     try {
-        const programId = parseInt(id, 10);
-        if (isNaN(programId)) {
-            return apiError("Invalid program ID", 400);
-        }
+        const programId = parseId(id, "program ID");
 
         const body = await req.json();
-        const { participantId } = body;
-
-        if (!participantId) {
-            return apiError("participantId is required", 400);
-        }
+        const participantId = parseParticipantId(body.participantId);
 
         const currentProgram = await prisma.program.findUnique({ where: { id: programId } });
         if (!currentProgram) {
@@ -147,6 +142,9 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
 
         return NextResponse.json({ success: true, assignment });
     } catch (error) {
+        if (isComponentHttpError(error)) {
+            return apiError(error.message, error.status);
+        }
         logger.error("Volunteer removal error:", error);
         return apiError("Failed to remove volunteer", 500);
     }

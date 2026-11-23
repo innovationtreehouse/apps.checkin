@@ -9,6 +9,7 @@ import { savedQuickBooksClasses } from "@/lib/finance/quickBooksLists";
 import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
+import { emailAfterAssignment, gatePositionCheck, type Position } from "@/lib/membership/positionCheck";
 import { QUICKBOOKS_LIST_STALE, UPDATE_NOW_HINT } from "@checkin/quickbooks";
 
 // Budget-owner buckets and their approvers. FINANCE manages buckets;
@@ -40,6 +41,7 @@ export const LOCAL_QUICKBOOKS_CLASSES = [
     { id: "9003", name: "Programs:Robotics", active: true },
     { id: "9004", name: "Programs:Woodshop", active: true },
     { id: "9005", name: "Retired", active: false },
+    { id: "9006", name: "Woodworking 101", active: true },
 ];
 
 /** Every Class in the app's QuickBooks list by its full name, inactive ones flagged, for the bucket form's picker. */
@@ -256,20 +258,32 @@ async function lockLiveOrRefuse(tx: Prisma.TransactionClient, personId: number) 
     }
 }
 
+/** Runs the background-check gate for naming `personId`, answering its 409 with the code the picker acknowledges. */
+async function gateCheck(tx: Prisma.TransactionClient, personId: number, position: Position, actorId: number, acknowledged: boolean) {
+    try {
+        return await gatePositionCheck(tx, { personId, position, actorId, acknowledged });
+    } catch (e) {
+        if (e instanceof ServiceError) throw new ApiResponseError(e.status, e.message, e.code);
+        throw e;
+    }
+}
+
 /**
  * Sets or clears a bucket's owner. Nobody names, or removes, themself or anyone
- * in their own household, board members included.
+ * in their own household, board members included. A new owner whose background
+ * check isn't current needs `acknowledgeCheck`, and is then emailed.
  */
-export async function setBucketOwner(actorId: number, budgetOwnerId: number, personId: number | null) {
+export async function setBucketOwner(actorId: number, budgetOwnerId: number, personId: number | null, acknowledgeCheck = false) {
     const before = await prisma.budgetOwner.findUnique({ where: { id: budgetOwnerId }, select: { ownerId: true } });
     if (!before) throw notFound("Bucket not found");
     for (const subject of new Set([personId, before.ownerId])) {
         if (subject !== null) await assertMayName(actorId, budgetOwnerId, subject);
     }
     if (before.ownerId !== personId) {
-        await prisma.$transaction(async (tx) => {
+        const ackId = await prisma.$transaction(async (tx) => {
             await lockProgramBucket(tx, budgetOwnerId);
             if (personId !== null) await lockLiveOrRefuse(tx, personId);
+            const gated = personId === null ? null : await gateCheck(tx, personId, "BUDGET_OWNER", actorId, acknowledgeCheck);
             await tx.budgetOwner.update({ where: { id: budgetOwnerId }, data: { ownerId: personId } });
             await tx.auditLog.create({
                 data: {
@@ -281,23 +295,27 @@ export async function setBucketOwner(actorId: number, budgetOwnerId: number, per
                     newData: { ownerId: personId },
                 },
             });
+            return gated;
         });
+        if (ackId !== null) await emailAfterAssignment([ackId], actorId);
     }
     return listBucketApprovers(budgetOwnerId);
 }
 
 /**
  * Adds or removes a bucket treasurer. Nobody sets or clears it on themself or
- * anyone in their own household, board members included.
+ * anyone in their own household, board members included. A new treasurer whose
+ * background check isn't current needs `acknowledgeCheck`, and is then emailed.
  */
-export async function setBucketTreasurer(actorId: number, budgetOwnerId: number, personId: number, on: boolean) {
+export async function setBucketTreasurer(actorId: number, budgetOwnerId: number, personId: number, on: boolean, acknowledgeCheck = false) {
     await assertMayName(actorId, budgetOwnerId, personId);
     const key = { budgetOwnerId_personId: { budgetOwnerId, personId } };
-    await prisma.$transaction(async (tx) => {
+    const ackId = await prisma.$transaction(async (tx) => {
         await lockProgramBucket(tx, budgetOwnerId);
         const isTreasurer = (await tx.budgetOwnerTreasurer.findUnique({ where: key, select: { personId: true } })) !== null;
-        if (isTreasurer === on) return;
+        if (isTreasurer === on) return null;
         if (on) await lockLiveOrRefuse(tx, personId);
+        const gated = on ? await gateCheck(tx, personId, "BUDGET_TREASURER", actorId, acknowledgeCheck) : null;
         if (on) await tx.budgetOwnerTreasurer.create({ data: { budgetOwnerId, personId } });
         else await tx.budgetOwnerTreasurer.delete({ where: key });
         await tx.auditLog.create({
@@ -310,6 +328,8 @@ export async function setBucketTreasurer(actorId: number, budgetOwnerId: number,
                 newData: { budgetOwnerId, personId, isTreasurer: on },
             },
         });
+        return gated;
     });
+    if (ackId !== null) await emailAfterAssignment([ackId], actorId);
     return listBucketApprovers(budgetOwnerId);
 }

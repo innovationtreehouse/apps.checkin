@@ -1,6 +1,5 @@
 "use client";
-import { createClient, errorMessage, notifyNavCounts, request, useViewer } from "@checkin/component-ui";
-import { notifications } from "@mantine/notifications";
+import { createClient, errorMessage, notifyNavCounts, request, showError, showSuccess, useViewer } from "@checkin/component-ui";
 import type { PurchaseOutcomeView } from "../lib/purchaseOutcome";
 
 /**
@@ -31,10 +30,10 @@ export async function send(path: string, method: string, body: unknown, success:
   try {
     await api(path, { method, body: JSON.stringify(body) });
     notifyNavCounts();
-    notifications.show({ message: success, color: "green" });
+    showSuccess(success);
     return true;
   } catch (err) {
-    notifications.show({ title: failed, message: errorMessage(err), color: "red", autoClose: false });
+    showError(errorMessage(err), { title: failed });
     return false;
   }
 }

@@ -139,6 +139,15 @@ describe('Shopify write request bodies', () => {
         expect(writes[0][2]).toContain('"productVariantsToAdd":["gid://shopify/ProductVariant/111"]');
     });
 
+    it('mintMemberDiscountCode: returns the code Shopify was sent', async () => {
+        const outbound = jest.requireMock<typeof import('@/security/outbound')>('@/security/outbound');
+        jest.spyOn(outbound, 'outboundCall').mockImplementationOnce((_surface, payload, send) =>
+            send({ ...payload, Household: { id: 99 } }));
+        const code = await mintMemberDiscountCode(PROGRAM, 9, 1000);
+        expect(code).toBe('PRG7-H99-A1B2C3D4');
+        expect(writes[0][2]).toContain(`"code":"${code}"`);
+    });
+
     it('every write goes through outboundCall on its surface', async () => {
         await writeAll();
         expect(outboundLeak.sent.map((s) => s.surface)).toEqual([

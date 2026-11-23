@@ -18,28 +18,28 @@ import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { isSaleEnded } from "@/lib/programs/saleState";
 import { PROGRAM_ENDED_PAYMENT } from "@/lib/programs/checkoutSignature";
 import { apiError } from "@/lib/api-response";
-import { ServiceError } from "@checkin/component-kit";
+import { httpError, isComponentHttpError, parseId, ServiceError } from "@checkin/component-kit";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { householdMayEnrol, NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergencyContacts/service";
 import { personActor, recordAudit } from "@/lib/auditActor";
 import { enrollByHandIn, isEnrollmentBasis, readMatchedOrder, type MatchedOrder } from "@/lib/programs/enrollByHand";
+
+function parseParticipantId(raw: unknown): number {
+    if (raw === undefined || raw === null) throw httpError(400, "participantId is required");
+    if (typeof raw !== "number") throw httpError(400, "Invalid participantId");
+    return parseId(String(raw), "participantId");
+}
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
     const { id } = await params;
 
     try {
-        const programId = parseInt(id, 10);
-        if (isNaN(programId)) {
-            return apiError("Invalid program ID", 400);
-        }
+        const programId = parseId(id, "program ID");
 
         const body = await req.json();
-        const { participantId } = body;
+        const participantId = parseParticipantId(body.participantId);
 
-        if (!participantId) {
-            return apiError("participantId is required", 400);
-        }
         // A basis asks to enroll by hand: no store payment, recording what the place stands for.
         const basis = body.basis ?? null;
         if (basis !== null && !isEnrollmentBasis(basis)) {
@@ -70,28 +70,34 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true }
         });
 
-        let isHouseholdLead = false;
-        if (participantData?.householdId) {
-            const leadRecord = await prisma.person.findFirst({
+        const leadRecord = participantData?.householdId
+            ? await prisma.person.findFirst({
                 where: {
                     id: currentUserId,
                     householdId: participantData.householdId,
                     isHouseholdLead: true
                 },
-                select: { id: true }
-            });
-            isHouseholdLead = !!leadRecord;
+                select: { dateOfBirth: true, isDeclaredAdult: true }
+            })
+            : null;
+
+        if (!isSelfEnrollment && !isSysAdminOrBoard && !leadRecord && !(basis && isBoardOrFinance)) {
+            return apiError("Forbidden: Not authorized to enroll this participant. Program leads cannot manually add participants.", 403);
         }
 
-        if (!isSelfEnrollment && !isSysAdminOrBoard && !isHouseholdLead && !(basis && isBoardOrFinance)) {
-            return apiError("Forbidden: Not authorized to enroll this participant. Program leads cannot manually add participants.", 403);
+        // Enrolling someone takes on their payment, so a household lead acting for
+        // them must be a known adult; a youth or unknown-age lead stays a lead.
+        if (!isSelfEnrollment && !isSysAdminOrBoard && !basis && leadRecord && !isKnownAdult(leadRecord)) {
+            return apiError(leadRecord.dateOfBirth
+                ? "A household lead under 18 can't enroll a participant."
+                : "Add your date of birth (or confirm you are over 25) before enrolling someone.", 403);
         }
 
         // Conflict of interest: an override and a hand enrollment are both one-actor
         // decisions, so neither may be spent on yourself or your own household.
         // Self is its own leg — an actor with no household is not caught by the
         // household comparison, but is still enrolling themselves. This is the
-        // route's single notion of "own household"; `isHouseholdLead` above
+        // route's single notion of "own household"; `leadRecord` above
         // answers a different question (may you act for this person at all).
         const isConflicted = isSelfEnrollment
             || await hasHouseholdConflict(prisma, currentUserId, participantData?.householdId);
@@ -299,6 +305,9 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         if (warning) responseObj.warning = warning;
         return NextResponse.json(responseObj);
     } catch (error) {
+        if (isComponentHttpError(error)) {
+            return apiError(error.message, error.status);
+        }
         if (error instanceof ProgramCapacityError) {
             return NextResponse.json({ error: "Program has reached maximum capacity.", requiresOverride: true }, { status: 400 });
         }
@@ -315,6 +324,8 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         return apiError("Failed to enroll participant", 500);
     }
 });
+
+const REMOVAL_REASON_MAX_LEN = 2000;
 
 const STOCK_WARNING = "Participant enrolled, but the Shopify inventory change failed. Capacity may be out of sync — check System Status > Link Status.";
 
@@ -335,17 +346,14 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
     const { id } = await params;
 
     try {
-        const programId = parseInt(id, 10);
-        if (isNaN(programId)) {
-            return apiError("Invalid program ID", 400);
-        }
+        const programId = parseId(id, "program ID");
 
         const body = await req.json();
-        const { participantId } = body;
+        const participantId = parseParticipantId(body.participantId);
         const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
 
-        if (!participantId) {
-            return apiError("participantId is required", 400);
+        if (reason.length > REMOVAL_REASON_MAX_LEN) {
+            return apiError(`reason must be ${REMOVAL_REASON_MAX_LEN} characters or fewer`, 400);
         }
         if (body.mode !== undefined && body.mode !== 'remove' && body.mode !== 'withdraw') {
             return apiError("mode must be 'remove' or 'withdraw'", 400);
@@ -505,6 +513,9 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         }
         return NextResponse.json(responseObj);
     } catch (error) {
+        if (isComponentHttpError(error)) {
+            return apiError(error.message, error.status);
+        }
         // P2025 = row to delete not found. Benign double-submit (participant
         // already un-enrolled); idempotent 200 instead of a 500.
         if (isPrismaError(error, 'P2025')) {

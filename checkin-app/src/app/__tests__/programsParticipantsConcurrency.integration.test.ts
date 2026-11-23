@@ -59,7 +59,7 @@ describe('POST /api/programs/[id]/participants concurrency (capacity lock)', () 
         householdId = household.id;
 
         const lead = await prisma.person.create({
-            data: { email: `lead-${TAG}@example.com`, name: 'Lead', householdId },
+            data: { email: `lead-${TAG}@example.com`, name: 'Lead', householdId, isDeclaredAdult: true },
         });
         leadId = lead.id;
         await prisma.person.update({ where: { id: leadId }, data: { isHouseholdLead: true } });

@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSession } from "next-auth/react";
 import type { OrgMembershipProcessStatus, OrgMembershipStatus } from "@/generated/prisma/client";
-import { notifications } from "@mantine/notifications";
-import { showSuccess } from "@checkin/component-ui";
+import { showError, showSuccess } from "@checkin/component-ui";
 import { useDisclosure } from "@mantine/hooks";
 import type { AlertTone } from "@/components/admin/AlertBanner";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
@@ -55,6 +54,7 @@ export interface IntakeState {
 export interface MembershipPayment {
   amountCents: number;
   checkoutUrl: string | null;
+  financeContactEmail: string | null;
 }
 
 // Build an error message from an API response, appending the dev-only `detail`
@@ -63,7 +63,7 @@ export interface MembershipPayment {
 export const apiError = (data: { error?: string; detail?: string } | null | undefined, fallback: string) =>
   [data?.error, data?.detail].filter(Boolean).join(" — ") || fallback;
 
-const networkError = () => notifications.show({ color: "red", message: "Network error.", autoClose: false });
+const networkError = () => showError("Network error.");
 
 const SAVED_READ_ATTEMPTS = 3;
 const UNREAD_SAVE_WARNING =
@@ -326,7 +326,7 @@ export function useMembershipPage() {
       } else if (data.code === "no_process") {
         // Race: the process advanced out from under this stale view. Transient
         // toast + re-hydrate; the `incomplete` field-error path below is untouched.
-        notifications.show({ color: "red", message: data.error || "No application is awaiting your information.", autoClose: false });
+        showError(data.error || "No application is awaiting your information.");
         load();
       } else {
         // The server may flag fields the client can't check locally (e.g. an
@@ -400,7 +400,7 @@ export function useMembershipPage() {
         showSuccess("Requested! The Scholarship Review Team will follow up.");
       } else {
         const data = await res.json().catch(() => ({}));
-        notifications.show({ color: "red", message: data.error || "Could not request a payment plan.", autoClose: false });
+        showError(data.error || "Could not request a payment plan.");
       }
     } catch {
       networkError();
@@ -415,7 +415,7 @@ export function useMembershipPage() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) { load(); notifyNavRefresh(); flash("Renewal started."); }
       else if (data.code === "wrong_phase") {
-        notifications.show({ color: "red", message: data.error || "This renewal is no longer awaiting your confirmation.", autoClose: false });
+        showError(data.error || "This renewal is no longer awaiting your confirmation.");
         load();
       }
       else flash(apiError(data, "Could not start renewal."), true);

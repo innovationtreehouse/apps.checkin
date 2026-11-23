@@ -9,7 +9,7 @@ import { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
 import { readDonationSettings } from "../services/settingsService";
 import { recordEvent } from "../repositories/audit";
-import { getInKindCapital, getInKindQbPosting, getQuickBooksAccounts } from "../runtime";
+import { getInKindQbPosting, getQuickBooksAccounts } from "../runtime";
 import { inKindAcceptService, inKindReadiness, type GiftToBook, type InKindSource } from "../services/inKindAcceptService";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import {
@@ -63,7 +63,7 @@ export async function openRun(orgId: string, actor: AuditContext, mode: "book" |
   if (!binding || !client) throw new ServiceError(503, "QuickBooks is not connected");
   const [accounts, classes] = await Promise.all([binding.booksMap.accounts(), binding.booksMap.classes()]);
   if (!inKindAccountsReady(accounts)) throw new ServiceError(409, "The books map does not name every in-kind account yet");
-  const [close, onAt, ctx] = await Promise.all([readCloseDate(client), inKindPostingOnAt(orgId), inKindReadiness.readReadiness(orgId)]);
+  const [close, onAt, ctx] = await Promise.all([readCloseDate(client), inKindPostingOnAt(orgId), inKindReadiness.readReadiness()]);
   const { open } = await inKindReadiness.giftsToBook(orgId, ctx);
   return { orgId, book: mode === "book", retry: mode === "retry", actor, client, accounts, classes, close, onAt, ctx, open, settings: await readDonationSettings(db, orgId), qbAccounts: chartOfAccounts(client) };
 }
@@ -246,9 +246,13 @@ async function clearNote(orgId: string, source: InKindSource, id: number, reason
   });
 }
 
-/** Refuses (400) an account of a type the line can't book to: Fixed Asset for donated equipment, else an expense type. */
+/** Refuses (400) an account of a type the line can't book to: Fixed Asset for a line finance made capital, else an expense type. */
 async function refuseWrongType(orgId: string, source: InKindSource, id: number, lineId: number, quickBooksAccountId: string): Promise<void> {
-  const capital = (await getInKindCapital().assetLineIds(orgId, { giftSource: source, giftId: id })).includes(lineId);
+  const where = { id: lineId, donationId: id, donation: { orgId } };
+  const select = { isCapital: true } as const;
+  const line = source === "receipt" ? await db.inKindDonationLine.findFirst({ where, select }) : await db.manualInKindDonationLine.findFirst({ where, select });
+  if (!line) throw new ServiceError(404, "This gift has no such line");
+  const capital = line.isCapital === true;
   const allowed = capital ? LINE_ACCOUNT_TYPES.donatedCapital : LINE_ACCOUNT_TYPES.donatedGoods;
   const refusal = staleListRefusal(await getQuickBooksAccounts()(), quickBooksAccountId, allowed, capital ? "Donated equipment" : "A donated item");
   if (refusal) throw new ServiceError(400, refusal, QUICKBOOKS_LIST_STALE);

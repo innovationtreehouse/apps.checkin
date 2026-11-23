@@ -230,4 +230,71 @@ describe("facility-ops/visits page", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/insert"))).toBe(false);
     expect(notifications.show).not.toHaveBeenCalled();
   });
+  it("show removed lists removed visits beside live ones, naming who removed each", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({
+      "/api/facility/visits/restore": {},
+      "/api/facility/visits?removed=true": { visits: {
+        Visit: [{ ...visits[0], id: 9, person: { name: "Rae Removed" }, deletedAt: "2026-01-03T10:00:00.000Z", deletedById: 4 }],
+        Person: [{ id: 4, name: "Bo Board" }],
+      } },
+      "/api/facility/visits": { visits },
+    });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+    expect(screen.queryByText("Rae Removed")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("switch", { name: "Show removed" }));
+
+    const row = (await screen.findByText("Rae Removed")).closest("tr") as HTMLElement;
+    expect(screen.getByText("Val Volunteer")).toBeInTheDocument();
+    expect(row).toHaveTextContent(/Bo Board · /);
+    expect(within(row).queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(row).getByRole("button", { name: "Restore" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/facility/visits/restore",
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ visitId: 9 }) }),
+      ),
+    );
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Visit restored." })));
+    // The write re-reads both lists, so the restored visit moves to the live list.
+    const removedReads = () => fetchMock.mock.calls.filter(([url]) => String(url).includes("?removed=true")).length;
+    await waitFor(() => expect(removedReads()).toBeGreaterThan(1));
+  });
+
+  it("the closed-out view lists no removed visits while show removed is on, and keeps the server's close order", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({
+      "/api/facility/visits?closedOut=true": { visits: [
+        { ...visits[0], id: 5, person: { name: "Cal Close9" }, departedVia: "FACILITY_CLOSE", facilityCloseId: 9, facilityClose: { closedBy: { name: "Kim Keyholder" } } },
+        { ...visits[0], id: 6, person: { name: "Cy Close8" }, departedVia: "FACILITY_CLOSE", facilityCloseId: 8, facilityClose: { closedBy: { name: "Kim Keyholder" } } },
+      ] },
+      "/api/facility/visits?removed=true": { visits: {
+        Visit: [{ ...visits[0], id: 7, person: { name: "Rae Removed" }, departedVia: "FACILITY_CLOSE", facilityCloseId: 9, deletedAt: "2026-01-03T10:00:00.000Z", deletedById: 4 }],
+        Person: [{ id: 4, name: "Bo Board" }],
+      } },
+      "/api/facility/visits": { visits },
+    });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+    fireEvent.click(screen.getByRole("switch", { name: "Show removed" }));
+    expect(await screen.findByText("Rae Removed")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("switch", { name: "Closed out by a close" }));
+
+    await screen.findByText("Cal Close9");
+    expect(screen.queryByText("Rae Removed")).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Removed" })).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Show removed" })).toBeDisabled();
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(rows.map((r) => within(r).getAllByRole("cell")[0].textContent)).toEqual(["5", "6"]);
+
+    fireEvent.click(screen.getByRole("switch", { name: "Closed out by a close" }));
+
+    expect(await screen.findByText("Rae Removed")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Removed" })).toBeInTheDocument();
+  });
 });

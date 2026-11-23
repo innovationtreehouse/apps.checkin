@@ -8,7 +8,7 @@ jest.mock("next/navigation", () => ({ useParams: () => ({ id: "7" }), useRouter:
 const mockShow = jest.fn();
 const mockApi = jest.fn();
 
-jest.mock("@mantine/notifications", () => ({ notifications: { show: (...args: unknown[]) => mockShow(...args) } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: (...args: unknown[]) => mockShow(...args), update: jest.fn() } }));
 let mockIsManager = true;
 let mockIsBoard = false;
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1, isInventoryManager: mockIsManager, isBoardMember: mockIsBoard } } }) }));
@@ -381,14 +381,14 @@ describe("the receiving page for one receipt", () => {
       afterDecision("resolved");
       decide();
       await waitFor(() => expect(mockPush).toHaveBeenCalledWith(QUEUE));
-      expect(mockShow).toHaveBeenCalledWith({ message: "Receipt resolved", color: "green" });
+      expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({ message: "Receipt resolved", color: "green" }));
       expect(mockApi).toHaveBeenCalledWith("/receipts/7/lines/11/non-inventory", { method: "POST" });
     });
 
     it("stays on the receipt when the save leaves it needing mapping", async () => {
       afterDecision("pending_review");
       decide();
-      await waitFor(() => expect(mockShow).toHaveBeenCalledWith({ message: "Marked not inventory", color: "green" }));
+      await waitFor(() => expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({ message: "Marked not inventory", color: "green" })));
       expect(mockPush).not.toHaveBeenCalled();
     });
 
@@ -398,7 +398,7 @@ describe("the receiving page for one receipt", () => {
       await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/receipts/7"));
       await act(async () => {});
       expect(mockPush).not.toHaveBeenCalled();
-      expect(mockShow).not.toHaveBeenCalledWith({ message: "Receipt resolved", color: "green" });
+      expect(mockShow).not.toHaveBeenCalledWith(expect.objectContaining({ message: "Receipt resolved", color: "green" }));
     });
 
     it("stays on the receipt when the decision itself reports an apply failure", async () => {
@@ -414,7 +414,7 @@ describe("the receiving page for one receipt", () => {
       render(<MantineProvider><ReceiptPage backHref={QUEUE} /></MantineProvider>);
       fireEvent.click(screen.getByRole("button", { name: "Run matching now" }));
       await waitFor(() => expect(mockPush).toHaveBeenCalledWith(QUEUE));
-      expect(mockShow).toHaveBeenCalledWith({ message: "Receipt resolved", color: "green" });
+      expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({ message: "Receipt resolved", color: "green" }));
     });
   });
 
@@ -424,7 +424,7 @@ describe("the receiving page for one receipt", () => {
     wrap();
     fireEvent.click(screen.getByRole("button", { name: "Retry apply" }));
     await waitFor(() =>
-      expect(mockShow).toHaveBeenCalledWith({ title: "Apply failed", message: "Expense: QuickBooks timed out", color: "red", autoClose: false }),
+      expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({ title: "Apply failed", message: "Expense: QuickBooks timed out", color: "red", autoClose: false })),
     );
   });
 
@@ -434,7 +434,7 @@ describe("the receiving page for one receipt", () => {
     wrap();
     fireEvent.click(screen.getByRole("button", { name: "Retry apply" }));
     await waitFor(() =>
-      expect(mockShow).toHaveBeenCalledWith({ title: "Apply didn't finish", message: "Inventory: stamp write failed", color: "red", autoClose: false }),
+      expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({ title: "Apply didn't finish", message: "Inventory: stamp write failed", color: "red", autoClose: false })),
     );
   });
 
@@ -510,7 +510,7 @@ describe("the receiving page for one receipt", () => {
       });
       wrap();
       fireEvent.click(screen.getByRole("button", { name: "Run matching now" }));
-      await waitFor(() => expect(mockShow).toHaveBeenCalledWith({ message: "1 line matched", color: "green" }));
+      await waitFor(() => expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({ message: "1 line matched", color: "green" })));
       expect(mockApi).toHaveBeenCalledWith("/receipts/7/run-matching", { method: "POST" });
     });
 
@@ -519,10 +519,10 @@ describe("the receiving page for one receipt", () => {
       afterRun({ ...baseDetail, ReceivedReceipt: { ...pending().ReceivedReceipt, matchingPendingReason: "catalog_settings" } });
       wrap();
       fireEvent.click(screen.getByRole("button", { name: "Run matching now" }));
-      await waitFor(() => expect(mockShow).toHaveBeenCalledWith({
+      await waitFor(() => expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({
         message: "Matching still couldn't run because of a catalog settings error. Try again later, or map the lines by hand.",
-        color: "gray",
-      }));
+        color: "yellow",
+      })));
     });
   });
 

@@ -9,7 +9,7 @@ import { writeAudit, writeOrgAudit } from "../lib/audit";
 import { dropHandSetAccount } from "../lib/account-types";
 import { drainExpense } from "../lib/financial-flow";
 import { advanceWorkflowInTx, type Actor } from "../lib/workflow-engine";
-import { formatItfa, fullyDepreciatedDate, linkAssets, parseItfa, raiseHighestIssued, registerAssets, unitCosts, unitsOf } from "../lib/capital-register";
+import { formatItfa, fullyDepreciatedDate, linkAssets, parseItfa, raiseHighestIssued, registerAssets, seedCollision, unitCosts, unitsOf, type SeedColumns } from "../lib/capital-register";
 import { bookedLineCents } from "../qb-write";
 import { reimburseeUnknown } from "../lib/signoff";
 import { assertExpectedState, isLegalTransition } from "../workflows/expense.invariants";
@@ -138,7 +138,10 @@ export interface CapitalSeedResult {
   results: { assetNumber: string; status: "created" | "skipped" | "error"; error?: string }[];
 }
 
-/** Seeds the register from historical QuickBooks asset numbers. Idempotent per (orgId, assetNumber). */
+/**
+ * Seeds the register from historical QuickBooks asset numbers. An exact repeat of a seeded row is
+ * skipped; a number already held by any other asset is refused for that row.
+ */
 export async function seedCapitalAssets(
   principal: ExpensePrincipal,
   rows: z.infer<typeof CapitalSeedSchema>,
@@ -152,32 +155,37 @@ export async function seedCapitalAssets(
     if (seq === null) { results.push({ assetNumber: r.assetNumber, status: "error", error: "not an ITFA number" }); continue; }
     const assetNumber = formatItfa(seq); // canonicalize (no space/dash, zero-padded)
     const parentSeq = r.parentAssetNumber ? parseItfa(r.parentAssetNumber) : null;
-    const created = await db.$transaction(async (tx) => {
-      // Raising the mark first waits out a mint in flight, so the seed sees any number it took.
+    const columns: SeedColumns = {
+      parentAssetNumber: parentSeq === null ? null : formatItfa(parentSeq),
+      description: r.description,
+      acquisitionDate: r.acquisitionDate ?? null,
+      costCents: r.costCents ?? null,
+      depreciationYears: r.depreciationYears ?? null,
+      sourceQbTxnId: r.sourceQbTxnId ?? null,
+      sourceQbTxnEntity: r.sourceQbTxnEntity ?? null,
+    };
+    const result = await db.$transaction(async (tx): Promise<CapitalSeedResult["results"][number]> => {
+      // Raising the mark first takes its lock, so no mint or other seed takes this number meanwhile.
       await raiseHighestIssued(tx, orgId, seq);
-      const result = await tx.capitalAsset.createMany({
-        data: [{
+      const existing = await tx.capitalAsset.findUnique({ where: { capital_assets_org_number_unique: { orgId, assetNumber } } });
+      if (existing) {
+        const error = seedCollision(assetNumber, existing, columns);
+        return error ? { assetNumber, status: "error", error } : { assetNumber, status: "skipped" };
+      }
+      await tx.capitalAsset.create({
+        data: {
           orgId,
           assetNumber,
-          parentAssetNumber: parentSeq === null ? null : formatItfa(parentSeq),
-          description: r.description,
-          acquisitionDate: r.acquisitionDate ?? null,
-          costCents: r.costCents ?? null,
-          depreciationYears: r.depreciationYears ?? null,
+          ...columns,
           fullyDepreciatedDate: fullyDepreciatedDate(r.acquisitionDate, r.depreciationYears),
           status: "tracked",
-          sourceQbTxnId: r.sourceQbTxnId ?? null,
-          sourceQbTxnEntity: r.sourceQbTxnEntity ?? null,
           seeded: true,
-        }],
-        skipDuplicates: true,
+        },
       });
-      if (result.count === 1) {
-        await writeOrgAudit(tx, orgId, actor, { entityType: "capital_asset", entityId: assetNumber, action: "seeded", after: r });
-      }
-      return result;
+      await writeOrgAudit(tx, orgId, actor, { entityType: "capital_asset", entityId: assetNumber, action: "seeded", after: r });
+      return { assetNumber, status: "created" };
     });
-    results.push({ assetNumber, status: created.count === 1 ? "created" : "skipped" });
+    results.push(result);
   }
   return {
     created: results.filter((x) => x.status === "created").length,

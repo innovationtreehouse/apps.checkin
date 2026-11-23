@@ -8,7 +8,7 @@ import { join } from 'node:path';
  * A participant merge has to decide something about EVERY foreign key pointing
  * at `Person`. A relation the merge's control flow skips is invisible: no compiler
  * error and no failing test, though `RawBadgeLog` (RESTRICT) would make the
- * tombstone undeletable and `PersonRole` (CASCADE) would destroy a security grant
+ * merged-away row undeletable and `PersonRole` (CASCADE) would destroy a security grant
  * with no audit row.
  *
  * So the key set is DERIVED from the schema at test time and matched against
@@ -88,7 +88,7 @@ const DISPOSITIONS: Record<string, string> = {
     'FacilityClose.closedById': 'repointed (SET NULL) — who closed the facility is an audit fact; left behind it reads as a deleted closer.',
     'OrgMembershipProcess.zohoSignerPersonId': 'repointed (SET NULL) — who the agreement request is addressed to, and who signed; the same human follows the survivor.',
     'OrgMembershipProcess.subjectPersonId': 'repointed (SET NULL) — step 5 updateMany, then archiveDuplicatePersonBg and archiveDuplicateKva leave the survivor exactly one open PERSON_BG and one open Key Volunteer agreement.',
-    'PresenceEvent.personId': 'repointed (CASCADE) — the append-only presence log projects visits, so events left on a tombstone would flush against a person the projection can no longer treat as live; the log follows the survivor like RawBadgeLog does.',
+    'PresenceEvent.personId': 'repointed (CASCADE) — the append-only presence log projects visits, so events left on the merged-away person would be deleted with its row; the log follows the survivor like RawBadgeLog does.',
     'PersonMerge.toId': 'repointed (RESTRICT) — an earlier merge\'s archive row naming this record as ITS survivor. Repointed, not chained: the archive answers "where is this person now", and RESTRICT means a row left here would block the delete.',
     'PersonRole.grantedById': 'repointed (SET NULL) — swept AFTER the holder pass, so a granter stamp on a row the dedupe just deleted is not counted as moved.',
     'BudgetOwner.ownerId': 'repointed (RESTRICT) — step 5 updateMany. The bucket owner approves its lines; the same human keeps approving as the survivor.',
@@ -103,7 +103,7 @@ const DISPOSITIONS: Record<string, string> = {
     // ── deduped: bare joins, where a duplicate carries no extra decision ──────
     'CorporationLead.personId': 'deduped (RESTRICT) — bare join, the duplicate is deleted.',
     'CorporationMember.personId': 'deduped (RESTRICT) — bare join, the duplicate is deleted.',
-    'PersonRole.personId': 'deduped (CASCADE) — PK is (personId, role). Each tombstone role, read in the transaction, moves through setRoleFlag: granted to the survivor (a no-op when it already holds it), then revoked from the tombstone, so the role guards run and every change writes an audit row. Never left on the tombstone, because CASCADE would later destroy a security grant. Person\'s legacy role mirrors are then rewritten from an in-transaction read of the survivor\'s final rows.',
+    'PersonRole.personId': 'deduped (CASCADE) — PK is (personId, role). Each role of the merged-away person, read in the transaction, moves through setRoleFlag: granted to the survivor (a no-op when it already holds it), then revoked from the merged-away person, so the role guards run and every change writes an audit row. Never left on the merged-away person, because CASCADE would destroy the grant with its row. Person\'s legacy role mirrors are then rewritten from an in-transaction read of the survivor\'s final rows.',
     'BudgetOwnerTreasurer.personId': 'deduped (RESTRICT) — bare join on (budgetOwnerId, personId); moved, or deleted when the survivor already treasures that bucket.',
     'ProgramVolunteer.personId': 'deduped (RESTRICT) — bare join, the duplicate is deleted.',
     'PersonMailAlias.personId': 'deduped (CASCADE) — moved with the email, which it extends for receipt mail; an alias equal to the survivor\'s final sign-in address is deleted. Moved and deleted ids are in the audit tally.',
@@ -111,7 +111,7 @@ const DISPOSITIONS: Record<string, string> = {
 
     // ── pre-refused: a collision here is a decision the merge must not make ───
     'ProgramParticipant.personId': 'pre-refused (RESTRICT) — a shared enrollment carries a seat and a payment. Refused before the transaction and again under the locks; a `left` row from a later race refuses the merge.',
-    'ToolStatus.personId': 'pre-refused (RESTRICT) — two certification levels for one human is a decision an operator makes, not a merge.',
+    'ToolStatus.personId': 'repointed/deduped/pre-refused (RESTRICT) — moved when only one side has it; a same-level duplicate is deleted; two different levels for one human is a decision an operator makes, not a merge.',
 
     // ── deliberately left ─────────────────────────────────────────────────────
     'OrgMembershipProcess.noteAckById': 'deliberately-left (SET NULL) — the merge neither reads nor writes it, and nothing sets it. The column awaits its drop.',

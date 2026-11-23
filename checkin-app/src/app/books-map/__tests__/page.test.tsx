@@ -29,7 +29,7 @@ beforeEach(() => {
   // jsdom has no scrollIntoView, which Mantine's combobox calls on open with a value picked.
   window.HTMLElement.prototype.scrollIntoView = jest.fn();
   write = async () => jsonResponse(200, { role: "SHOPIFY_BANK", quickBooksAccountId: "8001" });
-  catchUp = () => ({ lane: "expense", status: "idle", heldBy: null, until: null, queued: [] });
+  catchUp = () => ({ lane: "expense", status: "idle", heldBy: null, until: null, queued: [], pausedUntil: null, lastRuns: {} });
   fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString();
     if (url.startsWith("/api/finance/quickbooks/catch-up")) return jsonResponse(200, catchUp(init));
@@ -125,7 +125,7 @@ describe("books map page", () => {
     setSession({ id: 1, isFinance: true });
     renderWithProviders(<BooksMapPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Catch up gifts of goods" }));
-    catchUp = () => ({ lane: "expense", status: "idle", heldBy: "in-kind", until: "2026-11-18T14:05:00.000Z", queued: ["income"] });
+    catchUp = () => ({ lane: "expense", status: "idle", heldBy: "in-kind", until: "2026-11-18T14:05:00.000Z", queued: ["income"], pausedUntil: null, lastRuns: {} });
 
     expect(await screen.findByRole("button", { name: "Gifts of goods: posting…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Income: waiting" })).toBeDisabled();

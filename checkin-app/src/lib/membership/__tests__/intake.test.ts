@@ -66,7 +66,7 @@ jest.mock('@/lib/household/leads', () => {
 jest.mock('@/lib/membership/renewal', () => ({
     householdApplicationOpenOrBlockedWhere: { OR: [] },
 }));
-jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn() }));
+jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleAfterEvent: jest.fn() }));
 jest.mock('@/lib/membership/householdStatus', () => ({
     ensureHouseholdMembership: jest.fn(),
     lockAndFindDeniedHousehold: jest.fn(),
@@ -85,7 +85,7 @@ const { upsertPrimaryContact, reconcileHouseholdConflicts } = require('@/lib/eme
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, HouseholdLeadYouthError, MAX_HOUSEHOLD_LEADS } = require('@/lib/household/leads');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { settleHouseholdBg } = require('@/lib/membership/settleHouseholdBg');
+const { settleAfterEvent } = require('@/lib/membership/settleHouseholdBg');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { applyVolunteerFamilyStatus } = require('@/lib/membership/review');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -298,6 +298,56 @@ describe('getIntakeState', () => {
         expect(state.prefill.children).toHaveLength(1);
         expect(state.prefill.children[0].id).toBe(3);
         expect(state.prefill.household?.emergencyContactName).toBe('Aunt');
+    });
+
+    it("a non-lead member gets names and the address, but no ages, allergies, emails or emergency contact", async () => {
+        prisma.person.findUnique.mockResolvedValue({
+            id: 3,
+            householdId: 7,
+            isSysadmin: false,
+            household: {
+                name: 'Test Household',
+                line1: '1 Main St', line2: null, city: 'Austin', state: 'TX', postalCode: '78701',
+                householdMembers: [
+                    { id: 1, name: 'Primary', email: 'p@x.com', dateOfBirth: new Date('1980-01-01'), allergies: null, isHouseholdLead: true },
+                    { id: 3, name: 'Kid', email: null, dateOfBirth: new Date('2010-01-01'), allergies: 'peanuts', isHouseholdLead: false },
+                ],
+                orgMembership: { status: 'ACTIVE', processes: [] },
+                emergencyContacts: [{ name: 'Aunt', phone: '555-555-2000', email: 'a@x.com' }],
+            },
+        });
+
+        const state = await getIntakeState(3);
+
+        expect(state.isLead).toBe(false);
+        expect(state.hasEmergencyContact).toBe(true);
+        expect(state.prefill.household).toEqual(expect.objectContaining({
+            name: 'Test Household', line1: '1 Main St', city: 'Austin',
+            emergencyContactName: null, emergencyContactPhone: null, emergencyContactEmail: null,
+        }));
+        expect(state.prefill.secondaryParent).toEqual({ id: 1, name: 'Primary', email: null, dob: null, over25: false, allergies: null });
+        expect(state.prefill.children).toEqual([{ id: 3, name: 'Kid', email: null, dob: null, over25: false, allergies: null }]);
+    });
+
+    it('a sysadmin outside the lead role still gets the prefill, since they may save it', async () => {
+        prisma.person.findUnique.mockResolvedValue({
+            id: 3,
+            householdId: 7,
+            isSysadmin: true,
+            household: {
+                name: 'Test Household',
+                line1: null, line2: null, city: null, state: null, postalCode: null,
+                householdMembers: [{ id: 3, name: 'Admin', email: null, dateOfBirth: null, allergies: null, isHouseholdLead: false }],
+                orgMembership: null,
+                emergencyContacts: [{ name: ' ', phone: '555-555-2000', email: null }],
+            },
+        });
+
+        const state = await getIntakeState(3);
+
+        expect(state.hasEmergencyContact).toBe(false);
+        expect(state.prefill.household?.name).toBe('Test Household');
+        expect(state.prefill.children.map((c) => c.id)).toEqual([3]);
     });
 
     it('every process ACTIVE → process is null, no external lookup', async () => {
@@ -940,17 +990,11 @@ describe('submitIntake', () => {
             data: expect.not.objectContaining({ bgClearedAt: expect.anything() }),
         });
         // Settle stamps a qualifying household, and blocks one whose adult is disputed.
-        expect(settleHouseholdBg).toHaveBeenCalledWith(7);
-        expect(settleHouseholdBg.mock.invocationCallOrder[0]).toBeLessThan(advanceExternalIfComplete.mock.invocationCallOrder[0]);
+        expect(settleAfterEvent).toHaveBeenCalledWith(7, expect.any(String), {}, expect.anything());
+        expect(settleAfterEvent.mock.invocationCallOrder[0]).toBeLessThan(advanceExternalIfComplete.mock.invocationCallOrder[0]);
         expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
     });
 
-    it('a failed settle is logged and the committed intake still returns', async () => {
-        settleHouseholdBg.mockRejectedValueOnce(new Error('settle failed'));
-
-        await expect(submitIntake(1)).resolves.toEqual({ id: 11, status: 'PENDING_EXTERNAL_ACTION' });
-        expect(logBackendError).toHaveBeenCalledWith(expect.any(Error), expect.any(String), { householdId: 7, processId: 11 });
-    });
 
     it('re-runs the external advance after landing at PENDING_EXTERNAL_ACTION and returns its result', async () => {
         // Board pre-marked contract + BG consent on the INTAKE row, so the gate is

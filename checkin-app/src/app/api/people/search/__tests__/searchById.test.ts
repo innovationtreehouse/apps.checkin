@@ -16,7 +16,10 @@ jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 const findManyMock = jest.fn();
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
-    default: { person: { findMany: (...args: unknown[]) => findManyMock(...args) } },
+    default: {
+        person: { findMany: (...args: unknown[]) => findManyMock(...args) },
+        boardSettings: { findUnique: jest.fn().mockResolvedValue(null) },
+    },
 }));
 
 const mockSession = getServerSession as jest.Mock;

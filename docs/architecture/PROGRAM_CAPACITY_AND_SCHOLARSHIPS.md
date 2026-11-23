@@ -36,7 +36,10 @@ Every app-initiated stock change goes through ONE writer, `adjustProgramInventor
   the location is activated first (`inventoryActivate`). An absolute target (re-arm) is
   turned into the carry `target − available` under the lease and lands the same way.
 - **Timeouts settle by key.** A timeout, 5xx, throttle or `IDEMPOTENCY_CONCURRENT_REQUEST`
-  resends the SAME request with backoff. On the dev store (2026-10-14, shopify-live run
+  resends the SAME request with backoff. So does a 401 or 403 that answers a send that may
+  have reached Shopify: an earlier attempt of this request, or a pending write resent from
+  an earlier push (`untilSettled`, `checkin-app/src/lib/shopify/stock.ts:189-190`; the
+  resent flag is set at `stock.ts:419`). A 401/403 on a first send is a hard error. On the dev store (2026-10-14, shopify-live run
   38673844917) Shopify dedupes `inventoryAdjustQuantities` by key: a resend of a write that
   landed returns its original result instead of applying it again. So a timed-out write
   that landed is booked once, and a hard error, original or replayed, means it did not
@@ -82,9 +85,15 @@ Members pay less at the base price via a **server-minted, single-use discount co
 server-side (never trusting a client flag). A failed mint degrades to an undiscounted link
 — checkout is never blocked.
 
-This is an interim mechanism. `docs/in-design/SHOPIFY_MEMBER_SEGMENT_PRICING.md` is the
-planned upgrade — segment-gated automatic discounts, once checkout identity (that doc's
-§5) is solved — at which point per-checkout discount codes go away entirely.
+Checkout is an anonymous Shopify cart permalink: nothing in the URL says who is buying, and
+its cart attributes are values the customer can edit. So entitlement is judged by the app
+at the money event, never trusted from the cart. A minted code names the household it was
+minted for (`PRG{programId}-H{householdId}-…`), and `unentitledMemberCodeUse`
+(`lib/programs/memberDiscountCode.ts`) checks the order's real enrollees against that
+household's fee status. The `orders/paid` webhook and the reconciler's forward pass flag a
+failure `DISCOUNT_UNAUTHORIZED` and do not activate the enrollment. Shopify customer
+segments would gate the discount at checkout instead, but only for a checkout attached to
+a signed-in Shopify customer, which would add a second sign-in for every member.
 
 ### Two store items
 
@@ -300,7 +309,5 @@ remove or reach out. Nothing sends when both lists are empty.
 
 ## 6. Related
 
-- `docs/in-design/SHOPIFY_MEMBER_SEGMENT_PRICING.md` — the segment-gated pricing design
-  that per-checkout discount codes stand in for until checkout identity is solved.
 - `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` — the expand/contract migration
   convention this design's legacy-variant transition follows.

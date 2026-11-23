@@ -180,14 +180,22 @@ this consolidated.
 
 ### Reset
 
-Truncates every application table, then reseeds the baseline. The table list is
-read from the catalog at runtime, so a new model is picked up automatically and
-nobody maintains a list.
+Truncates every table in checkin, then in each library database listed in
+`checkin-app/libraries.json`, then in the Shopify-read mirror, and reseeds
+checkin's baseline. Each table list is read from the catalog at runtime, so a
+new model is picked up automatically and nobody maintains a list. A library or
+mirror with no connection configured is skipped and named in the ledger row,
+and a reset that fails records its error there.
 
-Two tables survive: `_prisma_migrations`, so the schema stays migrated and the
-reset takes seconds rather than minutes, and `DevLedger`, because the
-coordination history has to outlive it. The confirm dialog shows recent ledger
-activity before anything is destroyed.
+Before anything is truncated, every connection must name the environment's own
+database (`<name>_dev` on dev; the local name on a local host), or the reset
+refuses. The library seeds do not run on dev yet, so the libraries are empty
+after a reset.
+
+In each database `_prisma_migrations` survives, so the schema stays migrated and
+the reset takes seconds rather than minutes. In checkin `DevLedger` survives
+too, because the coordination history has to outlive it. The confirm dialog
+shows recent ledger activity before anything is destroyed.
 
 Deliberately not `prisma migrate reset`: this runs from a live server action on
 an always-on shared instance without dropping and rebuilding the schema. Schema

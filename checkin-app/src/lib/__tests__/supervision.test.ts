@@ -14,7 +14,7 @@ jest.mock("@/lib/prisma", () => ({
     },
 }));
 
-import { supervisingAdultCount, supervisingAdultVisits } from "@/lib/supervision";
+import { supervisingAdultCount, supervisingAdultVisits, uncoveredYouth } from "@/lib/supervision";
 
 const yearsAgo = (n: number) => {
     const d = new Date();
@@ -80,7 +80,7 @@ describe("who counts as a supervising adult", () => {
         expect(await count([visit(1, 10), visit(2, 20, { lastBackgroundCheck: null })])).toBe(1);
     });
 
-    it("excludes an adult holding a participant seat on a programme in session now", async () => {
+    it("excludes an adult holding a participant seat on a programme meeting now", async () => {
         const participant = visit(2, 20, { programParticipants: [{ programId: 7 }] });
         expect(await count([visit(1, 10), participant])).toBe(1);
     });
@@ -130,18 +130,37 @@ describe("supervisingAdultCount(excludeVisitId)", () => {
     });
 });
 
-describe("the programme-in-session probe", () => {
-    it("asks for an event bracketing now, dates covering today, or a RUNNING programme", async () => {
+describe("the programme-meeting probe", () => {
+    it("excludes a participant only while a meeting of their programme brackets now", async () => {
         const now = new Date("2026-08-18T15:00:00Z");
         findMany.mockResolvedValue([]);
         await supervisingAdultVisits(undefined, now);
 
         const where = findMany.mock.calls[0][0].select.person.select.programParticipants.where;
-        expect(where.status).toBe("ACTIVE");
-        expect(where.program.OR).toEqual([
-            { events: { some: { startAt: { lte: now }, endAt: { gte: now } } } },
-            { startAt: { lte: expect.any(Date) }, endAt: { gte: expect.any(Date) } },
-            { phase: "RUNNING", startAt: { lte: expect.any(Date) } },
-        ]);
+        expect(where).toEqual({
+            status: "ACTIVE",
+            program: { events: { some: { startAt: { lte: now }, endAt: { gte: now } } } },
+        });
+    });
+});
+
+describe("uncoveredYouth", () => {
+    const youth = (householdId: number) => ({ youth: true, householdId });
+    const adult = (householdId: number) => ({ youth: false, householdId });
+
+    it("covers a youth with an adult of their own household present", () => {
+        expect(uncoveredYouth([youth(10), adult(10)])).toEqual([]);
+    });
+
+    it("leaves a youth uncovered when only other households' adults are present", () => {
+        expect(uncoveredYouth([youth(10), adult(20)])).toEqual([youth(10)]);
+    });
+
+    it("sorts a mix of covered and uncovered youth", () => {
+        expect(uncoveredYouth([youth(10), youth(30), adult(10), adult(20)])).toEqual([youth(30)]);
+    });
+
+    it("does not let a youth cover a sibling", () => {
+        expect(uncoveredYouth([youth(10), youth(10)])).toHaveLength(2);
     });
 });

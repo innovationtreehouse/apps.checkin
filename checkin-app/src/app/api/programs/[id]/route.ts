@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { VALID_CONTACT_WHERE } from "@/lib/emergencyContacts/valid";
 import { logger } from "@/lib/logger";
 import { withAuth, authenticateRequest } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { handler, notFound, forbidden, badRequest } from "@/security/handler";
+import { getRoute, type Role } from "@/security/core";
 import { isActiveOrgMember, isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { apiError } from "@/lib/api-response";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
@@ -23,7 +25,7 @@ import { calculateAge } from "@/lib/time";
 // viewerMemberPricingEligible are computed AFTER the registry response comes
 // back and merged on top, session callers only, as is enrollmentClosedBy for
 // every caller — the registry envelope above
-// (association gate, per-tier stripping) runs completely untouched first.
+// (roster shaping, per-tier stripping) runs completely untouched first.
 // startAt/endAt are 'public' tier, so they always ride in `body` regardless of
 // caller privilege; re-authenticating here is the same cheap session read
 // authenticateRequest always does, just called a second time.
@@ -80,7 +82,14 @@ function closedBy(body: ProgramBody) {
     }, body._count?.participants);
 }
 
-const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ auth, params }) => {
+const ENDPOINT = 'GET /api/programs/[id]';
+
+// The roster says who is enrolled, so only a view holding `roster` (staff, an enrolled household) fetches it.
+function viewHoldsRoster(role: Role): boolean {
+    return getRoute(ENDPOINT)?.orderedView.find(([r]) => r === role)?.[1].includes('roster') ?? false;
+}
+
+const getProgram = handler<{ id: string }>(ENDPOINT, async ({ auth, params, role }) => {
     const programId = parseInt(params.id, 10);
     if (isNaN(programId)) throw badRequest('Invalid program ID');
 
@@ -90,94 +99,104 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     // programId / personId / householdId keys below are ROW_SCOPE_KEYs — drop
     // one and scopesHeld() fails closed and strips the row for the very roles
     // this route serves (see the emergencyContacts note).
-    const program = await prisma.program.findUnique({
-        where: { id: programId },
-        select: {
-            id: true,
-            name: true,
-            leadMentorId: true,
-            startAt: true,
-            endAt: true,
-            appliesToYear: true,
-            offSaleAt: true,
-            phase: true,
-            enrollmentStatus: true,
-            orgMemberOnly: true,
-            publiclyVisible: true,
-            announceOnOpen: true,
-            minAge: true,
-            maxAge: true,
-            maxParticipants: true,
-            orgMemberPriceCents: true,
-            nonOrgMemberPriceCents: true,
-            shopifyProductId: true,
-            shopifyVariantId: true,
-            claimantShopifyVariantId: true,
-            volunteers: {
-                select: {
-                    programId: true,
-                    personId: true,
-                    isCore: true,
-                    person: { select: { id: true, name: true, email: true } },
-                },
-            },
-            participants: {
-                where: ENROLLED_PARTICIPANT,
-                select: {
-                    programId: true,
-                    personId: true,
-                    status: true,
-                    pendingSince: true,
-                    person: {
-                        select: {
-                            id: true,
-                            name: true,
-                            email: true,
-                            phone: true,
-                            dateOfBirth: true,
-                            isDeclaredAdult: true,
-                            householdId: true,
-                            household: {
-                                select: {
-                                    id: true,
-                                    // The family's parents, for the roster's "call someone" band.
-                                    // householdId and isHouseholdLead are BOTH scope keys for the
-                                    // Person their_program_households binding: drop either and a
-                                    // lead resolves no scope, so name/email/phone strip away.
-                                    householdMembers: {
-                                        where: { isHouseholdLead: true },
-                                        orderBy: { id: "asc" },
-                                        select: { id: true, householdId: true, isHouseholdLead: true, name: true, email: true, phone: true },
-                                    },
-                                    emergencyContacts: {
-                                        where: { conflictParticipantId: null, name: { not: "" }, phone: { not: "" } },
-                                        orderBy: [{ priority: "asc" }, { id: "asc" }],
-                                        // householdId is the EmergencyContact ROW_SCOPE_KEY: without it
-                                        // scopesHeld() fails closed (empty scope set) and the stripper drops
-                                        // name/phone/relationship for EVERY viewer, incl. admin/board.
-                                        select: { id: true, householdId: true, name: true, phone: true, relationship: true },
-                                    },
-                                },
-                            },
-                        },
+    const [program, rosterBag] = await Promise.all([
+        prisma.program.findUnique({
+            where: { id: programId },
+            select: {
+                id: true,
+                name: true,
+                leadMentorId: true,
+                startAt: true,
+                endAt: true,
+                appliesToYear: true,
+                offSaleAt: true,
+                phase: true,
+                enrollmentStatus: true,
+                orgMemberOnly: true,
+                publiclyVisible: true,
+                announceOnOpen: true,
+                minAge: true,
+                maxAge: true,
+                maxParticipants: true,
+                orgMemberPriceCents: true,
+                nonOrgMemberPriceCents: true,
+                shopifyProductId: true,
+                shopifyVariantId: true,
+                claimantShopifyVariantId: true,
+                events: {
+                    orderBy: { startAt: 'asc' },
+                    select: {
+                        id: true,
+                        programId: true,
+                        name: true,
+                        startAt: true,
+                        endAt: true,
+                        attendanceConfirmedAt: true,
                     },
                 },
+                leadMentor: { select: { id: true, name: true, email: true } },
+                // Spots remaining on the public catalog page: a count, never the rows.
+                _count: { select: { participants: { where: ENROLLED_PARTICIPANT }, volunteers: true } },
             },
-            events: {
-                orderBy: { startAt: 'asc' },
-                select: {
-                    id: true,
-                    programId: true,
-                    name: true,
-                    startAt: true,
-                    endAt: true,
-                    attendanceConfirmedAt: true,
-                },
-            },
-            leadMentor: { select: { id: true, name: true, email: true } },
-            _count: { select: { participants: { where: ENROLLED_PARTICIPANT }, volunteers: true } },
-        },
-    });
+        }),
+        viewHoldsRoster(role)
+            ? prisma.program.findUnique({
+                  where: { id: programId },
+                  select: {
+                      volunteers: {
+                          select: {
+                              programId: true,
+                              personId: true,
+                              isCore: true,
+                              person: { select: { id: true, name: true, email: true } },
+                          },
+                      },
+                      participants: {
+                          where: ENROLLED_PARTICIPANT,
+                          select: {
+                              programId: true,
+                              personId: true,
+                              status: true,
+                              pendingSince: true,
+                              person: {
+                                  select: {
+                                      id: true,
+                                      name: true,
+                                      email: true,
+                                      phone: true,
+                                      dateOfBirth: true,
+                                      isDeclaredAdult: true,
+                                      householdId: true,
+                                      household: {
+                                          select: {
+                                              id: true,
+                                              // The family's parents, for the roster's "call someone" band.
+                                              // householdId and isHouseholdLead are BOTH scope keys for the
+                                              // Person their_program_households binding: drop either and a
+                                              // lead resolves no scope, so name/email/phone strip away.
+                                              householdMembers: {
+                                                  where: { isHouseholdLead: true },
+                                                  orderBy: { id: "asc" },
+                                                  select: { id: true, householdId: true, isHouseholdLead: true, name: true, email: true, phone: true },
+                                              },
+                                              emergencyContacts: {
+                                                  where: VALID_CONTACT_WHERE,
+                                                  orderBy: [{ priority: "asc" }, { id: "asc" }],
+                                                  // householdId is the EmergencyContact ROW_SCOPE_KEY: without it
+                                                  // scopesHeld() fails closed (empty scope set) and the stripper drops
+                                                  // name/phone/relationship for EVERY viewer, incl. admin/board.
+                                                  select: { id: true, householdId: true, name: true, phone: true, relationship: true },
+                                              },
+                                          },
+                                      },
+                                  },
+                              },
+                          },
+                      },
+                  },
+              })
+            : null,
+    ]);
 
     if (!program) throw notFound('Program not found');
 
@@ -185,19 +204,9 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     const sessionUser = isSessionUser ? auth.user : undefined;
     const isSysAdminOrBoard = !!(sessionUser?.isSysadmin || sessionUser?.isBoardMember);
     const isLeadMentor = !!sessionUser && sessionUser.id === program.leadMentorId;
-    const isCoreVolunteer = !!sessionUser && program.volunteers.some(v => v.personId === sessionUser.id && v.isCore);
+    const isCoreVolunteer = !!sessionUser && !!rosterBag?.volunteers.some(v => v.personId === sessionUser.id && v.isCore);
     // Finance reads the roster to enroll places paid outside the store.
     const isPrivileged = isSysAdminOrBoard || !!sessionUser?.isFinance || isLeadMentor || isCoreVolunteer;
-    const viewerIsLeader = (isLeadMentor || isCoreVolunteer) && !isSysAdminOrBoard;
-    const emailWithheldFrom = emailWithheldParticipants(program.participants, viewerIsLeader);
-    const ages = program.participants.map(p => ({
-        personId: p.personId,
-        age: p.person.dateOfBirth ? calculateAge(p.person.dateOfBirth, program.startAt) : null,
-    }));
-    const roster = program.participants.map(p => ({
-        ...p,
-        person: { ...rosterPerson(adultPhoneOnly(p.person, program.startAt), viewerIsLeader), household: rosterHousehold(p.person.household, emailWithheldFrom) },
-    }));
 
     // A members-only program is hidden unless its leader opted it into the public
     // catalogue (publiclyVisible) — then anyone may view its detail, but the
@@ -209,47 +218,29 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
         if (!membershipFeeSettled) throw forbidden('Forbidden: Member-Only Program');
     }
 
-    // ── Association gate (deliberate inline exception) ──────────────────────────
-    // The participant/volunteer ROSTER reveals who is enrolled in this program.
-    // Each ProgramParticipant/ProgramVolunteer row AND Participant.name are tier
-    // 'public', so the handler's per-field stripper CANNOT hide the association:
-    // the existence of the row + the public name = the enrollment fact (incl.
-    // youth). Only admission can hide it. The registry `authorize` grammar can't
-    // express "enrolled in THIS program" per-relation, so the gate lives here —
-    // mirrors events/[id]; see docs/security/auth-consistency-analysis.md
-    // §4 (principled exception) and §5.1a. The route stays `authorize: 'public'`
-    // because the catalog metadata (name/price/dates/spots) drives the public
-    // registration page; only the roster is gated.
-    //
-    // Staff (admin/board/finance/lead/core-vol) or a member of an enrolled household see
-    // the rows; everyone else (anonymous, plain authenticated non-enrolled) gets
-    // metadata + counts only. The public details/enroll page needs spots-remaining
-    // (_count.participants), not names — a count is fine, the names are the leak.
-    // The registry orderedView tiers remain as defense-in-depth, stripping
-    // pii/personal on the rows for non-staff-but-enrolled callers.
-    // The household is read from the DB, not the session, so a move applies at once.
-    const viewerHouseholdId = sessionUser && !isPrivileged
-        ? (await prisma.person.findFirst({ where: { id: sessionUser.id }, select: { householdId: true } }))?.householdId
-        : undefined;
-    const isOwnHousehold = (p: { personId: number; person: { householdId: number } | null }) => !!sessionUser && (
-        p.personId === sessionUser.id ||
-        (viewerHouseholdId != null && p.person?.householdId === viewerHouseholdId)
-    );
-    const isEnrolled = program.participants.some(isOwnHousehold);
-    if (!isPrivileged && !isEnrolled) {
-        const metadata: Record<string, unknown> = { ...program };
-        delete metadata.volunteers;
-        delete metadata.participants;
-        return { Program: metadata, ProgramRosterAge: [] };
-    }
+    // Anonymous and non-enrolled callers get the catalog fields and counts only.
+    if (!rosterBag) return { Program: program, ProgramRosterAge: [] };
+
+    const viewerIsLeader = (isLeadMentor || isCoreVolunteer) && !isSysAdminOrBoard;
+    const emailWithheldFrom = emailWithheldParticipants(rosterBag.participants, viewerIsLeader);
+    const ages = rosterBag.participants.map(p => ({
+        personId: p.personId,
+        age: p.person.dateOfBirth ? calculateAge(p.person.dateOfBirth, program.startAt) : null,
+    }));
+    const roster = rosterBag.participants.map(p => ({
+        ...p,
+        person: { ...rosterPerson(adultPhoneOnly(p.person, program.startAt), viewerIsLeader), household: rosterHousehold(p.person.household, emailWithheldFrom) },
+    }));
+
     if (isPrivileged) {
-        const volunteers = program.volunteers.map(v => ({ ...v, person: withholdEmail(v.person, emailWithheldFrom) }));
+        const volunteers = rosterBag.volunteers.map(v => ({ ...v, person: withholdEmail(v.person, emailWithheldFrom) }));
         return { Program: { ...program, volunteers, participants: roster }, ProgramRosterAge: ages };
     }
 
-    // Payment status (status = paid vs not paid yet) is staff's, plus a household
-    // lead's for their own household. The stripper can't express "own household",
-    // so other rows are dropped of it here — including every row for a youth.
+    // The enrolled household's view. Payment status (status = paid vs not paid yet)
+    // is staff's, plus a household lead's for their own household. The stripper
+    // can't express "own household", so other rows are dropped of it here —
+    // including every row for a youth.
     // The household is read from the DB, not the session, so a move applies at once.
     const viewer = sessionUser ? await householdPaymentViewer(sessionUser.id) : null;
     const seesPayment = (p: { personId: number; person: { householdId: number } | null }) => !!viewer && (
@@ -259,7 +250,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     const participants = roster.map(({ status, pendingSince, ...row }) =>
         seesPayment(row) ? { ...row, status, pendingSince } : row
     );
-    return { Program: { ...program, participants }, ProgramRosterAge: ages };
+    return { Program: { ...program, volunteers: rosterBag.volunteers, participants }, ProgramRosterAge: ages };
 });
 
 

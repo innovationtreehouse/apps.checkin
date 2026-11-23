@@ -107,6 +107,8 @@ export const classifications = {
         agreementVersion: 'internal',
         bgConsentAt: 'internal',
         bgClearedAt: 'internal',
+        bgSettleFailedAt: 'internal',
+        bgSettleError: 'internal',
         shopifyDraftOrderId: 'internal',
         shopifyInvoiceUrl: 'personal',
         shopifyOrderId: 'internal',

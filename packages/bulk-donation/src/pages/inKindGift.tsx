@@ -1,12 +1,12 @@
 "use client";
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { useParams } from "next/navigation";
-import { notifications } from "@mantine/notifications";
-import { Alert, Anchor, Badge, Button, Group, Paper, Stack, Table, Text, Title } from "@mantine/core";
-import { api, errorMessage, isRefusal, loadError, useCanWrite, useLoad, when } from "../components/api";
+import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Select, Stack, Switch, Table, Text, Title } from "@mantine/core";
+import { act, api, errorMessage, isRefusal, loadError, ownerName, useCanWrite, useLoad, useOwners, when, type OwnerOption } from "../components/api";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { IN_KIND_STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
 
 interface GiftLine {
@@ -16,6 +16,10 @@ interface GiftLine {
   quantity: number;
   valueCents: number | null;
   suggestedValueCents: number | null;
+  isCapital: boolean | null;
+  depreciationYears: number | null;
+  capitalBucketId: number | null;
+  registeredAt: string | null;
 }
 
 interface GiftEvent {
@@ -43,10 +47,13 @@ interface Gift {
   replayConflictAt: string | null;
   outcome: string | null;
   decidedAt: string | null;
+  budgetOwnerId: number | null;
   budgetOwnerName: string | null;
   bucketHeld: boolean;
+  capitalReviewNeeded: boolean | null;
   totalValueCents: number | null;
   state: WaitingOn | null;
+  waitingOn: WaitingOn[];
   revenueBooking: string | null;
   expenseBooking: string | null;
   qbFirstFailedAt?: string | null;
@@ -68,6 +75,9 @@ const EVENT: Record<string, string> = {
   IN_KIND_DECIDED: "Decided",
   IN_KIND_BUCKET_CHANGED: "Bucket changed",
   MANUAL_IN_KIND_RECORDED: "Recorded without a receipt",
+  IN_KIND_CAPITAL_DESIGNATED: "Capital designation set",
+  IN_KIND_CAPITAL_PERIOD_SET: "Depreciation period set",
+  IN_KIND_CAPITAL_REGISTERED: "Assets registered",
 };
 
 /** The one detail of an event's payload worth a reader's time: an outcome. */
@@ -104,11 +114,11 @@ function InventoryPanel({ gift, onReload }: { gift: Gift; onReload: () => void }
     setBusy(true);
     try {
       await api(`/in-kind/manual/${gift.id}/load-inventory`, { method: "POST" });
-      notifications.show({ message: "Goods loaded into inventory", color: "green" });
+      showSuccess("Goods loaded into inventory");
       onReload();
     } catch (e) {
       if (isRefusal(e)) setRefusal(e.message);
-      else notifications.show({ title: "Goods not loaded into inventory", message: errorMessage(loadError(e)), color: "red", autoClose: false });
+      else showError(errorMessage(loadError(e)), { title: "Goods not loaded into inventory" });
     } finally {
       setBusy(false);
     }
@@ -136,10 +146,76 @@ function InventoryPanel({ gift, onReload }: { gift: Gift; onReload: () => void }
   );
 }
 
+const lineName = (l: GiftLine) => l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "—");
+
+function capitalCell(l: GiftLine, owners: readonly OwnerOption[] | null): string {
+  if (l.isCapital === null) return "—";
+  if (!l.isCapital) return "Not capital";
+  const period = l.depreciationYears === null ? "period not set" : `${l.depreciationYears} years`;
+  return `Capital, ${period}, ${ownerName(owners, l.capitalBucketId)}${l.registeredAt ? ", registered" : ""}`;
+}
+
+/**
+ * Finance's capital review of an accepted gift over a capital threshold, in the purchase's two steps:
+ * designate every line, then set each capital line's period and owner. The drain then registers it.
+ */
+function CapitalPanel({ gift, onDone }: { gift: Gift; onDone: () => void }) {
+  const owners = useOwners();
+  const canWrite = useCanWrite();
+  const designating = gift.lines.some((l) => l.isCapital === null);
+  const capital = gift.lines.filter((l) => l.isCapital);
+  const [marks, setMarks] = useState<Record<number, boolean>>({});
+  const [years, setYears] = useState<Record<number, number | "">>({});
+  const [ownerOf, setOwnerOf] = useState<Record<number, string | null>>({});
+  const [busy, setBusy] = useState(false);
+  const defaultOwner = (l: GiftLine) => String(l.capitalBucketId ?? gift.budgetOwnerId ?? "");
+  const ownerOptions = (owners.data ?? []).map((o) => ({ value: String(o.id), label: o.name }));
+  const owner = (l: GiftLine) => ownerOf[l.id] ?? defaultOwner(l);
+
+  async function submit(body: unknown, step: "capital-review" | "set-depreciation-cycle", ok: string) {
+    setBusy(true);
+    await act(() => api(`/in-kind/${gift.source}/${gift.id}/${step}`, { method: "POST", body: JSON.stringify(body) }), ok, onDone);
+    setBusy(false);
+  }
+
+  if (!canWrite) return <Text size="sm">Waiting on finance&apos;s capital review.</Text>;
+  let form: ReactNode;
+  if (designating) {
+    const body = { lineItems: gift.lines.map((l) => ({ lineItemId: l.id, isCapital: marks[l.id] ?? false, ...(marks[l.id] && owner(l) ? { capitalOwnerId: Number(owner(l)) } : {}) })) };
+    form = (
+      <>
+        <Text size="sm">This gift meets a capital threshold. Mark each line that is a capital asset.</Text>
+        {gift.lines.map((l) => (
+          <Switch key={l.id} label={lineName(l)} checked={marks[l.id] ?? false} onChange={(e) => setMarks({ ...marks, [l.id]: e.currentTarget.checked })} />
+        ))}
+        <Group><Button loading={busy} onClick={() => void submit(body, "capital-review", "Capital designation saved")}>Save designation</Button></Group>
+      </>
+    );
+  } else {
+    const ready = capital.every((l) => typeof years[l.id] === "number" && owner(l));
+    const body = { items: capital.map((l) => ({ lineItemId: l.id, depreciationYears: Number(years[l.id]), ownerId: Number(owner(l)) })) };
+    form = (
+      <>
+        <Text size="sm">Set each capital line&apos;s depreciation period and owner. The assets get their numbers before the gift books.</Text>
+        {capital.map((l) => (
+          <Group key={l.id} align="flex-end">
+            <Text size="sm" w={220}>{lineName(l)}</Text>
+            <NumberInput label="Years" min={1} w={100} value={years[l.id] ?? ""} onChange={(v) => setYears({ ...years, [l.id]: typeof v === "number" ? v : "" })} />
+            <Select label="Owner" data={ownerOptions} w={240} value={owner(l) || null} onChange={(v) => setOwnerOf({ ...ownerOf, [l.id]: v })} />
+          </Group>
+        ))}
+        <Group><Button loading={busy} disabled={!ready} onClick={() => void submit(body, "set-depreciation-cycle", "Depreciation period saved")}>Save period</Button></Group>
+      </>
+    );
+  }
+  return <Stack gap="xs">{form}</Stack>;
+}
+
 /** One in-kind gift: its donor, date and value, lines, file, state, where it went and its history. */
 function InKindGiftPage({ source }: { source: InKindSource }) {
   const { id } = useParams<{ id: string }>();
   const gift = useLoad<Gift>(`/in-kind/${source}/${id}`);
+  const owners = useOwners();
   const back = <Anchor href="/donations/in-kind" size="sm">← In-kind queue</Anchor>;
 
   if (gift.error) return <Stack>{back}<LoadError what="this in-kind gift" message={gift.error} onRetry={gift.reload} /></Stack>;
@@ -188,20 +264,29 @@ function InKindGiftPage({ source }: { source: InKindSource }) {
           <Table.Tr>
             <Table.Th>Item</Table.Th><Table.Th>Part ID</Table.Th><Table.Th>Quantity</Table.Th><Table.Th>Value</Table.Th>
             {isManual && <Table.Th>Suggested</Table.Th>}
+            {g.capitalReviewNeeded && <Table.Th>Capital</Table.Th>}
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
           {g.lines.map((l) => (
             <Table.Tr key={l.id}>
-              <Table.Td>{l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "—")}</Table.Td>
+              <Table.Td>{lineName(l)}</Table.Td>
               <Table.Td>{l.gtin13 ? formatGtinDisplay(l.gtin13) : "—"}</Table.Td>
               <Table.Td>{l.quantity}</Table.Td>
               <Table.Td>{l.valueCents === null ? "—" : formatCents(l.valueCents)}</Table.Td>
               {isManual && <Table.Td>{l.suggestedValueCents === null ? "—" : formatCents(l.suggestedValueCents)}</Table.Td>}
+              {g.capitalReviewNeeded && <Table.Td>{capitalCell(l, owners.data)}</Table.Td>}
             </Table.Tr>
           ))}
         </Table.Tbody>
       </Table>
+
+      {g.waitingOn.includes("capital") && (
+        <Paper withBorder p="sm">
+          <Text fw={500} size="sm" mb="xs">Capital review</Text>
+          <CapitalPanel gift={g} onDone={gift.reload} />
+        </Paper>
+      )}
 
       <Paper withBorder p="sm">
         <Text fw={500} size="sm" mb="xs">Inventory</Text>

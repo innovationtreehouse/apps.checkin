@@ -7,12 +7,12 @@ import FirstTimeIntakePanel from './FirstTimeIntakePanel';
 import type { EnrollmentPickerControls } from './useProgramEnrollment';
 
 /** The household picker: who to enroll, checkout, the scholarship request and first-time setup. */
-export default function EnrollmentPicker({ ageGated, ageRange, hasPrice, isClosed, viewerIsYouth, controls }: {
+export default function EnrollmentPicker({ ageGated, ageRange, hasPrice, isClosed, seesPayment, controls }: {
   ageGated: boolean;
   ageRange: string | null;
   hasPrice: boolean;
   isClosed: boolean;
-  viewerIsYouth: boolean;
+  seesPayment: boolean;
   controls: EnrollmentPickerControls;
 }) {
   const {
@@ -95,7 +95,7 @@ export default function EnrollmentPicker({ ageGated, ageRange, hasPrice, isClose
           {hasPrice ? "Pay on Shopify" : "Complete Enrollment"}
         </Button>
 
-        {hasPrice && !isClosed && !viewerIsYouth && (
+        {hasPrice && !isClosed && seesPayment && (
           <Button
             fullWidth
             size="md"

@@ -5,8 +5,7 @@ import { fromWhere, personBgOpen } from "@/lib/membership/lifecycle";
 import { KVA_KIND, findSignedCurrentKva } from "@/lib/membership/keyVolunteerProcess";
 import { recallSigningRequests } from "@/lib/membership/keyVolunteer";
 import { disputingReviews, loadCheckReviews } from "@/lib/membership/checkStanding";
-import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
-import { logBackendError } from "@/lib/logger";
+import { settleAfterEvent } from "@/lib/membership/settleHouseholdBg";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
@@ -115,7 +114,7 @@ export async function prepareMerge(
     // The merge takes the newer of the two lastBackgroundCheck dates
     // (resolveKeeperUpdate), so without this an actor can seat a background-check
     // date on their own family with no second actor — the thing attest() and
-    // boardResetReview refuse. Both subjects count: the tombstone's household is
+    // boardResetReview refuse. Both subjects count: the merged-away record's household is
     // where the carried date comes from, the keeper's is where it lands, and the
     // two need not be the same household. No role bypasses this, and an actor
     // whose household can't be resolved is refused (fail closed).
@@ -211,7 +210,7 @@ function emptyTallies() {
         programParticipants: { migrated: 0, left: 0 },
         programVolunteers: { migrated: 0, deduped: 0 },
         rsvps: { migrated: 0, deduped: 0, left: 0 },
-        toolStatuses: { migrated: 0, left: 0 },
+        toolStatuses: { migrated: 0, deduped: 0, left: 0 },
         bgAttestations: { migrated: 0, left: 0 },
         corporationLeads: { migrated: 0, deduped: 0 },
         corporationMembers: { migrated: 0, deduped: 0 },
@@ -267,13 +266,9 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
 
     // The keeper may now carry a newer check date or another person's review, and the
     // merged-away record has left its household: settle both on their people's checks.
-    // Post-commit, so a failure is logged rather than reported as a failed merge.
+    // Post-commit, so a failure becomes a stuck settle rather than a failed merge.
     for (const householdId of new Set([keep.householdId, merge.householdId])) {
-        try {
-            await settleHouseholdBg(householdId, { trigger: { kind: "merge", personMergeId } });
-        } catch (error) {
-            await logBackendError(error, "household background-check settle after merge", { householdId, keepId, mergeId });
-        }
+        await settleAfterEvent(householdId, "merge", { trigger: { kind: "merge", personMergeId } }, { keepId, mergeId });
     }
     await notifyBoardOfYouthLeads([lockedKeeper]);
     await recallSigningRequests(recallRequestIds);
@@ -396,9 +391,9 @@ async function moveVisits(tx: TxClient, keepId: number, mergeId: number, moved: 
 
 /**
  * 4. Move join tables. Decision-bearing collisions (ProgramParticipant,
- * ToolStatus, future RSVP) were refused under the locks; a `left` row means one
- * raced in since, and refuseLeftRows refuses the merge. Bare-join collisions
- * (ProgramVolunteer) auto-dedupe.
+ * different-level ToolStatus, future RSVP) were refused under the locks; a `left`
+ * row means one raced in since, and refuseLeftRows refuses the merge. Bare-join
+ * collisions (ProgramVolunteer) and same-level ToolStatus pairs auto-dedupe.
  */
 async function moveJoinTables(tx: TxClient, keep: KeepSubject, merge: MergeSubject, moved: Tallies): Promise<void> {
     const keepId = keep.id;
@@ -449,12 +444,20 @@ async function moveJoinTables(tx: TxClient, keep: KeepSubject, merge: MergeSubje
     }
 
     for (const tool of merge.toolStatuses) {
-        if (!keep.toolStatuses.find(k => k.toolId === tool.toolId)) {
+        const kept = keep.toolStatuses.find(k => k.toolId === tool.toolId);
+        if (!kept) {
             await tx.toolStatus.update({
                 where: { personId_toolId: { toolId: tool.toolId, personId: mergeId } },
                 data: { personId: keepId },
             });
             moved.toolStatuses.migrated++;
+        } else if (kept.level === tool.level) {
+            // Matching on level too: a level changed since the read is left, and refuses the merge.
+            const { count } = await tx.toolStatus.deleteMany({
+                where: { toolId: tool.toolId, personId: mergeId, level: tool.level },
+            });
+            if (count > 0) moved.toolStatuses.deduped++;
+            else moved.toolStatuses.left++;
         } else {
             moved.toolStatuses.left++;
         }
@@ -507,11 +510,11 @@ async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: num
 }
 
 /**
- * PersonRole.personId is CASCADE — a role left on the tombstone is a security
- * grant a later delete destroys. Each role moves through setRoleFlag, the role
+ * PersonRole.personId is CASCADE — a role left on the merged-away record is a
+ * security grant its delete destroys. Each role moves through setRoleFlag, the role
  * routes' choke point, so it runs their guards and writes one audit row per
  * change: every role is granted to the keeper first (a no-op when the keeper
- * already holds it), then revoked from the tombstone, so a moving BOARD never
+ * already holds it), then revoked from the merged-away record, so a moving BOARD never
  * counts down to zero. KEY_VOLUNTEER is granted first and revoked last, the
  * order its rules need; the move is not a new grant, so the Key Volunteer
  * agreement check is skipped (the agreements moved with the other relations).
@@ -520,13 +523,13 @@ async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: num
  * read still moves.
  */
 async function moveRoles(tx: TxClient, keepId: number, mergeId: number, actor: AuthenticatedUser | null, moved: Tallies): Promise<void> {
-    const tombstoneRoles = (await tx.personRole.findMany({
+    const mergedAwayRoles = (await tx.personRole.findMany({
         where: { personId: mergeId },
         select: { role: true, grantedById: true, grantedAt: true },
     })).sort((a, b) => Number(b.role === "KEY_VOLUNTEER") - Number(a.role === "KEY_VOLUNTEER"));
-    if (tombstoneRoles.length > 0 && !actor) throw new RoleMatrixError("Forbidden");
+    if (mergedAwayRoles.length > 0 && !actor) throw new RoleMatrixError("Forbidden");
     if (actor) {
-        for (const { role, grantedById, grantedAt } of tombstoneRoles) {
+        for (const { role, grantedById, grantedAt } of mergedAwayRoles) {
             const granted = await setRoleFlag(tx, keepId, KIND_TO_FLAG[role], true, actor, { move: true });
             if (granted.changed) {
                 await tx.personRole.update({
@@ -538,7 +541,7 @@ async function moveRoles(tx: TxClient, keepId: number, mergeId: number, actor: A
                 moved.roles.deduped++;
             }
         }
-        for (const { role } of [...tombstoneRoles].reverse()) {
+        for (const { role } of [...mergedAwayRoles].reverse()) {
             await setRoleFlag(tx, mergeId, KIND_TO_FLAG[role], false, actor);
         }
     }

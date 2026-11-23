@@ -1,10 +1,11 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
 import type { OutcomeNotice } from "../../contract";
-import { OUTCOME_ATTEMPTS, oweOutcomeNotice, sweepOutcomeNotices } from "../../services/outcomeNotices";
+import { oweOutcomeNotice, retryOutcomeNotice, SEND_FAILED_AGAIN, sweepOutcomeNotices } from "../../services/outcomeNotices";
 import { receiptService } from "../../services/receiptService";
+import { retryStuckItem, stuckItems } from "../../stuckItems";
 import { describeDb } from "../helpers/db";
-import { ALICE, BOB, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile, uploadRead } from "../helpers/setup";
 
 vi.mock("../../services/outcomeNotices", async (importOriginal) => {
   const real = await importOriginal<typeof import("../../services/outcomeNotices")>();
@@ -40,7 +41,7 @@ beforeEach(async () => {
 /** ALICE's receipt, never pushed (its total disagrees with its lines), moved straight to `state`, reimbursing `reimburseePersonId` when given. */
 async function aliceReceiptIn(state: string, reimburseePersonId: number | null = null): Promise<string> {
   actAs(ALICE);
-  const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Acme Hardware", receiptDate: "2026-10-02", receiptTotal: "25.00" }) });
+  const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ retailer: "Acme Hardware", receiptDate: "2026-10-02", receiptTotal: "25.00" }) });
   await db.receiptDetail.update({ where: { id: r.id }, data: { state } });
   if (reimburseePersonId !== null) await db.receipt.update({ where: { id: r.id }, data: { needsReimbursement: true, reimburseePersonId } });
   return r.id;
@@ -79,8 +80,8 @@ describeDb("receipt outcome notices", () => {
   it("owes a notice for each copy Keep this one rejects", async () => {
     const file = textFile();
     actAs(ALICE);
-    const a = await receiptService.upload(file, "text/plain", {});
-    const b = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const a = await uploadRead(file, "text/plain", {});
+    const b = await uploadRead(file, "text/plain", { details: manualDetails() });
     actAs(FINANCE);
     await receiptService.keepThisOne(b.id, [a.id, b.id]);
 
@@ -97,7 +98,7 @@ describeDb("receipt outcome notices", () => {
     actAs(FINANCE);
     await receiptService.approveFinancial(approved);
     actAs(ALICE);
-    const finalized = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Elsewhere" }) });
+    const finalized = await uploadRead(textFile(), "text/plain", { details: manualDetails({ retailer: "Elsewhere" }) });
 
     expect(await stateOf(discarded)).toBe("discarded");
     expect(await stateOf(finalized.id)).toBe("receipt_finalized");
@@ -141,7 +142,7 @@ describeDb("receipt outcome notices", () => {
     actAs(FINANCE);
     await receiptService.rejectFinancial(id, "late");
     expect(await sweepOutcomeNotices()).toEqual({ sent: 0, failed: 0 });
-    expect(await notices(id)).toEqual([expect.objectContaining({ doneAt: null, attempts: 0 })]);
+    expect(await notices(id)).toEqual([expect.objectContaining({ doneAt: null, firstFailedAt: null })]);
 
     setup();
     expect(await sweepOutcomeNotices()).toEqual({ sent: 2, failed: 0 });
@@ -149,7 +150,7 @@ describeDb("receipt outcome notices", () => {
     expect(sent.map((s) => s.to)).toEqual(["uploader", "reimbursee"]);
   });
 
-  it("resends only the copy that failed", async () => {
+  it("a failed copy leaves the notice stuck with its error; the sweep never retries it", async () => {
     const id = await aliceReceiptIn("financial_review", BOB.id);
     configure({
       receiptSink: recordingPorts().receiptSink,
@@ -157,23 +158,71 @@ describeDb("receipt outcome notices", () => {
     });
     actAs(FINANCE);
     await receiptService.rejectFinancial(id, "late");
-    expect(await notices(id)).toEqual([expect.objectContaining({ uploaderSentAt: expect.any(Date), reimburseeSentAt: null, doneAt: null, attempts: 1 })]);
+    const [row] = await notices(id);
+    expect(row).toMatchObject({ reimburseeSentAt: null, claimedAt: null, doneAt: null, failureReason: "To the reimbursee: the mail out reported failure" });
+    expect(row.uploaderSentAt).not.toBeNull();
+    expect(row.firstFailedAt).not.toBeNull();
 
     setup();
     sent = [];
-    expect(await sweepOutcomeNotices()).toEqual({ sent: 1, failed: 0 });
-    expect(sent.map((s) => s.to)).toEqual(["reimbursee"]);
+    expect(await sweepOutcomeNotices()).toEqual({ sent: 0, failed: 0 });
+    expect(sent).toEqual([]);
+    expect(await stuckItems()).toEqual([{ id: String(row.id), step: "outcome email", href: `/receipts/${id}`, failedAt: row.firstFailedAt }]);
   });
 
-  it("retries a failed send up to its limit, then stops", async () => {
-    failSends = true;
+  it("a send that throws records its error text", async () => {
     const id = await aliceReceiptIn("financial_review");
+    configure({
+      receiptSink: recordingPorts().receiptSink,
+      outcomeMail: {
+        send: async () => {
+          throw new Error("provider down");
+        },
+      },
+    });
     actAs(FINANCE);
     await receiptService.rejectFinancial(id, "late");
-    for (let i = 1; i < OUTCOME_ATTEMPTS + 2; i++) await sweepOutcomeNotices();
+    expect(await notices(id)).toEqual([expect.objectContaining({ doneAt: null, failureReason: "To the uploader: provider down" })]);
+  });
 
-    expect(sent).toHaveLength(OUTCOME_ATTEMPTS);
-    expect(await notices(id)).toEqual([expect.objectContaining({ uploaderSentAt: null, doneAt: expect.any(Date), attempts: OUTCOME_ATTEMPTS })]);
+  it("a person's Retry sends only the copy still owed, keeps the first failure time, and finishes the notice", async () => {
+    const id = await aliceReceiptIn("financial_review", BOB.id);
+    configure({
+      receiptSink: recordingPorts().receiptSink,
+      outcomeMail: { send: async (notice, to) => (sent.push({ notice, to }), to === "uploader") },
+    });
+    actAs(FINANCE);
+    await receiptService.rejectFinancial(id, "late");
+    const [failed] = await notices(id);
+
+    await expect(retryOutcomeNotice(failed.id)).rejects.toMatchObject({ status: 409, message: SEND_FAILED_AGAIN });
+    const [again] = await notices(id);
+    expect(again.firstFailedAt).toEqual(failed.firstFailedAt);
+    expect(again).toMatchObject({ doneAt: null, claimedAt: null });
+
+    setup();
+    sent = [];
+    await retryStuckItem({ id: String(failed.id), step: "outcome email" });
+    expect(sent.map((s) => s.to)).toEqual(["reimbursee"]);
+    expect(await notices(id)).toEqual([expect.objectContaining({ doneAt: expect.any(Date) })]);
+    expect(await stuckItems()).toEqual([]);
+  });
+
+  it("a Retry answers 404 for a notice not stuck and 503 while the mail out is unbound", async () => {
+    const sentId = await aliceReceiptIn("financial_review");
+    actAs(FINANCE);
+    await receiptService.rejectFinancial(sentId, "late");
+    const [done] = await notices(sentId);
+    await expect(retryOutcomeNotice(done.id)).rejects.toMatchObject({ status: 404 });
+    await expect(retryStuckItem({ id: "not-a-number", step: "outcome email" })).rejects.toMatchObject({ status: 404 });
+
+    failSends = true;
+    const stuckId = await aliceReceiptIn("financial_review");
+    actAs(FINANCE);
+    await receiptService.rejectFinancial(stuckId, "late");
+    const [stuck] = await notices(stuckId);
+    setup(false);
+    await expect(retryOutcomeNotice(stuck.id)).rejects.toMatchObject({ status: 503 });
   });
 
   it("never sends from a claimed row, as after a crash between send and stamp", async () => {

@@ -38,6 +38,17 @@ export const SHOP_IDENTITY_QUERY = `
   }
 `;
 
+const LINE_ITEM_FIELDS = `
+  id
+  sku
+  title
+  quantity
+  currentQuantity
+  variant { id legacyResourceId }
+  originalUnitPriceSet ${MONEY_BAG}
+  totalDiscountSet ${MONEY_BAG}
+`;
+
 const ORDER_FIELDS = `
   id
   legacyResourceId
@@ -60,17 +71,8 @@ const ORDER_FIELDS = `
   currentTotalPriceSet ${MONEY_BAG}
   totalRefundedSet ${MONEY_BAG}
   lineItems(first: 100) {
-    nodes {
-      id
-      sku
-      title
-      quantity
-      currentQuantity
-      variant { id legacyResourceId }
-      originalUnitPriceSet ${MONEY_BAG}
-      totalDiscountSet ${MONEY_BAG}
-    }
-    pageInfo { hasNextPage }
+    nodes { ${LINE_ITEM_FIELDS} }
+    pageInfo { hasNextPage endCursor }
   }
   refunds {
     id
@@ -113,6 +115,18 @@ export const ORDERS_QUERY = `
     orders(first: $first, after: $after, query: $query, sortKey: UPDATED_AT) {
       edges { node { ${ORDER_FIELDS} } }
       pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
+/** One order's line items past the first page of ORDERS_QUERY. */
+export const ORDER_LINES_QUERY = `
+  query OrderLines($id: ID!, $after: String) {
+    order(id: $id) {
+      lineItems(first: 250, after: $after) {
+        nodes { ${LINE_ITEM_FIELDS} }
+        pageInfo { hasNextPage endCursor }
+      }
     }
   }
 `;

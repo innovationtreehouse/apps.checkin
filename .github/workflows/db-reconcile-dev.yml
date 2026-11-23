@@ -57,7 +57,7 @@ jobs:
           set -euo pipefail
           # Strict shape (exactly what coalesce-migrations.ts produces). Also the
           # injection guard: $BASELINE lands inside the container's sh -c command.
-          if ! printf '%s' "$BASELINE" | grep -Eq '^[0-9]{14}_[a-z0-9_]+$'; then
+          if ! grep -Eq '^[0-9]{14}_[a-z0-9_]+$' <<<"$BASELINE"; then
             echo "::error::baseline '$BASELINE' does not look like a migration directory name (expected <14-digit timestamp>_<snake_case>)"
             exit 1
           fi

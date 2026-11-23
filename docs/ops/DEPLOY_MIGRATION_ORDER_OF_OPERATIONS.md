@@ -36,6 +36,8 @@ Destructive changes — `DROP TABLE`/`DROP COLUMN`, `SET NOT NULL` on a column o
 
 This isn't a mechanical "always split into two PRs" rule — it's "prove old code can't violate the new constraint." PR #918 (`Household.name` → `NOT NULL`) shipped the backfill and the `SET NOT NULL` in one migration, one release, because every live write path already always wrote a non-null name (verified in the PR description) — there was no old-code path left that could violate it. If you can't make that same case, split the release.
 
+Splitting the PR doesn't split the release: every PR merged to `main` before the next published release reaches prod together. The later PR stays unopened or in draft until the earlier one is in prod, as `AGENTS.md` § Your own open PRs describes.
+
 ### 4. Hand-write renames — never trust Prisma's generated migration for one
 Prisma has no `RENAME` primitive in its diff engine: a column rename generates as `DROP COLUMN` + `ADD COLUMN`; a model rename generates as `DROP TABLE` + `CREATE TABLE`. On an empty database (every CI run, every fresh local setup) this looks fine. On a populated table it's a hard failure (`23502: ... contains null values`) or, worse, silent data loss when the new column happens to be nullable.
 

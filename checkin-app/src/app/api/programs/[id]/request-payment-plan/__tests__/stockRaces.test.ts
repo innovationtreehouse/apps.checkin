@@ -13,10 +13,16 @@ import { POST as RequestPost } from "@/app/api/programs/[id]/request-payment-pla
 import { POST as ApprovePost } from "@/app/api/finance-ops/payment-plans/route";
 
 type Rec = Record<string, unknown>;
-const mockDb: { pp: Rec; program: Rec; onCommit: (db: { pp: Rec; program: Rec }) => Promise<void> } = {
+const mockDb: {
+    pp: Rec; program: Rec; failCarry: boolean;
+    onCommit: (db: { pp: Rec; program: Rec }) => Promise<void>;
+    onRollback: (db: { pp: Rec; program: Rec }) => Promise<void>;
+} = {
     pp: {},
     program: {},
+    failCarry: false,
     onCommit: async () => {},
+    onRollback: async () => {},
 };
 
 jest.mock("@/lib/prisma", () => {
@@ -52,7 +58,9 @@ jest.mock("@/lib/prisma", () => {
         },
         program: {
             findUnique: async () => ({ ...state.program }),
-            update: async ({ data }: { data: Rec }) => { apply(state.program, data); await commit(); return { ...state.program }; },
+            update: async ({ data }: { data: Rec }) => {
+                if (mockDb.failCarry && "shopifyStockCarry" in data) throw new Error("carry write failed");
+                apply(state.program, data); await commit(); return { ...state.program }; },
             updateMany: async ({ where, data }: { where: Rec; data: Rec }) => {
                 if (!matches(state.program, where)) return { count: 0 };
                 apply(state.program, data);
@@ -69,7 +77,13 @@ jest.mock("@/lib/prisma", () => {
     const root = client(new Proxy({} as { pp: Rec; program: Rec }, { get: (_t, k: "pp" | "program") => committed()[k] }), () => mockDb.onCommit(mockDb));
     root.$transaction = async (fn: (tx: Rec) => Promise<unknown>) => {
         const staged = { pp: { ...mockDb.pp }, program: { ...mockDb.program } };
-        const result = await fn(client(staged, async () => {}));
+        let result: unknown;
+        try {
+            result = await fn(client(staged, async () => {}));
+        } catch (error) {
+            await mockDb.onRollback(mockDb);
+            throw error;
+        }
         mockDb.pp = staged.pp;
         mockDb.program = staged.program;
         await mockDb.onCommit(mockDb);
@@ -106,6 +120,9 @@ const PROGRAM = 1;
 const KID = 5;
 
 function seed() {
+    mockDb.failCarry = false;
+    mockDb.onCommit = async () => {};
+    mockDb.onRollback = async () => {};
     mockDb.program = { id: PROGRAM, name: "Robotics", shopifyVariantId: "pub", maxParticipants: 2, shopifyStockCarry: 0, shopifyStockPushNeededAt: null };
     mockDb.pp = { programId: PROGRAM, personId: KID, status: "PENDING", isPaymentPlanRequested: false, inventoryHeldAt: null, paymentPlanDeniedAt: null, seatTakenWithoutSaleAt: null, pendingSince: new Date() };
 }
@@ -146,5 +163,25 @@ describe("scholarship hold vs concurrent readers (programs TLA+ model)", () => {
         expect(seen.length).toBeGreaterThan(0);
         for (const s of seen) expect(s.carry).toBe(-s.taken);
         expect(mockDb.pp.inventoryHeldAt).not.toBeNull();
+    });
+});
+
+describe("a request whose -1 failed while a concurrent request placed the hold", () => {
+    beforeEach(seed);
+
+    it("succeeds: the concurrent request recorded it", async () => {
+        mockDb.failCarry = true;
+        mockDb.onRollback = async (db) => {
+            Object.assign(db.pp, { isPaymentPlanRequested: true, inventoryHeldAt: new Date() });
+        };
+        const res = await requestHold();
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ success: true });
+    });
+
+    it("is a 500 when nothing recorded the request", async () => {
+        mockDb.failCarry = true;
+        mockDb.onRollback = async (db) => { db.pp.status = "ACTIVE"; };
+        expect((await requestHold()).status).toBe(500);
     });
 });

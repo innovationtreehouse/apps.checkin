@@ -16,20 +16,24 @@ interface ProvisionalRow {
   reconcileLastError?: string | null;
 }
 
+/** Where a resolved provisional part went: its real Part ID, or "Local only" once the catalog rejected it. */
+const resolvedTo = (i: ProvisionalRow): string =>
+  i.resolvedToGtin13 ? formatGtinDisplay(i.resolvedToGtin13) : i.status === "rejected" ? "Local only" : "—";
+
 /**
- * /inventory/provisional-items — provisional parts the catalog approved or mapped to an existing
- * item, and pending ones whose catalog decision could not be applied, with the error.
+ * /inventory/provisional-items — provisional parts the catalog approved, mapped to an existing
+ * item, or rejected (local-only parts), and pending ones whose catalog decision could not be applied, with the error.
  */
 export default function ProvisionalItemsPage() {
   const items = useLoad<ProvisionalRow[]>("/provisional-items");
   const [search, setSearch] = useState("");
 
-  const resolved = (items.data ?? []).filter((i) => i.status === "approved" || i.status === "mapped_to_existing");
+  const resolved = (items.data ?? []).filter((i) => i.status !== "pending");
   const stuck = (items.data ?? []).filter((i) => i.status === "pending" && i.reconcileFirstFailedAt);
   const q = search.trim().toLowerCase();
   const visible = q
     ? resolved.filter((i) =>
-        [i.name, formatGtinDisplay(i.provisionalGtin13), i.resolvedToGtin13 ? formatGtinDisplay(i.resolvedToGtin13) : ""]
+        [i.name, formatGtinDisplay(i.provisionalGtin13), resolvedTo(i)]
           .some((s) => s.toLowerCase().includes(q)))
     : resolved;
 
@@ -80,7 +84,7 @@ export default function ProvisionalItemsPage() {
                 <Table.Tr key={item.id}>
                   <Table.Td>{item.name}</Table.Td>
                   <Table.Td ff="monospace">{formatGtinDisplay(item.provisionalGtin13)}</Table.Td>
-                  <Table.Td ff="monospace">{item.resolvedToGtin13 ? formatGtinDisplay(item.resolvedToGtin13) : "—"}</Table.Td>
+                  <Table.Td ff={item.resolvedToGtin13 ? "monospace" : undefined}>{resolvedTo(item)}</Table.Td>
                   <Table.Td>{item.reviewedAt ? new Date(item.reviewedAt).toLocaleString() : "—"}</Table.Td>
                 </Table.Tr>
               ))}

@@ -4,13 +4,12 @@ import {
   ActionIcon, Box, Button, Group, Modal, NumberInput, Pagination, Select, Table, Text, TextInput, Title, Tooltip,
 } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
-import { notifications } from "@mantine/notifications";
 import { IconChevronDown, IconChevronUp, IconEdit, IconPlus, IconSelector, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import {
   api, CatalogNamesUnavailable, errorMessage, lastPage, notifyNavCounts, PAGE_SIZE, useCanManage, useCatalogNames, useLoad, withProvisionalNames, type ProvisionalName,
 } from "../components/api";
-import { CatalogPicker, LoadError, useSetUrlFilters, useUrlChoice, useUrlPage } from "@checkin/component-ui";
+import { CatalogPicker, LoadError, showError, showSuccess, useSetUrlFilters, useUrlChoice, useUrlPage } from "@checkin/component-ui";
 
 interface LocationRef { id: number; name: string }
 interface OrgItemRow {
@@ -130,11 +129,11 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
         })
         : api(`/org-items/${form.gtin13}`, { method: "PUT", body: JSON.stringify(changes) }));
       notifyNavCounts();
-      notifications.show({ message: isNew ? "Item added" : "Item updated", color: "green" });
+      showSuccess(isNew ? "Item added" : "Item updated");
       setForm(null);
       reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
+      showError(errorMessage(err));
       if (!isNew) await reloadForm(form.gtin13);
     } finally {
       setSaving(false);
@@ -167,11 +166,11 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
     try {
       await api(`/org-items/${removeTarget.gtin13}`, { method: "DELETE" });
       notifyNavCounts();
-      notifications.show({ message: "Item removed from organization inventory", color: "green" });
+      showSuccess("Item removed from organization inventory");
       setRemoveTarget(null);
       reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
+      showError(errorMessage(err));
     } finally {
       setSaving(false);
     }

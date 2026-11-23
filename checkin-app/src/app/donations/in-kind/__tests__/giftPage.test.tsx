@@ -13,9 +13,10 @@ let mockError: string | null = null;
 
 jest.mock("next/navigation", () => ({ useParams: () => ({ id: "4" }) }));
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1 } } }) }));
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn() } }));
 jest.mock("@checkin/bulk-donation/components/api", () => ({
   ...jest.requireActual("@checkin/bulk-donation/components/api"),
+  useOwners: () => ({ data: [{ id: 1, name: "Robotics" }, { id: 2, name: "Shop" }], error: null, reload: jest.fn() }),
   useLoad: (path: string | null) => {
     mockPath = path;
     return { data: mockGift, error: mockError, reload: mockReload };
@@ -44,11 +45,14 @@ const base = {
   bucketHeld: false,
   totalValueCents: 3500,
   state: "booking",
+  waitingOn: ["booking"],
+  budgetOwnerId: 1,
+  capitalReviewNeeded: false,
   revenueBooking: null,
   expenseBooking: null,
   inventoryLoadedAt: "2026-10-02T12:00:01.000Z",
   inventoryLoadFailureReason: null,
-  lines: [{ id: 9, gtin13: "0011111111116", description: "Drill", quantity: 2, valueCents: 3500, suggestedValueCents: 4000 }],
+  lines: [{ id: 9, gtin13: "0011111111116", description: "Drill", quantity: 2, valueCents: 3500, suggestedValueCents: 4000, isCapital: null, depreciationYears: null, capitalBucketId: null, registeredAt: null }],
   events: [
     { id: 1, eventType: "MANUAL_IN_KIND_RECORDED", actorUsername: "ops-pat", occurredAt: "2026-10-02T12:00:00.000Z", payload: "{}" },
     { id: 2, eventType: "IN_KIND_DECIDED", actorUsername: "fin-lee", occurredAt: "2026-10-03T12:00:00.000Z", payload: '{"outcome":"ACCEPTED"}' },
@@ -72,6 +76,11 @@ const receipt = {
 beforeAll(() => {
   window.matchMedia ||= ((query: string) =>
     ({ matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {} }) as unknown as MediaQueryList);
+  globalThis.ResizeObserver ||= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
 });
 
 beforeEach(() => {
@@ -202,5 +211,49 @@ describe("a stuck gift's last error", () => {
     mockError = "You don't have permission to view this.";
     wrap(<ManualGiftPage />);
     expect(screen.queryByText(/Last error/)).not.toBeInTheDocument();
+  });
+});
+
+describe("a gift's capital review", () => {
+  const LATHE = { id: 10, gtin13: null, description: "Lathe", quantity: 1, valueCents: 250000, suggestedValueCents: null, isCapital: null, depreciationYears: null, capitalBucketId: null, registeredAt: null };
+  const review = { ...manual, capitalReviewNeeded: true, state: "capital", waitingOn: ["capital", "booking"], lines: [...manual.lines, LATHE] };
+
+  it("designates every line, the capital one owned by the gift's bucket", async () => {
+    mockGift = review;
+    wrap(<ManualGiftPage />);
+    fireEvent.click(screen.getByLabelText("Lathe"));
+    fireEvent.click(screen.getByRole("button", { name: "Save designation" }));
+    await waitFor(() => expect(mockApi).toHaveBeenCalled());
+    const [path, init] = mockApi.mock.calls[0] as [string, { method: string; body: string }];
+    expect(path).toBe("/in-kind/manual/4/capital-review");
+    expect(JSON.parse(init.body)).toEqual({ lineItems: [{ lineItemId: 9, isCapital: false }, { lineItemId: 10, isCapital: true, capitalOwnerId: 1 }] });
+  });
+
+  it("then sets the period and owner of each capital line only", async () => {
+    mockGift = { ...review, lines: [{ ...manual.lines[0], isCapital: false }, { ...LATHE, isCapital: true, capitalBucketId: 2 }] };
+    wrap(<ManualGiftPage />);
+    expect(screen.getByRole("button", { name: "Save period" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Years"), { target: { value: "7" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save period" }));
+    await waitFor(() => expect(mockApi).toHaveBeenCalled());
+    const [path, init] = mockApi.mock.calls[0] as [string, { body: string }];
+    expect(path).toBe("/in-kind/manual/4/set-depreciation-cycle");
+    expect(JSON.parse(init.body)).toEqual({ items: [{ lineItemId: 10, depreciationYears: 7, ownerId: 2 }] });
+  });
+
+  it("shows each line's decision once the gift waits on its asset numbers, with no form", () => {
+    mockGift = { ...review, state: "register", waitingOn: ["register", "booking"], lines: [{ ...manual.lines[0], isCapital: false }, { ...LATHE, isCapital: true, depreciationYears: 7, capitalBucketId: 2 }] };
+    wrap(<ManualGiftPage />);
+    expect(screen.getByText("Waiting for asset numbers")).toBeInTheDocument();
+    expect(screen.getByText("Not capital")).toBeInTheDocument();
+    expect(screen.getByText("Capital, 7 years, Shop")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Save/ })).not.toBeInTheDocument();
+  });
+
+  it("tells a viewer who cannot write that finance reviews it", () => {
+    mockCanWrite = false;
+    mockGift = review;
+    wrap(<ManualGiftPage />);
+    expect(screen.getByText("Waiting on finance's capital review.")).toBeInTheDocument();
   });
 });

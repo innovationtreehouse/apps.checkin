@@ -13,6 +13,7 @@ import { apiError } from "@/lib/api-response";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { staleWhileRevalidate } from "@/lib/staleCache";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
+import { recordSelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { parseProgramName, resolveProgramYear } from "@/lib/programs/update";
 import { programLeaderIneligibility } from "@/lib/programs/leaderEligibility";
@@ -215,10 +216,13 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
         if (!isLeaderAgeEligible(mentor)) {
             return apiError("Program Leader must be at least 23 years old", 400);
         }
-        const ineligible = await programLeaderIneligibility(mentorId, mentor);
-        if (ineligible) return apiError(ineligible, 400);
         // Nobody names themself or their household as a program's leader (Ethics Policy III.5).
         if (mentorId === auth.user.id || await hasHouseholdConflict(prisma, auth.user.id, mentor.householdId)) {
+            await recordSelfGrantRefusal(prisma, {
+                actorId: auth.user.id,
+                affectedEntityId: mentorId,
+                newData: { reason: "own_household", table: "Program", subject: { personId: mentorId, householdId: mentor.householdId }, attempted: { name, leadMentorId: mentorId } },
+            });
             return apiError("Forbidden: You cannot make yourself or a member of your household a program lead", 403);
         }
         // Checked before any store product exists; the create re-checks under the household lock.
@@ -248,6 +252,8 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
             isBoardMember: auth.user.isBoardMember,
         });
         if (!year.ok) return apiError(year.message, year.refusal === "forbidden" ? 403 : 400);
+        const ineligible = await programLeaderIneligibility(mentorId, mentor, year.appliesToYear);
+        if (ineligible) return apiError(ineligible, 400);
 
         const maxPart = maxParticipants != null ? parseInt(maxParticipants, 10) : null;
         if (maxPart == null || isNaN(maxPart) || maxPart < 1) {

@@ -7,9 +7,10 @@
  *    drops `where: { x: undefined }`, so admitting it would widen per-caller
  *    filters to every row (INVENTORY_PARALLEL_PORT_PLAN boundary rule 6).
  * 2. No finance route lists `isSysadmin` in its orderedView: Finance Ops
- *    excludes sysadmins.
+ *    excludes sysadmins. Named routes whose rows hold no finance content are
+ *    exempt, and each exemption's premise is checked below.
  */
-import { allRoutes, type Authorize, type RegisteredRoute } from '@/security/core';
+import { allRoutes, classifications, getRoute, marks, type Authorize, type RegisteredRoute } from '@/security/core';
 import { resolveAccess, type ResolverContext } from '@/security/access-resolvers';
 import type { AuthResult, AuthenticatedUser } from '@/types/auth';
 import { bucketsApprovedBy } from '@/lib/finance/bucketApprovers';
@@ -110,10 +111,29 @@ describe('finance routes never view-select isSysadmin', () => {
     const listsSysadmin = (r: Pick<RegisteredRoute, 'orderedView'>) =>
         r.orderedView.some(([role]) => role === 'isSysadmin');
 
-    // Empty until the first finance route registers; the check below proves it bites.
+    // Sysadmins may read these because their rows hold no finance content.
+    const NO_FINANCE_CONTENT: Record<string, keyof typeof classifications> = {
+        'GET /api/quickbooks/fault-codes': 'QboFaultCodeSeen',
+    };
+
     test('no finance-gated route lists isSysadmin in its orderedView', () => {
-        expect(finance.filter(([, r]) => listsSysadmin(r)).map(([endpoint]) => endpoint)).toEqual([]);
+        expect(
+            finance
+                .filter(([endpoint, r]) => listsSysadmin(r) && !(endpoint in NO_FINANCE_CONTENT))
+                .map(([endpoint]) => endpoint),
+        ).toEqual([]);
     });
+
+    test.each(Object.entries(NO_FINANCE_CONTENT))(
+        '%s returns only %s, which has no marked field and only internal fields',
+        (endpoint, model) => {
+            expect(getRoute(endpoint)?.returns).toEqual([model]);
+            expect(marks[model] ?? []).toEqual([]);
+            const tiers: string[] = Object.values(classifications[model]);
+            expect(tiers.length).toBeGreaterThan(0);
+            expect(tiers.filter(tier => tier !== 'internal')).toEqual([]);
+        },
+    );
 
     test('the check catches a finance route that lists isSysadmin', () => {
         expect(isFinanceGate('finance') && listsSysadmin({ orderedView: [['isSysadmin', []]] })).toBe(true);

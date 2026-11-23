@@ -591,6 +591,13 @@ model OrgMembershipProcess {
   /// track; the membership only goes ACTIVE once this is set AND the membership fee is paid.
   /// @sensitivity:internal
   bgClearedAt           DateTime?
+  /// When a background-check settle for this application first failed after its event
+  /// committed; null when none is stuck. The next settle that succeeds clears it.
+  /// @sensitivity:internal
+  bgSettleFailedAt      DateTime?
+  /// The latest failed settle's error while bgSettleFailedAt is set. Never leaves the server.
+  /// @sensitivity:internal
+  bgSettleError         String?
   /// @sensitivity:internal
   shopifyDraftOrderId   String?
   /// @sensitivity:personal

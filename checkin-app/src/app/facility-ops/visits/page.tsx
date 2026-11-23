@@ -25,7 +25,11 @@ type Visit = {
   facilityClose?: { closedBy?: { name?: string | null } | null } | null;
   person?: { name?: string | null; email?: string | null } | null;
   event?: { name?: string | null } | null;
+  deletedAt?: string | null;
+  deletedById?: number | null;
 };
+
+type RemovedAnswer = { visits: { Visit: Visit[]; Person: { id: number; name: string }[] } };
 
 const SOURCE_META: Record<VisitSource, { Icon: typeof IconScan; label: string }> = {
   SCANNER: { Icon: IconScan, label: 'Scanner (kiosk badge)' },
@@ -111,7 +115,20 @@ export default function AdminVisitsPage() {
   const { data, error, reload } = useLoad<{ visits: Visit[] }>(
     ready ? (closedOut ? '/api/facility/visits?closedOut=true' : '/api/facility/visits') : null,
   );
-  const visits = useMemo(() => data?.visits ?? [], [data]);
+  const [showRemoved, setShowRemoved] = useState(false);
+  // No standing close ends a removed visit, so the closed-out view never lists one.
+  const listRemoved = showRemoved && !closedOut;
+  const { data: removedData, error: removedError, reload: reloadRemoved } = useLoad<RemovedAnswer>(
+    ready && listRemoved ? '/api/facility/visits?removed=true' : null,
+  );
+  const removerNames = useMemo(
+    () => new Map((removedData?.visits.Person ?? []).map((p) => [p.id, p.name])),
+    [removedData],
+  );
+  const visits = useMemo(
+    () => [...(data?.visits ?? []), ...(listRemoved ? removedData?.visits.Visit ?? [] : [])],
+    [data, removedData, listRemoved],
+  );
   const { data: peopleAnswer, error: peopleError, reload: reloadPeople } = useLoad<{ people?: { id: number; name: string | null; email: string }[] }>(
     addOpened ? '/api/people/search' : null,
   );
@@ -245,6 +262,15 @@ export default function AdminVisitsPage() {
     }
   };
 
+  const handleRestore = async (id: number) => {
+    try {
+      await api('/api/facility/visits/restore', { method: 'POST', body: JSON.stringify({ visitId: id }) });
+      showSuccess("Visit restored.");
+    } catch (e) {
+      showError(errorMessage(e));
+    }
+  };
+
   if (authLoading) {
     return <PageLoader />;
   }
@@ -265,10 +291,17 @@ export default function AdminVisitsPage() {
           checked={closedOut}
           onChange={(e) => setClosedOut(e.currentTarget.checked)}
         />
+        <Switch
+          label="Show removed"
+          checked={showRemoved}
+          disabled={closedOut}
+          onChange={(e) => setShowRemoved(e.currentTarget.checked)}
+        />
         <Button size="xs" fz={15} onClick={openAddModal}>Add Visit</Button>
       </Group>
 
       {error && <LoadError what="the visits" message={error} onRetry={reload} />}
+      {listRemoved && removedError && <LoadError what="the removed visits" message={removedError} onRetry={reloadRemoved} />}
       {!data && !error && <Center py="xl"><Loader /></Center>}
 
       {data && <Table.ScrollContainer minWidth={800}>
@@ -281,6 +314,7 @@ export default function AdminVisitsPage() {
               <SortableTh sort={sort} onSort={toggleSort} k="arrivedAt" label="Arrived" />
               <SortableTh sort={sort} onSort={toggleSort} k="departedAt" label="Departed" />
               {closedOut && <Table.Th>Close</Table.Th>}
+              {listRemoved && <Table.Th>Removed</Table.Th>}
               <Table.Th>Actions</Table.Th>
             </Table.Tr>
           </Table.Thead>
@@ -314,6 +348,7 @@ export default function AdminVisitsPage() {
                       />
                     </Table.Td>
                     {closedOut && <Table.Td>#{v.facilityCloseId}</Table.Td>}
+                    {listRemoved && <Table.Td />}
                     <Table.Td>
                       <Group gap="xs" wrap="nowrap">
                         <Button size="xs" fz={15} onClick={() => handleSaveEdit(v.id)}>Save</Button>
@@ -338,10 +373,17 @@ export default function AdminVisitsPage() {
                       ) : <Text component="span" c="yellow">Active</Text>}
                     </Table.Td>
                     {closedOut && (
-                      <Table.Td>#{v.facilityCloseId} · {v.departedVia === 'AUTO_CLOSE' ? 'Nightly' : (v.facilityClose?.closedBy?.name ?? 'Closer deleted')}</Table.Td>
+                      <Table.Td>{v.facilityCloseId ? <>#{v.facilityCloseId} · {v.departedVia === 'AUTO_CLOSE' ? 'Nightly' : (v.facilityClose?.closedBy?.name ?? 'Closer deleted')}</> : null}</Table.Td>
+                    )}
+                    {listRemoved && (
+                      <Table.Td>
+                        {v.deletedAt ? `${removerNames.get(v.deletedById ?? -1) ?? 'Unknown'} · ${formatDateTime(v.deletedAt)}` : null}
+                      </Table.Td>
                     )}
                     <Table.Td>
-                      {v.departedAt ? (
+                      {v.deletedAt ? (
+                        <Button size="xs" fz={15} variant="light" onClick={() => handleRestore(v.id)}>Restore</Button>
+                      ) : v.departedAt ? (
                         <Group gap="xs" wrap="nowrap">
                           <Button size="xs" fz={15} variant="light" onClick={() => handleEditClick(v)}>Edit</Button>
                           <Button size="xs" fz={15} variant="light" color="red" onClick={() => handleDeleteClick(v)}>Delete</Button>

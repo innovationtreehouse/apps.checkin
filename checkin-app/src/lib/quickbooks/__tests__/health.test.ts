@@ -28,6 +28,11 @@ const inKindOnAt = jest.fn();
 jest.mock("@checkin/bulk-donation", () => ({ inKindPostingOnAt: inKindOnAt }));
 const expenseOnAt = jest.fn();
 jest.mock("@checkin/expense", () => ({ qbPostingOnAt: expenseOnAt }));
+const postingSlotStatus = jest.fn();
+jest.mock("@/lib/finance/quickBooksPosting", () => ({ postingSlotStatus }));
+jest.mock("@/lib/appSettings", () => ({ resolveDisplayTimezone: async () => "UTC" }));
+
+const FREE_SLOT = { heldBy: null, until: null, queued: [], pausedUntil: null, lastRuns: {}, waiting: [], warnings: [], requestsToday: 0 };
 
 let clock = 0;
 async function rows(): Promise<Record<string, ConfigCheck>> {
@@ -59,6 +64,7 @@ beforeEach(() => {
     accounts.mockResolvedValue([]);
     misTypedRoleAccounts.mockResolvedValue([]);
     quickBooksListsStatus.mockResolvedValue([]);
+    postingSlotStatus.mockResolvedValue(FREE_SLOT);
 });
 afterEach(() => {
     process.env = { ...ENV };
@@ -259,6 +265,67 @@ describe("posting lane rows", () => {
             ok: false,
             detail: "Unbound; missing: a readable binding (QBO 503). Switch-on date unreadable (db down).",
         });
+    });
+});
+
+describe("QuickBooks posting slot rows", () => {
+    it("shows a free slot, an empty queue, no pause and today's request count, all green", async () => {
+        tryBuildQuickBooks.mockReturnValue({ ok: false, reason: "x" });
+        postingSlotStatus.mockResolvedValue({ ...FREE_SLOT, requestsToday: 412 });
+        const r = await rows();
+        expect(r["quickbooks-posting-slot"]).toMatchObject({ ok: true, detail: "Free." });
+        expect(r["quickbooks-posting-queue"]).toMatchObject({ ok: true, detail: "Empty." });
+        expect(r["quickbooks-posting-pause"]).toMatchObject({ ok: true, detail: "None in force." });
+        expect(r["quickbooks-posting-requests"]).toMatchObject({ ok: true, detail: expect.stringMatching(/^412 today/) });
+    });
+
+    it("names the holder, who asked for each waiting lane, and a pause in force", async () => {
+        tryBuildQuickBooks.mockReturnValue({ ok: false, reason: "x" });
+        postingSlotStatus.mockResolvedValue({
+            ...FREE_SLOT,
+            heldBy: "expense",
+            until: new Date("2026-11-18T14:05:00Z"),
+            queued: ["income", "in-kind"],
+            waiting: [
+                { lane: "income", requestedById: 7, requestedAt: new Date("2026-11-18T14:01:00Z") },
+                { lane: "in-kind", requestedById: null, requestedAt: new Date("2026-11-18T14:02:00Z") },
+            ],
+            pausedUntil: new Date("2026-11-18T14:04:00Z"),
+        });
+        const r = await rows();
+        expect(r["quickbooks-posting-slot"].detail).toMatch(/^Held by the expenses run until .*2:05/);
+        expect(r["quickbooks-posting-queue"]).toMatchObject({ ok: true, detail: expect.stringMatching(/^Waiting: income \(asked by person 7, .*\); gifts of goods \(asked by the daily run, /) });
+        expect(r["quickbooks-posting-pause"].detail).toMatch(/^QuickBooks asked us to slow down; requests resume at .*2:04/);
+    });
+
+    it("turns the queue red when it is stranded, pointing at Catch up", async () => {
+        tryBuildQuickBooks.mockReturnValue({ ok: false, reason: "x" });
+        postingSlotStatus.mockResolvedValue({ ...FREE_SLOT, queued: ["income"], waiting: [{ lane: "income", requestedById: null, requestedAt: new Date("2026-11-18T14:01:00Z") }] });
+        const r = await rows();
+        expect(r["quickbooks-posting-queue"]).toMatchObject({ ok: false, detail: expect.stringMatching(/^Stranded: .*Catch up/) });
+    });
+
+    it("shows each lane's last run, red while it carries a warning", async () => {
+        tryBuildQuickBooks.mockReturnValue({ ok: false, reason: "x" });
+        postingSlotStatus.mockResolvedValue({
+            ...FREE_SLOT,
+            lastRuns: {
+                expense: { endedAt: "2026-11-18T13:58:00.000Z", ended: "done", created: 100, matched: 2, capped: "count", yieldsInRow: 0 },
+                income: { endedAt: "2026-11-18T13:00:00.000Z", ended: "yielded", created: 0, matched: 0, capped: null, yieldsInRow: 3 },
+            },
+            warnings: [{ lane: "income", cause: "throttled", text: "QuickBooks throttled the income run 3 runs in a row." }],
+        });
+        const r = await rows();
+        expect(r["quickbooks-posting-run-expense"]).toMatchObject({ ok: true, detail: expect.stringMatching(/finished; created 100, matched 2; stopped by the per-run limit\.$/) });
+        expect(r["quickbooks-posting-run-income"]).toMatchObject({ ok: false, detail: expect.stringMatching(/^QuickBooks throttled the income run 3 runs in a row\. Ended /) });
+        expect(r["quickbooks-posting-run-in-kind"]).toBeUndefined();
+    });
+
+    it("is red when the slot can't be read", async () => {
+        tryBuildQuickBooks.mockReturnValue({ ok: false, reason: "x" });
+        postingSlotStatus.mockRejectedValue(new Error("db down"));
+        const r = await rows();
+        expect(r["quickbooks-posting-slot"]).toMatchObject({ ok: false, detail: "Could not read it: db down." });
     });
 });
 

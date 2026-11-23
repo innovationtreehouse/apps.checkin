@@ -3,13 +3,13 @@ import prisma from "@/lib/prisma";
 import { ServiceError } from "@checkin/component-kit";
 import { RENEWAL_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
-import { logger, logBackendError } from "@/lib/logger";
+import { logger } from "@/lib/logger";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, asHouseholdProcess, handledThisCycleWhere, fromWhere } from "@/lib/membership/lifecycle";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { personActor, systemActor } from "@/lib/auditActor";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { clearNotRenewingInTx } from "@/lib/membership/notRenewing";
-import { membershipYearLabel, membershipYearOf, nextBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear, RENEWAL_LEAD_MONTHS } from "@/lib/programYear";
+import { membershipYearLabel, membershipYearOf, membershipYearStart, nextBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear, RENEWAL_LEAD_MONTHS } from "@/lib/programYear";
 import { lockProcessRows } from "@/lib/lockOrder";
 
 export { nextBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear };
@@ -244,12 +244,8 @@ export async function beginRenewal(processId: number, actorId: number) {
     }
     // Lazy, like external.ts below: settle pulls in the review and payment modules.
     if (outcome === "moved") {
-        const { settleHouseholdBg } = await import("@/lib/membership/settleHouseholdBg");
-        try {
-            await settleHouseholdBg(membership.householdId);
-        } catch (error) {
-            await logBackendError(error, "household background-check settle after renewal", { householdId: membership.householdId, processId });
-        }
+        const { settleAfterEvent } = await import("@/lib/membership/settleHouseholdBg");
+        await settleAfterEvent(membership.householdId, "renewal", {}, { processId });
     }
 
     // The gate can already be met on arrival (bgClearedAt stamped by settle, a board
@@ -338,4 +334,9 @@ export async function beginRenewalForUser(userId: number) {
 export function bgFreshThreshold(boundary: Date | null, recheckMonths: number | null | undefined): Date | null {
     if (!isRecheckPolicySet(recheckMonths) || !boundary) return null;
     return monthsBefore(boundary, recheckMonths);
+}
+
+/** The earliest check date still valid at the start of membership year `year`, or null when any input is unset. */
+export function bgThresholdForYear(boundary: Date | null, recheckMonths: number | null | undefined, year: number | null): Date | null {
+    return boundary && year != null ? bgFreshThreshold(membershipYearStart(boundary, year), recheckMonths) : null;
 }

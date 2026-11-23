@@ -571,24 +571,26 @@ describe("findOrCreateInKindJournal", () => {
 
   it("credits only in-kind income and debits no books-map account, before reading QuickBooks", async () => {
     const bank = jreq().lines.map((l) => (l.accountId === "600" ? { ...l, accountId: "35" } : l));
-    await expect(findOrCreateInKindJournal(client(), jreq({ lines: bank }))).rejects.toThrow(/may not debit account 35/);
+    await expect(findOrCreateInKindJournal(client(), jreq({ lines: bank }))).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/may not debit account 35/) });
     const income = jreq().lines.map((l) => (l.accountId === "600" ? { ...l, accountId: "400" } : l));
-    await expect(findOrCreateInKindJournal(client(), jreq({ lines: income }))).rejects.toThrow(/may not debit account 400/);
+    await expect(findOrCreateInKindJournal(client(), jreq({ lines: income }))).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/may not debit account 400/) });
     const credit = jreq().lines.map((l) => (l.postingType === "Credit" ? { ...l, accountId: "600" } : l));
-    await expect(findOrCreateInKindJournal(client(), jreq({ lines: credit }))).rejects.toThrow(/may credit only in-kind income/);
+    await expect(findOrCreateInKindJournal(client(), jreq({ lines: credit }))).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/may credit only in-kind income/) });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("refuses an unbalanced entry, before reading QuickBooks", async () => {
     const lines = jreq().lines.map((l) => (l.accountId === "150" ? { ...l, amountCents: 99_99 } : l));
-    await expect(findOrCreateInKindJournal(client(), jreq({ lines }))).rejects.toThrow(/not balanced/);
+    await expect(findOrCreateInKindJournal(client(), jreq({ lines }))).resolves.toMatchObject({ kind: "failed", error: expect.stringMatching(/not balanced/) });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("refuses while the books map has no in-kind income account", async () => {
-    const err = await findOrCreateInKindJournal(client(), jreq({ accounts: { SHOPIFY_BANK: "35" } })).catch((e: unknown) => e);
-    expect(String(err)).toMatch(/no account for INKIND_INCOME/);
-    expect(kindOf(err)).toBe("settings");
+  it("refuses while the books map has no in-kind income account, as a settings failure", async () => {
+    await expect(findOrCreateInKindJournal(client(), jreq({ accounts: { SHOPIFY_BANK: "35" } }))).resolves.toMatchObject({
+      kind: "failed",
+      error: expect.stringMatching(/no account for INKIND_INCOME/),
+      failure: "settings",
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

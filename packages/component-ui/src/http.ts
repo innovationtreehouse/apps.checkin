@@ -14,10 +14,13 @@ export class HttpError extends Error {
 /** The fixed text a person sees for a failure that brought no words of its own. */
 export const FAILURE_TEXT = "Something went wrong. Try again.";
 
+/** The fixed text a person sees when a request never got an answer. */
+export const NETWORK_FAILURE_TEXT = "Couldn't reach the server. Check your connection and try again.";
+
 /** The request never got an answer: offline, DNS, or the connection dropped. */
 class NetworkError extends Error {
   constructor() {
-    super("Couldn't reach the server. Check your connection and try again.");
+    super(NETWORK_FAILURE_TEXT);
     this.name = "NetworkError";
   }
 }

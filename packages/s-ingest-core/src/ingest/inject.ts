@@ -77,8 +77,20 @@ async function apiOwnedGids(
 }
 
 /**
+ * Fixture GIDs stamped later than `now`. Orders are newest-wins on `updatedAt`, so a
+ * future-stamped row would block every real update and replay of that GID.
+ */
+export function futureStampedGids(fixtures: Array<{ objectType: ObjectType; node: unknown }>, now: Date): string[] {
+  return fixtures
+    .map((f) => rawMetaForNode(f.objectType, f.node))
+    .filter((m) => m.occurredAt !== null && m.occurredAt > now)
+    .map((m) => m.shopifyGid);
+}
+
+/**
  * Inject one or many fixtures already parsed into objects. Refuses the whole batch,
- * before writing anything, if any fixture reuses the GID of an API-owned row.
+ * before writing anything, if any fixture reuses the GID of an API-owned row or is
+ * stamped in the future.
  */
 export async function injectFixtures(
   prisma: PrismaClient,
@@ -88,6 +100,10 @@ export async function injectFixtures(
   const taken = await apiOwnedGids(prisma, opts.storeId, fixtures);
   if (taken.length > 0) {
     throw new Error(`inject refused: ${taken.length} GID(s) already hold API-synced rows: ${taken.join(", ")}`);
+  }
+  const future = futureStampedGids(fixtures, new Date());
+  if (future.length > 0) {
+    throw new Error(`inject refused: ${future.length} GID(s) are stamped in the future: ${future.join(", ")}`);
   }
   const source = opts.test ? EventSource.TEST_LOADED : EventSource.HAND_LOADED;
   const results: IngestNodeResult[] = [];

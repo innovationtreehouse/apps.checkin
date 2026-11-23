@@ -4,8 +4,9 @@ import { z } from "zod";
 import { InKindQbResolveInputSchema, resolveInKindQb } from "../lib/in-kind-resolve";
 import { inKindService } from "../services/inKindService";
 import { inKindAcceptService, InKindDecisionInputSchema, type InKindSource } from "../services/inKindAcceptService";
+import { inKindCapitalService } from "../services/inKindCapitalService";
 import { manualInKindService, ManualInKindInputSchema } from "../services/manualInKindService";
-import { getOrgId, getPrincipal } from "../runtime";
+import { getInKindCapital, getOrgId, getPrincipal } from "../runtime";
 import type { DonationRouteHandler, InKindDonor } from "../contract";
 import { auditContext, pageArgs, parseBodyCapped } from "./_shared";
 
@@ -31,6 +32,26 @@ export function qbResolve(source: InKindSource): DonationRouteHandler {
     const orgId = await getOrgId();
     const audit = await auditContext(req);
     return { InKindQueueItemView: await mapServiceErrors(() => resolveInKindQb(orgId, source, id, input, audit)) };
+  };
+}
+
+/** Finance designates each line of an accepted gift capital or not; replies with the gift's lines. */
+export function capitalReview(source: InKindSource): DonationRouteHandler {
+  return async ({ req, params }) => {
+    const id = parseId(params.id);
+    const input = await parseBodyCapped(req, getInKindCapital().review.designationInput);
+    const audit = await auditContext(req);
+    return mapServiceErrors(() => inKindCapitalService.designate(source, id, input, audit));
+  };
+}
+
+/** Finance sets each capital line's period and owner; replies with the gift's lines. */
+export function setDepreciationCycle(source: InKindSource): DonationRouteHandler {
+  return async ({ req, params }) => {
+    const id = parseId(params.id);
+    const input = await parseBodyCapped(req, getInKindCapital().review.periodInput);
+    const audit = await auditContext(req);
+    return mapServiceErrors(() => inKindCapitalService.setPeriod(source, id, input, audit));
   };
 }
 

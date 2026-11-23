@@ -129,7 +129,7 @@ export interface NormalizedOrderLine {
   currentQuantity?: number;
   /** Shopify ProductVariant GID (gid://shopify/ProductVariant/N). Absent for custom/deleted-product lines. */
   variantGid?: string;
-  /** Numeric variant id — what checkin stores in BoardSettings/Program shopify*VariantId, so this is the reconciliation join key. */
+  /** Numeric variant id — what checkin stores in MembershipYearVariant/Program shopify*VariantId, so this is the reconciliation join key. */
   variantLegacyId?: string;
   priceCents: number;
   discountCents: number;

@@ -53,13 +53,14 @@ Rules (the no-bare-member rule above applies throughout):
 
 ## Volunteer & program roles
 
-**Never a bare `volunteer`** — the word is one umbrella over three distinct children. And **the Treehouse is 100% volunteer: there is no "staff."**
+**Never a bare `volunteer`** — the word is one umbrella over three distinct children. (Key Volunteer, below, is a role a Treehouse Volunteer holds, not a fourth child.) And **the Treehouse is 100% volunteer: there is no "staff."**
 
 | Concept | Meaning | Code | UI |
 |---|---|---|---|
 | **Treehouse Volunteer** | umbrella: a BG-checked, board-approved adult who volunteers — **program-optional** (a bookkeeper is one, with no program) | — | "volunteer" |
 | **Volunteer Family** | a Member Family with **no youth/student enrolled**, whose adults volunteer → **reduced membership fee** | `OrgMembership.isVolunteerFamily` (rate) + `VolunteerDesignation` (email pre-auth) — **one concept** | "Volunteer-only family"; ops nav and roster: "Volunteer Families" |
 | **Program Volunteer** | a Treehouse Volunteer assigned to a **specific program** | `ProgramVolunteer` (`isCore` → **Core Volunteer**) | "Volunteer" / "Core Volunteer" |
+| **Key Volunteer** | a role the Board grants to a Treehouse Volunteer; a role they hold, not a fourth kind of volunteer. A standing role, not a program role: it confers no access by itself. Board Member, background-check reviewer and Finance are granted only to a holder who has also signed the current Key Volunteer Agreement, and the role cannot be removed while one of them is held. Granting it opens the agreement; a new agreement version re-opens it for every holder. The Board grants and removes it (a sysadmin may while no Board Member exists). **Not Keyholder** — Keyholder is not gated on it | `PersonRole` kind `KEY_VOLUNTEER` (`isKeyVolunteer` in `lib/roles.ts` and the session); agreement: `KEY_VOLUNTEER_AGREEMENT` process, `BoardSettings.keyVolunteerAgreementVersion` | "Key Volunteer" |
 | **(attendance) volunteer bucket** | courtesy label for present adults — **not a role**; deliberately loose, UI-safe | derived in attendance, by age, not enrollment | "Volunteers/Adults" |
 
 Program roles (all Treehouse Volunteers):

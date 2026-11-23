@@ -4,6 +4,8 @@ import { MAX_UPLOAD_BODY_BYTES } from "./src/lib/requestBodyLimit";
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  // The repo-root AGENTS.md is the agent guide; stop `next dev` generating one here.
+  agentRules: false,
   // The checkin-hosted libraries ship raw TS/TSX — route factories
   // off their `.` entry, client pages and nav off subpath exports — so Next must
   // transpile them.

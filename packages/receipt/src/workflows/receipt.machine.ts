@@ -34,6 +34,16 @@ export const receiptMachine = setup({
       },
     },
 
+    ocr_queued: {
+      on: {
+        OCR_STARTED: { target: 'auto_upload' },
+        // Reading switched off, the allowance used up, or the file missing: no reading starts.
+        OCR_FAILED:  { target: 'ocr_failed'  },
+        DISCARD:     { target: 'discarded'   },
+        REJECT:      { target: 'rejected'    },
+      },
+    },
+
     auto_upload: {
       on: {
         OCR_SUCCEEDED: { target: 'uploaded'   },
@@ -45,7 +55,7 @@ export const receiptMachine = setup({
 
     ocr_failed: {
       on: {
-        OCR_RETRY: { target: 'auto_upload' },
+        OCR_RETRY: { target: 'ocr_queued'  },
         RESUBMIT:  { target: 'uploaded'    },
         DISCARD:   { target: 'discarded'   },
         REJECT:    { target: 'rejected'    },

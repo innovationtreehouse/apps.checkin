@@ -1,13 +1,13 @@
 import type { DbClient } from "@/lib/db-client";
 import prisma from "@/lib/prisma";
 import { isActiveOrgMember } from "@/lib/orgMembership";
-import { checkStanding, liveBgThreshold, loadCheckReviews, type CheckStanding } from "@/lib/membership/checkStanding";
+import { checkStanding, checkValidFor, loadCheckReviews, type CheckStanding } from "@/lib/membership/checkStanding";
 
 /**
  * Why someone may not newly lead a program, or null when they may: a leader is in
  * an ACTIVE household membership and holds a background-check clearance valid at the
- * next membership-year boundary (`threshold`, null while the Board has set no
- * interval). Age is checked separately. The server check and the leader picker both
+ * start of the program's membership year (`threshold`, null while the Board has set
+ * no interval). Age is checked separately. The server check and the leader picker both
  * read this, so they cannot disagree.
  */
 export function leaderIneligibilityReason(isActiveMember: boolean, standing: CheckStanding, threshold: Date | null): string | null {
@@ -17,19 +17,20 @@ export function leaderIneligibilityReason(isActiveMember: boolean, standing: Che
     return null;
 }
 
-/** leaderIneligibilityReason for one person, read from the database. */
-export async function programLeaderIneligibility(personId: number, person: { lastBackgroundCheck: Date | null }): Promise<string | null> {
-    const threshold = await liveBgThreshold();
+/** leaderIneligibilityReason for one person leading a program of membership year `year`, read from the database. */
+export async function programLeaderIneligibility(personId: number, person: { lastBackgroundCheck: Date | null }, year: number): Promise<string | null> {
+    const threshold = await checkValidFor(year);
     const reviews = (await loadCheckReviews(prisma, [personId])).get(personId) ?? [];
     return leaderIneligibilityReason(await isActiveOrgMember(personId), checkStanding(person.lastBackgroundCheck, reviews, threshold), threshold);
 }
 
-/** leaderIneligibilityReason for each of `people`, keyed by id, in two queries. */
+/** leaderIneligibilityReason for each of `people` leading a program of membership year `year`, keyed by id, in two queries. */
 export async function leaderIneligibilities(
     db: DbClient,
     people: readonly { id: number; isMember: boolean; lastBackgroundCheck: Date | null }[],
+    year: number | null,
 ): Promise<Map<number, string | null>> {
     if (!people.length) return new Map();
-    const [threshold, reviews] = await Promise.all([liveBgThreshold(db), loadCheckReviews(db, people.map((p) => p.id))]);
+    const [threshold, reviews] = await Promise.all([checkValidFor(year, db), loadCheckReviews(db, people.map((p) => p.id))]);
     return new Map(people.map((p) => [p.id, leaderIneligibilityReason(p.isMember, checkStanding(p.lastBackgroundCheck, reviews.get(p.id) ?? [], threshold), threshold)]));
 }

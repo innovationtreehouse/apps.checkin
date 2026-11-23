@@ -5,7 +5,7 @@ import { Prisma } from "../../generated/prisma/client";
 import { pushReceipt, runFullFlow } from "../../lib/receipt-flow";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, FINANCE, actAs, actions, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, FINANCE, actAs, actions, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile, uploadRead } from "../helpers/setup";
 
 let ports: ReturnType<typeof recordingPorts>;
 
@@ -18,7 +18,7 @@ beforeEach(async () => {
 
 /** ALICE's balanced receipt, never delivered, moved straight to `state`. */
 async function receiptIn(state: string, detail: Prisma.ReceiptDetailUncheckedUpdateInput = {}): Promise<string> {
-  const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+  const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
   await db.receipt.update({ where: { id: r.id }, data: { pushedAt: null } });
   await db.receiptDetail.update({ where: { id: r.id }, data: { state, ...detail } });
   ports.calls.pushes.length = 0;

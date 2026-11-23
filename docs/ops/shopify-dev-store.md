@@ -45,10 +45,10 @@ leave it.
 live in the per-year rows (`MembershipYearVariant`), entered per environment in
 `settings/membership`. With no row for the live year, the mock sells
 `DEV_MOCK_MEMBERSHIP_VARIANT_ID`, a correlation token the handler echoes and
-re-matches against the same rule — a closed loop. **We deliberately don't seed
-a placeholder, and the dev store's settings stay empty** (O4): a seeded id lands
-on shared cloud-dev via dev-dashboard reset and silently fails the real store's
-variant-match guard.
+re-matches against the same rule — a closed loop. **We never seed a placeholder
+id** (O4): a made-up id would fail the real store's variant-match guard. On
+cloud-dev the dashboard reset instead looks up the dev store's own variants by
+name and writes their ids (O4, DR-4), so the variant check passes.
 
 **One shared team dev store, owned by cloud-dev** — not per-developer. A store
 has one `orders/paid` URL, so two devs tunnelling at once clobber each other;
@@ -75,9 +75,10 @@ products/orders/inventory/discounts. Wire the four values
 external infra repo; this app repo needs no change — the getters already read
 `process.env`). Register the `orders/paid` subscription once, against
 `https://ops-dev.innovationtreehouse.org/api/webhooks/shopify` (store-admin path,
-mirroring prod — see secret-pairing above). Leave the dev store's per-year
-membership variants (`MembershipYearVariant`) and its `BoardSettings` discount
-empty until someone sets them by hand (O4). Local laptops that want the *real*
+mirroring prod — see secret-pairing above). The dev-store setup script creates
+the `dev-seed-membership` product and one product per seeded program; the
+dashboard reset links their ids (O4). The `BoardSettings` discount stays empty
+until someone sets it by hand. Local laptops that want the *real*
 checkout UI put a tunnel in front of `localhost:4000` (URL churns each restart →
 re-register with `shopify:webhook`); most local work just needs "a paid webhook
 lands and activates," which the mock delivers with zero infra.
@@ -93,9 +94,15 @@ out of scope.
 - **O1.** Decided: a dev store exists, so no Partner-org work blocks this.
 - **O2.** Decided: cloud-dev's address, `ops-dev.innovationtreehouse.org`, is
   stable across redeploys, so there is no re-register on deploy.
-- **O4.** Decided: leave the dev store's per-year membership variants
-  (`MembershipYearVariant`) and its `BoardSettings` discount empty, as prod is
-  configured.
+- **O4.** Decided (DR-4 in `docs/in-design/DEV_RESET.md`): the dashboard reset
+  links the dev store's per-year membership variants (`MembershipYearVariant`)
+  and the seeded programs' products by name — the `dev-seed-membership` handle
+  with one variant per year titled with its opening year, and a
+  `dev-seed-program-…` handle per program, all listed in
+  `checkin-app/src/lib/dev/linkNames.ts`. The ids are the store's own, so the
+  variant-match guard passes. A product or variant the reset cannot find fails
+  the reset, naming it; the reset never creates one, and the dev-store setup
+  script does. The `BoardSettings` discount stays empty, as prod is configured.
 - **O5.** A dev store lets us *test* the checkout flow but doesn't change who can
   redeem the volunteer code (#278) or which process a payment credits (#2694).
   Both are out of scope here.

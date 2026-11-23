@@ -25,6 +25,7 @@ const ALLOWLIST: Record<string, { count: number; reason: string }> = {
     "lib/finance/reconcile/reversals.ts": { count: 1, reason: "by design: observation, nothing changed" },
     "app/api/finance-ops/s-read/sync/route.ts": { count: 1, reason: "by design: attempt at an outside system, written before the call" },
     "app/api/system-status/problems/retry/route.ts": { count: 1, reason: "by design: attempt at a library retry, written with its outcome" },
+    "lib/membership/positionCheck.ts": { count: 1, reason: "by design: attempt at an outside send, written with its outcome" },
     "lib/finance/quickBooksPosting.ts": { count: 1, reason: "by design: catch-up request, written before the run it asks for" },
     "lib/shopifyWebhookReceipt.ts": { count: 1, reason: "by design: inbound delivery receipt" },
     "app/api/dev/shopify/orders-paid/route.ts": { count: 1, reason: "by design: dev-only mock marker" },

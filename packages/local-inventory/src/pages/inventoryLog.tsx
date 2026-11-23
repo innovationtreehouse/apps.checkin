@@ -2,11 +2,10 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Code, CloseButton, Group, Pagination, SegmentedControl, Table, Text, Title } from "@mantine/core";
 import { formatGtinDisplay } from "../lib/gtin";
 import { errorMessage, lastPage, PAGE_SIZE, useCanSeeReceiving, useLoad } from "../components/api";
-import { LoadError, useSetUrlFilters, useUrlPage } from "@checkin/component-ui";
+import { LoadError, showError, useSetUrlFilters, useUrlPage } from "@checkin/component-ui";
 
 interface LogRow {
   id: number;
@@ -197,7 +196,7 @@ function usePartMappingIds(rows: ApplyRow[] | null, resolve: ReceivedReceiptIds 
     resolve(key.split("\n"))
       .then((m) => { if (live) setIds(m); })
       .catch((err: unknown) => {
-        if (live) notifications.show({ color: "red", autoClose: false, title: "Couldn't link receipts to Part mapping", message: errorMessage(err) });
+        if (live) showError(errorMessage(err), { title: "Couldn't link receipts to Part mapping" });
       });
     return () => { live = false; };
   }, [resolve, key]);

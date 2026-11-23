@@ -83,7 +83,7 @@ export const POST = handler<{ id: string }>(
         }
 
         // A merge racing the review leaves the scan naming a merged-away id;
-        // the visit is recorded on the survivor, never on the tombstone.
+        // the visit is recorded on the survivor, never on the merged-away id.
         const resolved = await resolveMergedPerson(row.personId);
         if (resolved.kind === "unknown") throw notFound("No scan awaiting review with that id.");
         if (resolved.kind === "broken") {

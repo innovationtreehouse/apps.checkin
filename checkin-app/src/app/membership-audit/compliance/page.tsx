@@ -2,11 +2,13 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Alert, Anchor, Badge, Button, Card, Group, Paper, Stack, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Card, Group, Paper, SegmentedControl, Stack, Text, TextInput, Title } from "@mantine/core";
 import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { api, useLoad } from "@/lib/api";
 import { formatPhone } from "@/lib/phone";
 import { formatDateOnly } from "@/lib/time";
+import { membershipYearLabel } from "@/lib/programYear";
+import type { PositionCheckStanding, PositionHolderRow } from "@/lib/membership/positionHolders";
 import { PageLoader } from "@/components/ui/PageLoader";
 
 // The board's cutoff for blanket-stamped background checks: a round date chosen to sit
@@ -50,6 +52,7 @@ type ComplianceAnswer = {
   peopleNeedingBgCheck?: PersonRow[];
   peopleMissingDob?: PersonRow[];
   peopleWithDisputedCheck?: PersonRow[];
+  positionHolders?: PositionHolderRow[];
   blanketStamped?: BlanketStampedRow[];
   mergeInheritedBgChecks?: MergeInheritedRow[];
   peopleAwaitingAgreement?: PersonRow[];
@@ -63,6 +66,55 @@ const REASON: Record<string, { label: string; color: string }> = {
   DENIED: { label: "Denied", color: "red" },
   STUCK_BG_CLEARANCE: { label: "Stuck at BG clearance", color: "yellow" },
 };
+
+const STANDING: Record<PositionCheckStanding, { label: string; color: string }> = {
+  CURRENT: { label: "Current", color: "green" },
+  NOT_CURRENT: { label: "Not current", color: "orange" },
+  NO_CHECK: { label: "No check", color: "red" },
+};
+
+/** Everyone holding a position that needs a current check, filterable by whether it is current. */
+function PositionHoldersSection({ rows }: { rows: PositionHolderRow[] }) {
+  const [show, setShow] = useState("attention");
+  if (rows.length === 0) return null;
+  const shown = rows.filter((r) => show === "all" || (show === "current") === (r.standing === "CURRENT"));
+  return (
+    <Stack gap="sm">
+      <Title order={4}>Positions that need a current background check</Title>
+      <Text c="dimmed" size="sm">
+        Volunteers, program leaders, bucket owners and treasurers, and everyone with a role. A check
+        is current when it is valid at the start of the membership year the person serves in.
+        Warn-only — nothing is blocked.
+      </Text>
+      <SegmentedControl
+        value={show}
+        onChange={setShow}
+        data={[
+          { value: "attention", label: "Not current or no check" },
+          { value: "current", label: "Current" },
+          { value: "all", label: "All" },
+        ]}
+        maw={480}
+      />
+      {shown.length === 0 && <Text c="dimmed" size="sm">Nobody in this view.</Text>}
+      {shown.map((r) => (
+        <Card key={r.personId} withBorder radius="md" padding="lg">
+          <Group justify="space-between" wrap="wrap">
+            <div>
+              <Text fw={600} fz="lg">{r.name}</Text>
+              <Text size="sm" c="dimmed">{r.positions.map((p) => p.label).join(" · ")}</Text>
+              <Text size="sm" c="dimmed">
+                Judged for {membershipYearLabel(r.year)} · Last check:{" "}
+                {r.lastBackgroundCheck ? formatDateOnly(r.lastBackgroundCheck) : "Never"} · Household #{r.householdId}
+              </Text>
+            </div>
+            <Badge color={STANDING[r.standing].color} variant="light">{STANDING[r.standing].label}</Badge>
+          </Group>
+        </Card>
+      ))}
+    </Stack>
+  );
+}
 
 /** Person-scoped section (bg-needed / DOB-missing). Program people may not be in a
  *  member household, so these render on their own, keyed on the person. */
@@ -159,6 +211,7 @@ export default function CompliancePage() {
   const peopleNeedingBgCheck = data.peopleNeedingBgCheck ?? [];
   const peopleMissingDob = data.peopleMissingDob ?? [];
   const peopleWithDisputedCheck = data.peopleWithDisputedCheck ?? [];
+  const positionHolders = data.positionHolders ?? [];
   const blanketStamped = data.blanketStamped ?? [];
   const mergeInherited = data.mergeInheritedBgChecks ?? [];
   const peopleAwaitingAgreement = data.peopleAwaitingAgreement ?? [];
@@ -175,7 +228,7 @@ export default function CompliancePage() {
       </Card>
 
       {households.length === 0 && peopleNeedingBgCheck.length === 0 && peopleMissingDob.length === 0 && peopleWithDisputedCheck.length === 0
-        && blanketStamped.length === 0 && mergeInherited.length === 0
+        && positionHolders.length === 0 && blanketStamped.length === 0 && mergeInherited.length === 0
         && peopleAwaitingAgreement.length === 0 && peopleNeedingAgreement.length === 0 && (
         <Card withBorder radius="md" padding="xl" ta="center">
           <Text c="dimmed">Everyone is in compliance. 🎉</Text>
@@ -224,7 +277,7 @@ export default function CompliancePage() {
 
       <PersonSection
         title="Background check needed"
-        description="People 18 or older with no current background check: anyone attached to a program, plus the signing adults on an active member household. Warn-only — nothing is blocked. Once an external check exists, submit it below for two-reviewer approval."
+        description="People 18 or older in a program or holding a position whose check is not valid for the year they serve. Household checks are shown above. Warn-only — nothing is blocked. Once an external check exists, submit it below for two-reviewer approval."
         color="orange"
         people={peopleNeedingBgCheck}
         renderAction={(p) =>
@@ -237,6 +290,8 @@ export default function CompliancePage() {
           )
         }
       />
+
+      <PositionHoldersSection rows={positionHolders} />
 
       {/* Households cleared before a check recorded WHOSE it was, where every lead got
           stamped. Only a person holding the reports can say which one is real, so the
@@ -329,7 +384,7 @@ export default function CompliancePage() {
 
       <PersonSection
         title="Missing date of birth"
-        description="Program-attached people and member-household signing adults with no recorded age. Confirm their date of birth before a background check can be assessed."
+        description="Program-attached people and position holders with no recorded age. Confirm their date of birth before a background check can be assessed."
         color="grape"
         people={peopleMissingDob}
       />

@@ -230,7 +230,7 @@ describe("AdminParticipantsIndex", () => {
         global.fetch = jest.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === "string" ? input : input.toString();
             if (url.includes("/api/people/search")) return new Response(JSON.stringify({ people: [carol] }));
-            return { ok: false, status: 400, json: async () => ({ error: "Household is full" }) } as Response;
+            return new Response(JSON.stringify({ error: "Household is full" }), { status: 400 });
         });
 
         fireEvent.click(screen.getByRole("button", { name: "Assign" }));
@@ -249,7 +249,7 @@ describe("AdminParticipantsIndex", () => {
         fireEvent.click(screen.getByRole("button", { name: "Assign" }));
         fireEvent.click(await screen.findByRole("button", { name: "Create New Household" }));
         await waitFor(() =>
-            expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Network error", color: "red" })),
+            expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Couldn't reach the server. Check your connection and try again.", color: "red" })),
         );
     });
 
@@ -261,7 +261,7 @@ describe("AdminParticipantsIndex", () => {
         global.fetch = jest.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === "string" ? input : input.toString();
             if (url.includes("/api/people/search")) return new Response(JSON.stringify({ people: [alice] }));
-            return { ok: false, status: 400, json: async () => ({ error: "Email already in use" }) } as Response;
+            return new Response(JSON.stringify({ error: "Email already in use" }), { status: 400 });
         });
         fireEvent.click(screen.getByRole("button", { name: "Details" }));
         fireEvent.click(await screen.findByRole("button", { name: "Save Details" }));
@@ -273,7 +273,7 @@ describe("AdminParticipantsIndex", () => {
         global.fetch = jest.fn().mockRejectedValue(new Error("down"));
         fireEvent.click(screen.getByRole("button", { name: "Save Details" }));
         await waitFor(() =>
-            expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Network error", color: "red" })),
+            expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Couldn't reach the server. Check your connection and try again.", color: "red" })),
         );
     });
 
@@ -355,13 +355,10 @@ describe("AdminParticipantsIndex", () => {
                     // the client's HouseholdRef type requires householdMembers, so a mock
                     // missing it would pass here while the real (bare `household: true`)
                     // route TypeErrors the Assign-household render path in prod.
-                    return {
-                        ok: true, status: 200,
-                        json: async () => ({
-                            success: true,
-                            participant: { id: 50, name: "Ada Lovelace", email: "ada@example.com", phone: null, household: { id: 77, name: "Ada Lovelace", householdMembers: [{ id: 50, name: "Ada Lovelace", email: "ada@example.com" }] } },
-                        }),
-                    } as Response;
+                    return new Response(JSON.stringify({
+                        success: true,
+                        participant: { id: 50, name: "Ada Lovelace", email: "ada@example.com", phone: null, household: { id: 77, name: "Ada Lovelace", householdMembers: [{ id: 50, name: "Ada Lovelace", email: "ada@example.com" }] } },
+                    }));
                 }
                 return new Response(JSON.stringify({ people: [] }));
             });
@@ -409,10 +406,7 @@ describe("AdminParticipantsIndex", () => {
             const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
                 const url = typeof input === "string" ? input : input.toString();
                 if (url.includes("/api/membership-ops/contacts")) {
-                    return {
-                        ok: false, status: 409,
-                        json: async () => ({ error: "This email already belongs to Jane Doe", fields: ["email"] }),
-                    } as Response;
+                    return new Response(JSON.stringify({ error: "This email already belongs to Jane Doe", fields: ["email"] }), { status: 409 });
                 }
                 return new Response(JSON.stringify({ people: [] }));
             });

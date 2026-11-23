@@ -13,7 +13,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
   const { id } = use(params);
   const router = useRouter();
   const {
-    session, status, program, programLoad, successMessage, startEnrollmentProcess, signInToProgram, showEnrollmentSelection, picker,
+    session, status, program, programLoad, successMessage, startEnrollmentProcess, signInToProgram, showEnrollmentSelection, ageUnknown, picker,
   } = useProgramEnrollment(id);
 
   if ((!program && (programLoad.loading || programLoad.retrying)) || status === "loading") {
@@ -53,11 +53,11 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
       unpaid: p.status === 'PENDING',
     }));
   const hasPrice = !!(program.orgMemberPriceCents || program.nonOrgMemberPriceCents);
-  // A youth is shown no payment obligation, action, or status — their own or
-  // their household's. An unverifiable age is NOT a
-  // youth: they keep every affordance so they can reach the intake panel and
-  // establish an age.
+  // Only a known adult is shown a payment obligation, action, or status — their
+  // own or their household's. A youth is told a lead must act; an unknown age is
+  // sent to the intake panel to add a date of birth, which settles the view.
   const viewerIsYouth = user?.ageBand === 'youth';
+  const seesPayment = user?.ageBand === 'adult';
 
   const ageRange = program.minAge !== null && program.maxAge !== null ? `ages ${program.minAge}–${program.maxAge}`
     : program.minAge !== null ? `ages ${program.minAge} and up`
@@ -78,7 +78,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
   // An ended program offers no payment; the board settles a late one by hand.
   const hasEnded = program.phase === 'FINISHED';
   // Until then a household with an unpaid claim keeps its way to pay however enrollment closed; the server refuses only new claims.
-  const canResume = !viewerIsYouth && !hasEnded && myEnrolled.some((m) => m.unpaid);
+  const canResume = seesPayment && !hasEnded && myEnrolled.some((m) => m.unpaid);
   const closedSuffix = closedReason && <Text component="span" c="white"> ({closedReason})</Text>;
 
   return (
@@ -102,7 +102,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
           enrolledCount={enrolledCount}
           isFull={isFull}
           myEnrolled={myEnrolled}
-          viewerIsYouth={viewerIsYouth}
+          seesPayment={seesPayment}
           isClosed={isClosed}
           hasEnded={hasEnded}
           onPayNow={startEnrollmentProcess}
@@ -123,12 +123,14 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
           {!showEnrollmentSelection ? (
             <Group justify="center" wrap="wrap">
               {session ? (
-                <Button size="md" onClick={startEnrollmentProcess} disabled={(isClosed && !canResume) || viewerIsYouth}>
+                <Button size="md" onClick={startEnrollmentProcess} disabled={(isClosed && !canResume && !ageUnknown) || viewerIsYouth}>
                   {/* A payment-pending household reads "Continue enrollment" — the
                       button resumes their checkout (see the pending picker state),
-                      it doesn't start a new one. A youth is told who may act
-                      instead, which holds whether or not the program is priced. */}
+                      it doesn't start a new one. An unknown age is asked for a
+                      date of birth first. A youth is told who may act instead,
+                      which holds whether or not the program is priced. */}
                   {canResume ? "Continue enrollment"
+                    : ageUnknown ? "Add your date of birth to continue"
                     : isClosed ? <>Enrollment Closed{closedSuffix}</>
                     : viewerIsYouth ? "A household lead must enroll you"
                     : "Enroll"}
@@ -150,7 +152,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
               ageRange={ageRange}
               hasPrice={hasPrice}
               isClosed={isClosed && !canResume}
-              viewerIsYouth={viewerIsYouth}
+              seesPayment={seesPayment}
               controls={picker}
             />
           )}

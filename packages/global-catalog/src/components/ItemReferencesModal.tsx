@@ -3,11 +3,10 @@ import { useState } from "react";
 import {
   ActionIcon, Anchor, Button, Divider, Group, Modal, NumberInput, Stack, Table, Text, Textarea, TextInput, Tooltip,
 } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { IconArchive, IconCheck, IconEdit, IconPlus, IconScale, IconX } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, useLoad } from "./api";
-import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError, showSuccess, showWarning } from "@checkin/component-ui";
 import { PART_NUMBER_HINT, partNumberLabel, type ItemRow, type ItemReferenceRow } from "./viewTypes";
 
 // conversionFactor is set by the reference matcher (S4), not the human UI — the
@@ -204,7 +203,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
 
   function handleClose() {
     if (editingRows.size > 0 || (showAdd && hasContent)) {
-      notifications.show({ message: "Save or cancel your changes before closing.", color: "yellow" });
+      showWarning("Save or cancel your changes before closing.", { autoClose: 4000 });
       return;
     }
     onClose();

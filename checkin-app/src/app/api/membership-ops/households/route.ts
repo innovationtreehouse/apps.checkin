@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { VALID_CONTACT_WHERE } from "@/lib/emergencyContacts/valid";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
@@ -26,9 +27,7 @@ export const dynamic = 'force-dynamic';
 
 // Emergency contacts are their own entity; the admin editor works in
 // terms of a single primary contact, so map the household's primary valid contact
-// back onto the flat emergencyContactName/Phone shape the client expects. Select
-// it inline (below) with this where/order so Prisma infers the result type.
-const PRIMARY_CONTACT_WHERE = { conflictParticipantId: null, name: { not: "" }, phone: { not: "" } };
+// back onto the flat emergencyContactName/Phone shape the client expects.
 
 // "Valid until" is DERIVED, never stored: coveredThrough over the live membership
 // year — the boundary closing it when the household settled for it, else the one
@@ -73,7 +72,7 @@ export const GET = withAuth(
                         },
                         orgMembership: { select: { id: true, status: true, memberSince: true, isVolunteerFamily: true } },
                         emergencyContacts: {
-                            where: PRIMARY_CONTACT_WHERE,
+                            where: VALID_CONTACT_WHERE,
                             orderBy: [{ priority: "asc" }, { id: "asc" }],
                             select: { name: true, phone: true },
                             take: 1,

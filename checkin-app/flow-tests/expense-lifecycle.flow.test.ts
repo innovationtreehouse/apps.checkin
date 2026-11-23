@@ -17,7 +17,7 @@ type Received = { id: number; receiptId: string; state: string };
 type Detail = { ReceivedReceipt: Received; ReceivedReceiptLineStatus: Array<{ id: number }> };
 type Approval = { id: number; lineItemId: number; ownerId: number | null; status: string };
 type ExpenseState = { Expense: { id: string; state: string } };
-type SeedResult = { created: number; skipped: number };
+type SeedResult = { created: number; skipped: number; errors: number };
 
 // The first test to touch each route waits on the dev server compiling it.
 jest.setTimeout(120_000);
@@ -42,7 +42,7 @@ async function newBucket(name: string, ownerId: number | null): Promise<number> 
   const bucket = await post<{ id: number }>(finance, "/api/budget-owners", { name: `${name} ${stamp}`, quickBooksClassId: newClassId() });
   expect(bucket.status).toBe(200);
   buckets.push(bucket.json.id);
-  if (ownerId !== null) expect((await send(board, "PUT", `/api/budget-owners/${bucket.json.id}/owner`, { personId: ownerId })).status).toBe(200);
+  if (ownerId !== null) expect((await send(board, "PUT", `/api/budget-owners/${bucket.json.id}/owner`, { personId: ownerId, acknowledgeCheck: true })).status).toBe(200);
   return bucket.json.id;
 }
 
@@ -217,7 +217,7 @@ describe("expense capital review", () => {
     expect(await stateOf(big.expenseId)).toBe("set_depreciation_cycle");
 
     // No route lists the register, so the mint is read through the seed route: a number it
-    // already holds is skipped. Seeding a number above every other makes the mint's numbers next.
+    // already holds is refused. Seeding a number above every other makes the mint's numbers next.
     const base = Math.floor(Date.now() / 1000);
     const seed = (n: number) => post<SeedResult>(finance, "/api/expense/capital-assets/seed", [{ assetNumber: `ITFA${n}`, description: `Probe ${stamp}` }]);
     expect((await seed(base)).json).toMatchObject({ created: 1 });
@@ -225,8 +225,8 @@ describe("expense capital review", () => {
     expect((await post(finance, `${E}/set-depreciation-cycle/submit`, { items: [{ lineItemId, depreciationYears: 5, ownerId: bucket }] })).status).toBe(200);
     expect(await stateOf(big.expenseId)).toBe("qb_pending");
 
-    expect((await seed(base + 1)).json).toMatchObject({ created: 0, skipped: 1 });
-    expect((await seed(base + 2)).json).toMatchObject({ created: 0, skipped: 1 });
+    expect((await seed(base + 1)).json).toMatchObject({ created: 0, skipped: 0, errors: 1 });
+    expect((await seed(base + 2)).json).toMatchObject({ created: 0, skipped: 0, errors: 1 });
     expect((await seed(base + 3)).json).toMatchObject({ created: 1, skipped: 0 });
 
     // A second submit mints nothing more: the expense has left the depreciation step.

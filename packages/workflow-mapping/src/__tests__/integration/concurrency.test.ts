@@ -64,6 +64,7 @@ describeDb("§4 S1 concurrent first deliveries", () => {
         checkReferences: async () => {
           throw new Error("unused");
         },
+        getOrgProvisionalItem: async () => null,
         getActiveItem: async () => {
           throw new Error("unused");
         },

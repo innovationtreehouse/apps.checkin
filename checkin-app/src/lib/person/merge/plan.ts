@@ -71,14 +71,14 @@ export function hasIdentity(p: { email: string | null; googleId: string | null }
 }
 
 /**
- * Pre-image of every field a merge can rewrite on EITHER side — the tombstone's
- * mangled identity and the keeper's overwritten name/email/DOB alike. Captured
+ * Pre-image of every field a merge can rewrite on EITHER side — the merged-away
+ * record's cleared identity and the keeper's overwritten name/email/DOB alike. Captured
  * before the updates run, because afterwards neither is readable.
  *
  * The four legacy role mirrors are in here because the merge rewrites them on
- * both sides too (zeroed on the tombstone, re-derived on the keeper). Nothing is
- * deleted by a merge, so this audit row is the only forensic record of what
- * authority the merged-away record held — an un-merge that could not restore it
+ * both sides too (zeroed on the merged-away record, re-derived on the keeper). The merge then
+ * deletes the merged-away row, so this audit row is the only forensic record of
+ * what authority it held — an un-merge that could not restore it
  * would be restoring a different person.
  */
 export function personPreImage(p: Person) {
@@ -104,7 +104,7 @@ export function personPreImage(p: Person) {
 
 /**
  * The `PersonMerge.snapshot` payload: identity as it stood at merge time, for the
- * readers that outlive the tombstone Person row. Narrower than `personPreImage`,
+ * readers that outlive the merged-away Person row. Narrower than `personPreImage`,
  * which is forensic and lands in AuditLog; this is a live data source —
  * compliance reads name/lastBackgroundCheck, audit names read email.
  *
@@ -239,12 +239,12 @@ export function findCollisions(
         collisions.push({ type: 'programParticipant', message: `Both enrolled in ${pp.program.name}. Unenroll one first.` });
     }
 
-    // ToolStatus — certification levels
+    // ToolStatus — certification levels; a same-level pair dedupes in the transaction
     const tsCollisions = merge.toolStatuses.filter(ts =>
-        keep.toolStatuses.some(k => k.toolId === ts.toolId)
+        keep.toolStatuses.some(k => k.toolId === ts.toolId && k.level !== ts.level)
     );
     for (const ts of tsCollisions) {
-        collisions.push({ type: 'toolStatus', message: `Both hold a ${ts.tool.name} certification. Remove one first.` });
+        collisions.push({ type: 'toolStatus', message: `Both hold a ${ts.tool.name} certification at different levels. Remove one first.` });
     }
 
     // BackgroundCheckAttestation — same human reviewed under two identities

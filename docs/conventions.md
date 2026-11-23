@@ -197,6 +197,14 @@ missed a row stored at a different time of day.
   host's session.** The host maps its session onto `Viewer` once, in
   `checkin-app/src/components/AuthProvider.tsx`. A new role a package needs is
   a new `Viewer` field.
+- **App pages load through `useLoad` and write through `api()` from
+  `@/lib/api`, the app's binding of the same kit.** A failed load shows
+  `LoadError` in place of the content; a failed write shows through
+  `showError(errorMessage(e))`. ESLint's `no-restricted-globals` and
+  `no-restricted-properties` rules in the root `eslint.config.mjs` ban `fetch`
+  in `src/app`, `src/components` and `src/hooks`, outside API routes and tests.
+  A file that needs `fetch` goes on that config's `rawFetchExemptions` list with
+  a one-line reason.
 
 ---
 

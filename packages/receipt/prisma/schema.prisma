@@ -151,6 +151,9 @@ model ReceiptDetail {
   state                      String    @default("uploaded")
   /// @sensitivity:internal
   ocrStartedAt               DateTime? @map("ocr_started_at")
+  // When the receipt last entered `ocr_queued`; the drain reads the oldest first.
+  /// @sensitivity:internal
+  ocrQueuedAt                DateTime? @map("ocr_queued_at")
   /// @sensitivity:internal
   duplicateFlaggedAt         DateTime? @map("duplicate_flagged_at")
   /// @sensitivity:personal
@@ -359,6 +362,9 @@ model ReceiptMailItem {
   receiptId      String?   @map("receipt_id")
   /// @sensitivity:internal
   createdAt      DateTime  @default(now()) @map("created_at")
+  // When the item last became held; the 90-day auto-discard counts from it. Null while it was never held.
+  /// @sensitivity:internal
+  heldAt         DateTime? @map("held_at")
 
   @@unique([gmailMessageId, attachmentHash])
   @@index([orgId, status])
@@ -443,6 +449,35 @@ model ReceiptMailLease {
   @@map("receipt_mail_lease")
 }
 
+// One captured email: its raw copy in the file store under rawKey, kept 90 days by the bucket's
+// lifecycle rule. The row outlives the copy, so a message is never captured twice.
+model ReceiptMailMessage {
+  /// @sensitivity:internal
+  id             Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId          String    @map("org_id")
+  /// @sensitivity:internal
+  gmailMessageId String    @map("gmail_message_id")
+  /// @sensitivity:internal
+  receivedAt     DateTime  @map("received_at")
+  /// @sensitivity:internal
+  capturedAt     DateTime  @default(now()) @map("captured_at")
+  /// @sensitivity:pii
+  rawKey         String    @map("raw_key")
+  /// @sensitivity:internal
+  rawSha256      String    @map("raw_sha256")
+  /// @sensitivity:internal
+  rawSize        Int       @map("raw_size")
+  /// @sensitivity:internal
+  processedAt    DateTime? @map("processed_at")
+  // The latest processing error's kind and short reason; never message content.
+  /// @sensitivity:pii
+  processError   String?   @map("process_error")
+
+  @@unique([orgId, gmailMessageId])
+  @@map("receipt_mail_message")
+}
+
 // One email owed per receipt outcome: to its uploader, and to the person reimbursed when that
 // is someone else. Written in the transaction that makes the outcome, so it is owed exactly once.
 model ReceiptOutcomeNotice {
@@ -462,11 +497,18 @@ model ReceiptOutcomeNotice {
   uploaderSentAt   DateTime? @map("uploader_sent_at")
   /// @sensitivity:internal
   reimburseeSentAt DateTime? @map("reimbursee_sent_at")
-  // Set once every owed copy is sent, or given up after OUTCOME_ATTEMPTS.
+  // Set once every owed copy is sent.
   /// @sensitivity:internal
   doneAt           DateTime? @map("done_at")
+  // Read and written by nothing.
   /// @sensitivity:internal
   attempts         Int       @default(0)
+  // When a send first failed; set while null. A failed notice is stuck until a person retries it.
+  /// @sensitivity:internal
+  firstFailedAt    DateTime? @map("first_failed_at")
+  // The latest failure's error text.
+  /// @sensitivity:internal
+  failureReason    String?   @map("failure_reason")
   /// @sensitivity:internal
   createdAt        DateTime  @default(now()) @map("created_at")
 

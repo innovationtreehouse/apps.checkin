@@ -247,10 +247,12 @@ link step finds each object by a stable name and writes its id back:
 | Refresher secrets (QuickBooks and Gmail tokens) | Nothing to do: they live in Secrets Manager, kept current by the refresher functions, and the reset never touches them |
 | Shopify webhook subscriptions | Nothing to do: registered once against dev's stable address, held by the store |
 
-The link step only reads QuickBooks and Shopify. A name it cannot find leaves
-that id unset and is reported in the reset summary; it never creates the object.
-On `local` there is no sandbox or dev store, so the link step is skipped and the
-existing mocks and stand-in Classes apply.
+The link step only reads QuickBooks and Shopify. A name it cannot find fails the
+link, naming every missing object and saying to run the setup scripts; nothing is
+written, and it never creates the object. The names live in
+`checkin-app/src/lib/dev/linkNames.ts`, shared with the setup scripts. On `local`
+there is no sandbox or dev store: the link reads the stand-in Class and account
+lists, which carry the same names, and leaves Shopify to the mock.
 
 Linking the membership variant reverses decision O4 in
 `docs/ops/shopify-dev-store.md`, which keeps the dev store's variant unset. O4's

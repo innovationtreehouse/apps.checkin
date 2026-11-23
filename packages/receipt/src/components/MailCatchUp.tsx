@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Button, Group, Paper, Stack, Text } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { showError, showWarning } from "@checkin/component-ui";
 import { api, errorMessage, useLoad } from "./api";
 import { MAIL_CATCH_UP_CAP } from "../lib/mailCatchUpCap";
 
@@ -13,6 +13,8 @@ export interface MailRunSummaryView {
   waiting: number;
   failed: number;
   more: boolean;
+  /** The reading drain after the run, when it finished. */
+  drain?: { read: number; failed: number; waiting: number };
 }
 
 export interface MailCatchUpView {
@@ -30,7 +32,8 @@ export function catchUpSummary(run: MailRunSummaryView): string {
   if (run.status === "listing_failed") return "It couldn't read the mailbox. Run it again later.";
   const parts = [`${run.messages} messages read`, `${run.receipts} receipts made`, `${run.held} held`, `${run.waiting} still waiting`];
   if (run.failed > 0) parts.push(`${run.failed} failed`);
-  return `${parts.join(", ")}.${run.more ? " Run it again to continue." : ""}`;
+  const read = run.drain ? ` ${run.drain.read} receipts read, ${run.drain.waiting} waiting to be read.` : "";
+  return `${parts.join(", ")}.${read}${run.more ? " Run it again to continue." : ""}`;
 }
 
 /**
@@ -59,9 +62,9 @@ export default function MailCatchUp({ onDone }: { onDone: () => void }) {
     setStarting(true);
     try {
       const answer = await api<MailCatchUpView>(PATH, { method: "POST" });
-      if (answer.status === "busy") notifications.show({ color: "yellow", message: "Mail intake is already running. This page shows when it ends." });
+      if (answer.status === "busy") showWarning("Mail intake is already running. This page shows when it ends.", { autoClose: 4000 });
     } catch (err) {
-      notifications.show({ title: "Couldn't start catching up", message: errorMessage(err), color: "red", autoClose: false });
+      showError(errorMessage(err), { title: "Couldn't start catching up" });
     }
     setStarting(false);
     await reload();

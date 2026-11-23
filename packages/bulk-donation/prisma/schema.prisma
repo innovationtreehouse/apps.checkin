@@ -364,10 +364,10 @@ model InKindDonation {
   // When the expense library took this accepted gift's lines for capital review.
   /// @sensitivity:internal
   capitalSubmittedAt         DateTime?  @map("capital_submitted_at")
-  // When sending the accepted gift's lines to capital review first failed; set while null, cleared on a successful send. Set means stuck.
+  // When registering the gift's capital lines first failed; set while null, cleared once a run registers them. Set means stuck.
   /// @sensitivity:internal
   capitalFirstFailedAt       DateTime?  @map("capital_first_failed_at")
-  // The latest failed capital review send's error, kept while the gift is stuck.
+  // The latest failed registration's error, kept while the gift is stuck.
   /// @sensitivity:personal
   capitalLastError           String?    @map("capital_last_error")
   // Whether the gift met a capital threshold, tested once at accept; null until then.
@@ -440,10 +440,10 @@ model ManualInKindDonation {
   // When the expense library took this accepted gift's lines for capital review.
   /// @sensitivity:internal
   capitalSubmittedAt         DateTime?  @map("capital_submitted_at")
-  // When sending the accepted gift's lines to capital review first failed; set while null, cleared on a successful send. Set means stuck.
+  // When registering the gift's capital lines first failed; set while null, cleared once a run registers them. Set means stuck.
   /// @sensitivity:internal
   capitalFirstFailedAt       DateTime?  @map("capital_first_failed_at")
-  // The latest failed capital review send's error, kept while the gift is stuck.
+  // The latest failed registration's error, kept while the gift is stuck.
   /// @sensitivity:personal
   capitalLastError           String?    @map("capital_last_error")
   // Whether the gift met a capital threshold, tested once at accept; null until then.

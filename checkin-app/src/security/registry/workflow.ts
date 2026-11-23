@@ -33,6 +33,8 @@ defineRoute({ endpoint: 'GET /api/workflow-mapping/receipts', authorize: WORKFLO
 defineRoute({ endpoint: 'GET /api/workflow-mapping/receipts/counts', authorize: WORKFLOW_READ, envelope: null, returns: ['WorkflowReceiptCount'], orderedView: WORKFLOW_VIEW });
 defineRoute({ endpoint: 'GET /api/workflow-mapping/receipts/[id]', authorize: WORKFLOW_READ, envelope: null, returns: ['ReceivedReceipt', 'WorkflowReceiptView', 'WorkflowReceiptLineView', 'ReceivedReceiptLineStatus'], orderedView: WORKFLOW_VIEW, financeView: { records: [{ key: 'WorkflowReceiptView', id: 'receiptId', model: 'Receipt' }] } });
 defineRoute({ endpoint: 'GET /api/workflow-mapping/audit-log', authorize: WORKFLOW_READ, envelope: null, returns: ['WorkflowAuditLog'], orderedView: WORKFLOW_VIEW, financeView: { records: [{ key: 'WorkflowAuditLog', id: 'receivedReceiptId', model: 'ReceivedReceipt' }] } });
+// The receipt picker's local-only and pending parts — manager-only, never a rejection reason.
+defineRoute({ endpoint: 'GET /api/workflow-mapping/provisional-parts', authorize: 'inventory-manager', envelope: null, returns: ['WorkflowProvisionalPart'], orderedView: WORKFLOW_MANAGER_VIEW });
 
 // Writes — receipt transitions, then line edits (409 while the receipt is applying or resolved,
 // enforced in the library).

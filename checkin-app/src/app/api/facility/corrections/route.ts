@@ -132,8 +132,8 @@ export const GET = handler('GET /api/facility/corrections', async ({ req }) => {
     }
     for (const a of await archivedPeople(prisma, [...personIds].filter((id) => !people.has(id)))) {
         people.set(a.id, { ...people.get(a.id), id: a.id, name: a.name });
-        const survivor = people.get(a.mergedIntoId) ?? { id: a.mergedIntoId };
-        survivor.mergedArchive = [...(survivor.mergedArchive ?? []), { fromId: a.id, toId: a.mergedIntoId }];
+        const survivor = people.get(a.survivorId) ?? { id: a.survivorId };
+        survivor.mergedArchive = [...(survivor.mergedArchive ?? []), { fromId: a.id, toId: a.survivorId }];
         people.set(survivor.id, survivor);
     }
 

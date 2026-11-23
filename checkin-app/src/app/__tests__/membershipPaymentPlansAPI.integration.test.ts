@@ -142,7 +142,7 @@ describe('Membership payment-plan routes', () => {
 
             const res = await PlansGet(nextReq());
             expect(res.status).toBe(200);
-            const ids = (await res.json()).map((r: { id: number }) => r.id);
+            const ids = (await res.json()).OrgMembershipProcess.map((r: { id: number }) => r.id);
             expect(ids).toContain(leadProcessId);
             expect(ids).not.toContain(notRequested.processId);
             expect(ids).not.toContain(wrongPhase.processId);

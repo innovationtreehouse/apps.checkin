@@ -12,6 +12,7 @@ import type { Token } from '@/security/core';
 import { classifications } from '@/security/budgetOwnerSyntheticClassifications';
 import { getRoute } from '@/security/core';
 import '@/security/registry';
+import { readLastRuns } from '@/lib/finance/postingRuns';
 
 const ctx: CallerContext = {
     selfId: 1,
@@ -92,7 +93,15 @@ describe('budget-owner synthetic views', () => {
     });
 
     it('finance or board asks for and reads a QuickBooks posting catch-up; a public view sees nothing', () => {
-        const state = { lane: 'expense', status: 'queued', heldBy: 'in-kind', until: '2026-11-18T14:05:00.000Z', queued: ['expense'] };
+        const state = {
+            lane: 'expense',
+            status: 'queued',
+            heldBy: 'in-kind',
+            until: '2026-11-18T14:05:00.000Z',
+            queued: ['expense'],
+            pausedUntil: '2026-11-18T14:04:00.000Z',
+            lastRuns: { income: { endedAt: '2026-11-18T13:58:00.000Z', ended: 'done', created: 100, matched: 2, capped: 'count', yieldsInRow: 0 } },
+        };
         expect(strip('QuickBooksPostingCatchUp', state, FINANCE_OR_BOARD_VIEW)).toEqual(state);
         expect(strip('QuickBooksPostingCatchUp', state, PUBLIC_ONLY)).toEqual({});
         for (const endpoint of ['GET /api/finance/quickbooks/catch-up', 'POST /api/finance/quickbooks/catch-up']) {
@@ -104,5 +113,12 @@ describe('budget-owner synthetic views', () => {
                 ['isBoardMember', FINANCE_OR_BOARD_VIEW],
             ]);
         }
+    });
+
+    it("pins the inner keys of a lane's last run, classified with lastRuns: a new key needs a classification review", () => {
+        // lastRuns is classified whole; this set was reviewed as lane names, times and counts only.
+        const REVIEWED = ['capped', 'created', 'ended', 'endedAt', 'matched', 'yieldsInRow'];
+        const stored = { income: { endedAt: '2026-11-18T13:58:00.000Z', ended: 'yielded', created: 3, matched: 1, capped: null, yieldsInRow: 2, unreviewed: 'x' } };
+        expect(Object.keys(readLastRuns(stored).income ?? {}).sort()).toEqual(REVIEWED);
     });
 });

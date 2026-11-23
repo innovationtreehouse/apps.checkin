@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import { Box, Button, Group, Modal, Stack, Switch, Text, Tooltip } from "@mantine/core";
-import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
+import { errorMessage, HttpError, showError, showSuccess } from "@checkin/component-ui";
 import { api } from "@/lib/api";
 import { modals } from "@mantine/modals";
 import { roleLabel } from "@/components/ui/RoleBadge";
 import { KEY_VOLUNTEER_GATED_FLAGS, ROLE_FLAGS, type RoleFlag } from "@/lib/roles";
 import { useOrgTime } from "@/components/TimezoneProvider";
+import { CHECK_ACKNOWLEDGEMENT_CODE } from "@/lib/membership/positionCheckCode";
 
 export type RolesEditTarget = {
   id: number;
@@ -127,7 +128,7 @@ export function RolesEditModal({ target, me, noBoard = false, onClose, onSaved }
     }
   };
 
-  type Delta = Partial<Record<RoleFlag, boolean>> & { canAccessStaging?: boolean };
+  type Delta = Partial<Record<RoleFlag, boolean>> & { canAccessStaging?: boolean; acknowledgeCheck?: boolean };
 
   const saveRoles = async (t: RolesEditTarget, delta: Delta) => {
     setSavingRoles(true);
@@ -141,8 +142,22 @@ export function RolesEditModal({ target, me, noBoard = false, onClose, onSaved }
       onClose();
     } catch (err) {
       // Revert the form to the target's last-known-good state.
-      setRolesForm(flagsFromTarget(t));
-      setStagingForm(!!t.canAccessStaging);
+      const revert = () => {
+        setRolesForm(flagsFromTarget(t));
+        setStagingForm(!!t.canAccessStaging);
+      };
+      // Nothing is refused for a check that isn't current: the assigner acknowledges it and the save goes through.
+      if (err instanceof HttpError && err.code === CHECK_ACKNOWLEDGEMENT_CODE && !delta.acknowledgeCheck) {
+        modals.openConfirmModal({
+          title: `${t.name || t.email} isn't current on their background check`,
+          children: <Text size="sm">{err.message}</Text>,
+          labels: { confirm: 'Got it', cancel: 'Cancel' },
+          onConfirm: () => saveRoles(t, { ...delta, acknowledgeCheck: true }),
+          onCancel: revert,
+        });
+        return;
+      }
+      revert();
       showError(errorMessage(err));
     } finally {
       setSavingRoles(false);

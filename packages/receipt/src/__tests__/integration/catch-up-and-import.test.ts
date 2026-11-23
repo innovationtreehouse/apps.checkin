@@ -9,7 +9,7 @@ import { importReceipts } from "../../services/importService";
 import { inertPersonIds } from "../../runtime";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, FINANCE, TEST_ORG_ID, actAs, actions, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, FINANCE, TEST_ORG_ID, actAs, actions, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile, uploadRead } from "../helpers/setup";
 
 let ports: ReturnType<typeof recordingPorts>;
 
@@ -27,7 +27,7 @@ describeDb("catch-up steps", () => {
     ["system", () => true as const],
   ])("records a %s push failure as push_failed with its kind, and the receipt as stuck", async (kind, failure) => {
     ports.fail.push = failure();
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     const rows = await db.receiptAuditLog.findMany({ where: { receiptId: r.id, action: { startsWith: "push_" } }, select: { action: true, valueBefore: true } });
     expect(rows).toEqual([{ action: "push_failed", valueBefore: kind }]);
     expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id }, select: { firstFailedAt: true } })).toEqual({ firstFailedAt: expect.any(Date) });
@@ -35,13 +35,13 @@ describeDb("catch-up steps", () => {
 
   it("an answer the receipt cannot read is a bug", async () => {
     configure({ receiptSink: { ingestReceipt: async () => ({ id: 1.5, state: "pending_review", created: true }) } });
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     expect(await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "push_failed" }, select: { valueBefore: true } })).toEqual({ valueBefore: "bug" });
   });
 
   it("lists a failed push with its first failure time and no error text; finance reads the error on the receipt's page", async () => {
     ports.fail.push = new Error("unexpected");
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     actAs(FINANCE);
 
     const [listed] = await receiptService.list({ state: "receipt_finalized", pushed: false });
@@ -54,7 +54,7 @@ describeDb("catch-up steps", () => {
 
   it("a manual push delivers a failed receipt and takes it off the lists", async () => {
     ports.fail.push = new ServiceError(400, "lineItems: required");
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     ports.fail.push = false;
     actAs(FINANCE);
     expect(await receiptService.push(r.id)).toEqual({ pushed: true });
@@ -64,9 +64,9 @@ describeDb("catch-up steps", () => {
 
   it("counts each state, the undelivered receipts, and the ones whose push failed", async () => {
     ports.fail.push = new Error("unexpected");
-    await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     ports.fail.push = false;
-    await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
+    await uploadRead(textFile(), "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
     await db.receipt.updateMany({ data: { pushedAt: null } });
     actAs(FINANCE);
     expect(await receiptService.queueCounts(null)).toEqual({ byState: { receipt_finalized: 2 }, notPushed: 2, failedPushes: 1 });
@@ -75,7 +75,7 @@ describeDb("catch-up steps", () => {
   it("puts a failed push in finance's list and pill at once, unless the viewer is conflicted", async () => {
     ports.fail.push = new Error("unexpected");
     actAs(ALICE);
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     actAs(FINANCE);
 
     expect(await receiptService.countAwaitingFinance(FINANCE.id)).toMatchObject({ total: 1, byState: { flow_error: 0 } });
@@ -98,7 +98,8 @@ describeDb("catch-up steps", () => {
         },
       },
     });
-    await expect(receiptService.upload(textFile(), "text/plain", {})).rejects.toMatchObject({ status: 409 });
+    // The background reading finds the receipt gone from OCR and writes nothing; the upload already answered.
+    await uploadRead(textFile(), "text/plain", {});
     expect(await stateOf(id)).toBe("discarded");
     expect(await actions(id)).toContain("ocr_result_refused");
     expect(await actions(id)).not.toContain("ocr_complete");
@@ -108,7 +109,7 @@ describeDb("catch-up steps", () => {
     configure({ receiptSink: ports.receiptSink, limits: { ...DEFAULT_LIMITS, uploadsPerPersonPerDay: CATCH_UP_CAP + 1 } });
     const started = new Date(Date.now() - 11 * 60_000);
     for (let i = 0; i <= CATCH_UP_CAP; i++) {
-      const { id } = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: `Store ${i}` }) });
+      const { id } = await uploadRead(textFile(), "text/plain", { details: manualDetails({ retailer: `Store ${i}` }) });
       await db.receiptDetail.update({ where: { id }, data: { state: "auto_upload", ocrStartedAt: started } });
     }
     expect(await sweepInterruptedOcr()).toEqual({ swept: CATCH_UP_CAP, failed: 0 });
@@ -116,9 +117,9 @@ describeDb("catch-up steps", () => {
   });
 
   it("moves a receipt stuck in OCR for over ten minutes to ocr_failed", async () => {
-    const stuck = await receiptService.upload(textFile(), "text/plain", {});
+    const stuck = await uploadRead(textFile(), "text/plain", {});
     await db.receiptDetail.update({ where: { id: stuck.id }, data: { state: "auto_upload", ocrStartedAt: new Date(Date.now() - 11 * 60_000) } });
-    const fresh = await receiptService.upload(textFile(), "text/plain", {});
+    const fresh = await uploadRead(textFile(), "text/plain", {});
     await db.receiptDetail.update({ where: { id: fresh.id }, data: { state: "auto_upload", ocrStartedAt: new Date() } });
 
     expect(await sweepInterruptedOcr()).toEqual({ swept: 1, failed: 0 });
@@ -127,8 +128,8 @@ describeDb("catch-up steps", () => {
   });
 
   it("keeps sweeping interrupted OCR when the oldest row's move fails", async () => {
-    const oldest = await receiptService.upload(textFile(), "text/plain", {});
-    const newer = await receiptService.upload(textFile(), "text/plain", {});
+    const oldest = await uploadRead(textFile(), "text/plain", {});
+    const newer = await uploadRead(textFile(), "text/plain", {});
     await db.receiptDetail.update({ where: { id: oldest.id }, data: { state: "auto_upload", ocrStartedAt: new Date(Date.now() - 12 * 60_000) } });
     await db.receiptDetail.update({ where: { id: newer.id }, data: { state: "auto_upload", ocrStartedAt: new Date(Date.now() - 11 * 60_000) } });
     const tx = vi.spyOn(getPrisma(), "$transaction").mockRejectedValueOnce(new Error("row lock timeout"));
@@ -143,11 +144,11 @@ describeDb("catch-up steps", () => {
   });
 
   it("moves a receipt resting in uploaded for over an hour to flow_error, once", async () => {
-    const stuck = await receiptService.upload(textFile(), "text/plain", {});
+    const stuck = await uploadRead(textFile(), "text/plain", {});
     await db.receiptDetail.update({ where: { id: stuck.id }, data: { state: "uploaded" } });
-    const fresh = await receiptService.upload(textFile(), "text/plain", {});
+    const fresh = await uploadRead(textFile(), "text/plain", {});
     await db.receiptDetail.update({ where: { id: fresh.id }, data: { state: "uploaded" } });
-    const ocr = await receiptService.upload(textFile(), "text/plain", {});
+    const ocr = await uploadRead(textFile(), "text/plain", {});
     await db.receiptDetail.update({ where: { id: ocr.id }, data: { state: "auto_upload", ocrStartedAt: new Date() } });
     const later = new Date(Date.now() + 61 * 60_000);
     await db.receiptAuditLog.create({ data: { receiptId: fresh.id, action: "submitter_confirmed", changedAt: new Date(Date.now() + 30 * 60_000) } });
@@ -170,25 +171,25 @@ describeDb("catch-up steps", () => {
     };
 
     it("is gone once a restart lands in finance review", async () => {
-      const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: future }) });
+      const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptDate: future }) });
       expect(await restarted(r.id)).toMatchObject({ state: "financial_review", validationNotes: null });
     });
 
     it("is gone once a restart lands in submitter review", async () => {
-      const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: future }) });
+      const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptDate: future }) });
       expect(await restarted(r.id, { ocrStartedAt: new Date() })).toMatchObject({ state: "submitter_review", validationNotes: null });
     });
 
     it("is gone once a restart lands on a duplicate hold", async () => {
-      await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-      const copy = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+      await uploadRead(textFile(), "text/plain", { details: manualDetails() });
+      const copy = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
       expect(await restarted(copy.id)).toMatchObject({ state: "duplicate_flagged", validationNotes: null });
     });
   });
 
   it("keeps sweeping stuck receipts when one row's move fails", async () => {
-    const first = await receiptService.upload(textFile(), "text/plain", {});
-    const second = await receiptService.upload(textFile(), "text/plain", {});
+    const first = await uploadRead(textFile(), "text/plain", {});
+    const second = await uploadRead(textFile(), "text/plain", {});
     await db.receiptDetail.updateMany({ where: { id: { in: [first.id, second.id] } }, data: { state: "uploaded" } });
     const tx = vi.spyOn(getPrisma(), "$transaction").mockRejectedValueOnce(new Error("row lock timeout"));
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -231,7 +232,7 @@ describeDb("a push whose finance decider cannot be looked up", () => {
       },
     });
     ports.fail.push = true;
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
     actAs(FINANCE);
     await receiptService.approveFinancial(r.id);
     expect(await stateOf(r.id)).toBe("receipt_finalized");

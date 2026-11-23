@@ -217,41 +217,73 @@ crashes after its APIs answer 200, an error chip, a tab that leads to a denial.
 - A spec that fails because of a real app bug is marked `test.fail()` with the
   bug named, until the fix lands.
 
-## Issue workflow (org project 1)
+## Issue workflow
 
-Org **project 1** is the canonical triage surface; its Status field plus the
-issue's assignee are the claim-state machine. An assignment means exactly one
-thing: someone is actively working the issue *right now* — never leave one
-standing as a soft reservation, and never trust it as the only signal.
+An issue moves through two legs of work. The **design leg** writes and reviews a
+design doc; the **implementation leg** writes and reviews the code. Work that
+needs no design skips the design leg. The issue's assignee and its open PRs say
+where it is:
+
+| Stage | Assignee | Open PR |
+|---|---|---|
+| Design being written | design author | none |
+| Design in review | none | design PR |
+| Ready: design merged, or none needed | none | none |
+| Implementation being written | implementer | none |
+| Implementation in review | none | implementation PR |
+| Done | none | none; the implementation PR merged and closed the issue |
+| Not planned | none | none; the issue was closed as not planned |
+
+**Assignment means one thing: someone is working the issue right now.** Only
+the two "being written" stages carry an assignee. Never leave one standing as a
+soft reservation, and never trust it as the only claim signal.
 
 - **Pick up**: choose an open issue that is unassigned **and** has no open PR
-  claiming it. That check is two-pronged, because design PRs don't create a
-  closing link: (1) `closingIssuesReferences` on open PRs / the issue's
-  Development panel (implementation PRs), and (2) open PRs whose title/body
-  mention `#NNN` and carry a design doc for it. Assignment is dropped when a
-  PR opens, so "unassigned" alone does not mean free. Then assign yourself and
-  set Status → **In progress**.
-- **Re-verify before building**: issue bodies go stale — renames, moved files,
-  callers added since filing. Re-run the blast-radius search against current
-  `main` before implementing, and comment corrections on the issue (see #300:
-  filed against `isMinor`/3 callers, fixed as `isYouth`/10 callers).
-- **PR open**: set Status → **In review** and **unassign the issue**. The next
-  action belongs to reviewers, not the author; a standing assignment would
-  claim work that isn't happening. The open PR is what marks the issue as
-  taken. How the PR references the issue depends on what it is:
-  - **Implementation PR**: a closing keyword — `Fixes #NNN`, `Closes #NNN`,
-    or `Resolves #NNN` (all three work) — and confirm the link registered via
-    `closingIssuesReferences`.
+  claiming it. Check for a claiming PR two ways, because a design PR creates no
+  closing link: (1) `closingIssuesReferences` on open PRs, or the issue's
+  Development panel, finds implementation PRs; (2) open PRs whose title or body
+  mention `#NNN` and carry a design doc for it. Assignment is dropped when a PR
+  opens, so "unassigned" alone does not mean free. Then assign yourself, whether
+  you are writing the design or the implementation.
+- **Re-verify before building**: issue bodies go stale. A function may have been
+  renamed, a file moved, or callers added since filing. Re-run the blast-radius
+  search against current `main` before implementing, and comment any
+  corrections on the issue.
+- **PR open**: **unassign the issue**, on either leg. The next action belongs to
+  reviewers, not the author, and a standing assignment would claim work that
+  isn't happening. The open PR is what marks the issue as taken. How the PR
+  references the issue depends on its leg:
   - **Design-doc PR**: reference the issue WITHOUT a closing keyword (plain
     `#NNN`, "Design for #NNN"). A closing link here would auto-close the
     issue when the doc merges, with nothing implemented.
-- **Merge**: an implementation PR needs nothing manual — the closing keyword
-  closes the issue and the project's built-in workflows (Item closed / Pull
-  request merged) set Status → Done. A merged design-doc PR leaves the issue
-  open: set Status back to **Ready** for implementation pickup.
-
-Project-field writes need the `project` token scope; if GraphQL returns
-INSUFFICIENT_SCOPES, have the user run `gh auth refresh -s project`.
+  - **Implementation PR**: a closing keyword — `Fixes #NNN`, `Closes #NNN`,
+    or `Resolves #NNN` (all three work) — and confirm the link registered via
+    `closingIssuesReferences`. Without it the merge closes nothing.
+- **Changes requested**: the issue stays unassigned while the author revises.
+  The open PR still marks it as taken. Retargeting, rebasing, splitting or
+  stacking a PR doesn't change the stage either.
+- **Merge**: a merged design PR leaves the issue open and unassigned, ready for
+  implementation pickup. A merged implementation PR closes the issue through
+  its closing keyword.
+- **Rework**: if a PR closes unmerged and the work must be redone, or the
+  implementation shows a merged design is wrong, the issue goes back to the
+  matching "being written" stage. Comment on the issue saying what was
+  abandoned and why; nothing else records that a second pass happened.
+- **Done is final**: a regression in shipped work is a new issue that
+  references the old one, never a reopen.
+- **Not doing it**: when we decide not to do an issue, close it as not
+  planned, with a comment giving the reason.
+- **Priority**: never set an issue's Priority to Urgent. Urgent means a person
+  has decided the issue jumps the queue, so it is a human's call; an agent may
+  propose it in a comment.
+- **Record linkage**: when an issue relates to another issue or a PR (it
+  supersedes or duplicates it, is superseded by or blocked on it, or is the PR
+  that will close it), say so in a comment on the issue. An issue whose only
+  implementation PR closed unmerged looks, from its assignee and PRs alone,
+  like one nobody has touched; the comment is how the stale claim gets caught.
+- **Stamp agent comments**: anything an agent writes on an issue or a PR ends
+  with a line naming the agent that wrote it, `_Posted by <agent>._`, so a
+  reader can tell a machine's reading of the code from a person's decision.
 
 ## Your own open PRs
 
@@ -278,6 +310,15 @@ on the thread. Do not leave it and start something else.
   reads as feedback evasion, and it costs the reviewer the same work twice.
 - Same rule for a finding already **rejected**. Re-raising it needs new evidence
   named in the body, not a new PR number.
+- **A later release waits for the earlier one to reach prod.** When a design
+  names releases that must reach prod in a set order, such as code that stops
+  reading a column and then a later `DROP COLUMN`, the later release's PR
+  stays unopened or in draft until the earlier PR has merged and a published
+  release has deployed it to prod. Merging to `main` deploys only dev; prod
+  deploys from a published release, so every PR merged since the last release
+  reaches prod at once, and two ordered PRs merged before the same release
+  lose their order. A draft opened early is based on `main`, not on the
+  earlier PR's branch.
 
 ## AI review and approval
 

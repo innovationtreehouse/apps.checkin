@@ -159,11 +159,22 @@ describe('bulk-donation field-stripping (comment rules)', () => {
             inventoryLoadFailureReason: null,
             qbFirstFailedAt: '2026-10-03T00:00:00.000Z',
             qbLastError: 'QuickBooks 500',
-            lines: [{ id: 5, gtin13: null, description: 'Bench vise', quantity: 2, valueCents: 2500, suggestedValueCents: null, quickBooksAccountId: null }],
+            capitalReviewNeeded: true,
+            lines: [{
+                id: 5, gtin13: null, description: 'Bench vise', quantity: 2, valueCents: 2500, suggestedValueCents: null, quickBooksAccountId: null,
+                isCapital: true, depreciationYears: 5, capitalBucketId: 4, capitalDecidedAt: '2026-10-04T00:00:00.000Z', registeredAt: null,
+            }],
             events: [{ id: 8, eventType: 'IN_KIND_MONEY_RECEIVED', actorUsername: null, occurredAt: '2026-10-02T00:00:00.000Z', payload: null }],
         };
         const donor = { donorFirstName: 'Pat', donorLastName: 'Doe', donorCompanyName: 'Acme' };
-        const row = { ...page, ...donor, orgId: 'treehouse', uploadedByUserId: 9, events: [{ ...page.events[0], actorUserId: 9 }] };
+        const row = {
+            ...page,
+            ...donor,
+            orgId: 'treehouse',
+            uploadedByUserId: 9,
+            lines: [{ ...page.lines[0], donorLastName: 'Doe', capitalDecidedByUserId: 9 }],
+            events: [{ ...page.events[0], actorUserId: 9 }],
+        };
         expect(stripValue('InKindGiftDetailView', row, FINANCE_VIEW, ctx())).toEqual({ ...page, ...donor });
         expect(stripValue('InKindGiftDetailView', row, INTERNAL_ONLY, ctx())).toEqual(page);
     });

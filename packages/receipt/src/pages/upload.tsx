@@ -1,8 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useViewer } from "@checkin/component-ui";
-import { notifications } from "@mantine/notifications";
+import { showError, useViewer } from "@checkin/component-ui";
 import {
   ActionIcon,
   Button,
@@ -106,7 +105,7 @@ export default function UploadPage() {
     if (!file || currencyError) return;
     const missing = mode === "manual" ? missingDetails({ retailer, receiptDate, receiptTotalCents: total === "" ? null : total }) : [];
     if (missing.length > 0) {
-      notifications.show({ title: "Receipt not uploaded", message: `Fill in the ${listWords(missing)}.`, color: "red", autoClose: false });
+      showError(`Fill in the ${listWords(missing)}.`, { title: "Receipt not uploaded" });
       return;
     }
     const data = {
@@ -145,7 +144,7 @@ export default function UploadPage() {
       const receipt = await upload<{ id: string }>(form);
       router.push(`/receipts/${receipt.id}`);
     } catch (err) {
-      notifications.show({ title: "Upload failed", message: errorMessage(err), color: "red", autoClose: false });
+      showError(errorMessage(err), { title: "Upload failed" });
     } finally {
       setBusy(false);
     }

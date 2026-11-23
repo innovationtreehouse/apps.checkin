@@ -1,5 +1,5 @@
 import { catalogSettingsMessage, httpError, isServiceError } from "@checkin/component-kit";
-import { formatGtinDisplay, isValidGtin13 } from "@checkin/gtin";
+import { formatGtinDisplay, isProvisionalGtin13, isValidGtin13 } from "@checkin/gtin";
 import {
   catalogCheckReferencesSchema,
   catalogItemReferenceProposalSchema,
@@ -7,10 +7,10 @@ import {
   catalogReferenceConflictSchema,
 } from "@checkin/receipt-types";
 import { z } from "zod";
-import { activeCatalogItemSchema, createdIdSchema, gtin13Schema, refCheckResultSchema } from "../contract";
+import { activeCatalogItemSchema, createdIdSchema, gtin13Schema, orgProvisionalItemSchema, refCheckResultSchema } from "../contract";
 import { tryAutoProceedApply } from "../lib/auto-proceed";
 import { ports, requireActor } from "../runtime";
-import type { ReceivedReceiptLineStatusRow } from "../db/schema";
+import type { NewWorkflowAuditEvent, ReceivedReceiptLineStatusRow } from "../db/schema";
 import { loadEditableLine, updateEditableLine } from "./receiptLookup";
 
 export const AssociateBodySchema = z.object({
@@ -60,8 +60,11 @@ export const lineItemService = {
   /**
    * CI3: optimistic association. The line is recognized with the manager's GTIN at once; a
    * reference proposal and any conflict reports go to the catalog without gating the receipt.
-   * The GTIN must name an approved, non-archived catalog item: 400 if malformed, 404 if none.
-   * A line already recognized with the same GTIN and factor is left as it is: no write, event or proposal.
+   * The GTIN must name an approved, non-archived catalog item, or one of the org's provisional
+   * parts that is pending or catalog-rejected (a local-only part): 400 if malformed, 404 if none,
+   * 409 for a provisional part the catalog resolved to a real one. A provisional part takes no
+   * reference proposal or conflict report. A line already on the same GTIN and factor is left as
+   * it is: no write, event or proposal.
    */
   async associateGtin(receiptId: number, lineId: number, body: AssociateBody): Promise<void> {
     const actor = await requireActor();
@@ -72,10 +75,42 @@ export const lineItemService = {
     const conversionFactor = body.conversionFactor ?? 1;
     const edit = await loadEditableLine(receiptId, lineId);
     const { received, lineItem, receipt } = edit;
+    const provisional = isProvisionalGtin13(gtin13);
     const alreadyAssociated = (line: ReceivedReceiptLineStatusRow) =>
-      line.recognitionStatus === "recognized" && line.assignedGtin13 === gtin13 && line.conversionFactor === conversionFactor;
+      (provisional
+        ? line.recognitionStatus === "provisional" && line.provisionalItemGtin13 === gtin13
+        : line.recognitionStatus === "recognized" && line.assignedGtin13 === gtin13) &&
+      line.conversionFactor === conversionFactor;
     if (alreadyAssociated(edit.lineStatus)) return;
     const { catalogReader, catalogSubmissions } = ports();
+    const audit: NewWorkflowAuditEvent = {
+      orgId: received.orgId,
+      actorUserId: actor.id,
+      actorUsername: actor.name,
+      eventType: "line_associated",
+      receivedReceiptId: receiptId,
+      lineStatusId: lineId,
+      details: JSON.stringify({ gtin13 }),
+    };
+
+    if (provisional) {
+      const part = await viaCatalog(async () => orgProvisionalItemSchema.parse(await catalogReader.getOrgProvisionalItem(gtin13)));
+      if (!part) throw httpError(404, `No catalog item has Part ID ${formatGtinDisplay(gtin13)}`);
+      if (part.resolvedToGtin13) {
+        throw httpError(409, `${formatGtinDisplay(gtin13)} is now ${formatGtinDisplay(part.resolvedToGtin13)}; pick that part instead`);
+      }
+      // Manual association: the human-entered factor is authoritative; version 1.
+      const written = await updateEditableLine(edit, {
+        recognitionStatus: "provisional",
+        assignedGtin13: null,
+        provisionalItemGtin13: gtin13,
+        proposedName: part.proposedName,
+        conversionFactor,
+        conversionVersion: 1,
+      }, audit, alreadyAssociated);
+      if (written) await tryAutoProceedApply(receiptId, received, actor);
+      return;
+    }
 
     const item = await viaCatalog(async () => activeCatalogItemSchema.parse(await catalogReader.getActiveItem(gtin13)));
     if (!item) throw httpError(404, `No catalog item has Part ID ${formatGtinDisplay(gtin13)}`);
@@ -165,15 +200,7 @@ export const lineItemService = {
       proposedName: null,
       conversionFactor,
       conversionVersion: 1,
-    }, {
-      orgId: received.orgId,
-      actorUserId: actor.id,
-      actorUsername: actor.name,
-      eventType: "line_associated",
-      receivedReceiptId: receiptId,
-      lineStatusId: lineId,
-      details: JSON.stringify({ gtin13 }),
-    }, alreadyAssociated);
+    }, audit, alreadyAssociated);
 
     if (written) await tryAutoProceedApply(receiptId, received, actor);
   },

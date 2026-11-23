@@ -349,7 +349,7 @@ describe('AuditLog Integration Tests', () => {
 
         const req = new Request('http://localhost:4000/api/roles', {
             method: 'PATCH',
-            body: JSON.stringify({ targetUserId: target.id, isKeyholder: true }),
+            body: JSON.stringify({ targetUserId: target.id, isKeyholder: true, acknowledgeCheck: true }),
         });
 
         const res = await updateRoles(req as never);

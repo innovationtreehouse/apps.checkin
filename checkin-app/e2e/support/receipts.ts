@@ -1,6 +1,6 @@
 /** Receipt setup over HTTP, for specs whose subject is a later page than the upload, and the step that resolves one in the browser. */
 import { expect, type Page } from "@playwright/test";
-import { api, BASE, differentPurchases, type Session } from "../../flow-tests/helpers";
+import { api, BASE, differentPurchases, untilRead, type Session } from "../../flow-tests/helpers";
 
 export interface UploadedReceipt { id: string; state: string }
 
@@ -14,11 +14,11 @@ async function postUpload(s: Session, text: string, data?: unknown): Promise<Upl
   form.append("file", new Blob([text], { type: "text/plain" }), "receipt.txt");
   if (data !== undefined) form.append("data", JSON.stringify(data));
   const req = new Request(BASE, { method: "POST", body: form });
-  const res = await api<UploadedReceipt>(s, "/api/receipts/upload", {
+  const res = await untilRead(s, await api<UploadedReceipt>(s, "/api/receipts/upload", {
     method: "POST",
     body: await req.arrayBuffer(),
     headers: { "content-type": req.headers.get("content-type") ?? "" },
-  });
+  }));
   if (res.status !== 200) throw new Error(`upload answered ${res.status}: ${JSON.stringify(res.json)}`);
   return res.json;
 }
@@ -42,7 +42,7 @@ export function uploadManual(s: Session, retailer: string, lines: ManualLine[], 
   });
 }
 
-/** A receipt the local OCR mock reads; it reads every file as the same purchase. */
+/** A receipt the local OCR mock reads, answered once its reading has landed; it reads every file as the same purchase. */
 export const uploadForReading = (s: Session, text: string) => postUpload(s, text);
 
 /** An OCR-read receipt waiting on its submitter's review; FINANCE decides a duplicate hold an earlier read caused as different purchases. */

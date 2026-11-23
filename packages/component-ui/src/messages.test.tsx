@@ -84,6 +84,13 @@ describe("showWarning", () => {
     wait(60_000);
     expect(shown()).toMatchObject([{ id: "seats", message: "One seat left", title: "Roster", color: "yellow" }]);
   });
+
+  it("goes away by itself when given autoClose", () => {
+    act(() => showWarning("Mail intake is already running", { autoClose: 4000 }));
+    expect(shown()).toMatchObject([{ color: "yellow" }]);
+    wait(5000);
+    expect(shown()).toEqual([]);
+  });
 });
 
 describe("clearError", () => {

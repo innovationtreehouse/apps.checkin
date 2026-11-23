@@ -1,6 +1,5 @@
 import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
-import { logBackendError } from "@/lib/logger";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { ReviewError, applicantHousehold, reviewHouseholds, wrongPersonClosedAt } from "@/lib/membership/review";
 import { reviewHoldsRejection } from "@/lib/membership/checkStanding";
@@ -10,7 +9,7 @@ import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { personActor, type AuditActor } from "@/lib/auditActor";
 import { type TxClient } from "@/lib/db-client";
 import { lockHouseholdRows } from "@/lib/household/archiveGuard";
-import { reopenYearRefusal } from "@/lib/programYear";
+import { liveMembershipYear, reopenYearRefusal } from "@/lib/programYear";
 
 // Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
 const settleModule = () => import("@/lib/membership/settleHouseholdBg");
@@ -151,9 +150,8 @@ export async function closeForRestore(
  * second joining application; a household application is reopened only within its
  * own membership year. Person-scoped kinds allow one open item per subject.
  */
-async function reopenRefusal(tx: Prisma.TransactionClient, process: OrgMembershipProcess, householdId: number | null): Promise<string | null> {
-    const settings = await tx.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-    const yearRefusal = reopenYearRefusal(process.kind, process.createdAt, settings?.orgMembershipYearBoundary, new Date());
+async function reopenRefusal(tx: Prisma.TransactionClient, process: OrgMembershipProcess, householdId: number | null, boundary: Date | null | undefined): Promise<string | null> {
+    const yearRefusal = reopenYearRefusal(process.kind, process.createdAt, boundary, new Date());
     if (yearRefusal) return yearRefusal;
 
     const membership = householdId == null ? null : await tx.orgMembership.findUnique({ where: { householdId }, select: { status: true } });
@@ -215,7 +213,8 @@ const FORGET_SIGNING_REQUEST = { zohoEnvelopeId: null, zohoActionId: null, zohoS
  * signature made while closed and re-runs the external advance so a gate met while
  * closed doesn't strand the application. When the household was denied since the
  * close, the unsigned signing request is forgotten in the reopen write instead, and
- * the family signs again. The households it touches are then settled on their
+ * the family signs again. A household row closed with a payment and no year reopens
+ * with the year its payment falls in. The households it touches are then settled on their
  * people's check standing, which may block it or open its check review.
  */
 export async function unarchiveApplication(processId: number, actorId: number) {
@@ -239,14 +238,20 @@ export async function unarchiveApplication(processId: number, actorId: number) {
             if (process.kind === "PERSON_BG" && await wrongPersonClosedAt(tx, processId)) {
                 throw new ReviewError("wrong_phase", "The Board closed this check review as opened for the wrong person. Reopen it with a reason instead.");
             }
-            const refusal = await reopenRefusal(tx, process, householdId);
+            const settings = await tx.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+            const refusal = await reopenRefusal(tx, process, householdId, settings?.orgMembershipYearBoundary);
             if (refusal) throw new ReviewError("wrong_phase", refusal);
             const forgotRequest = householdId != null && process.zohoEnvelopeId != null && process.contractSignedAt == null
                 && await deniedSinceClose(tx, processId, householdId);
+            // A row closed with a payment and no year gets the year its payment falls in, as a payment stamps it.
+            const paidYear = process.paidAt && process.appliesToYear == null && (HOUSEHOLD_KINDS as readonly string[]).includes(process.kind)
+                ? liveMembershipYear(settings?.orgMembershipYearBoundary, process.paidAt)
+                : null;
+            const yearFill = paidYear == null ? {} : { appliesToYear: paidYear };
 
             const { count } = await tx.orgMembershipProcess.updateMany({
                 where: { id: processId, ...fromWhere("ARCHIVED") },
-                data: { status: target, archivedFromStatus: null, stageEnteredAt: new Date(), ...(forgotRequest ? FORGET_SIGNING_REQUEST : {}) },
+                data: { status: target, archivedFromStatus: null, stageEnteredAt: new Date(), ...yearFill, ...(forgotRequest ? FORGET_SIGNING_REQUEST : {}) },
             });
             if (count !== 1) return null; // a concurrent reopen won; it wrote the audit row
             await tx.auditLog.create({
@@ -256,7 +261,7 @@ export async function unarchiveApplication(processId: number, actorId: number) {
                     tableName: "OrgMembershipProcess",
                     affectedEntityId: processId,
                     oldData: { status: "ARCHIVED", ...(forgotRequest ? { zohoEnvelopeId: process.zohoEnvelopeId, zohoActionId: process.zohoActionId, zohoSignerPersonId: process.zohoSignerPersonId } : {}) },
-                    newData: { status: target, unarchived: true, ...(forgotRequest ? { ...FORGET_SIGNING_REQUEST, reason: "household denied since close" } : {}) },
+                    newData: { status: target, unarchived: true, ...yearFill, ...(forgotRequest ? { ...FORGET_SIGNING_REQUEST, reason: "household denied since close" } : {}) },
                 },
             });
             return { forgotRequest };
@@ -269,13 +274,9 @@ export async function unarchiveApplication(processId: number, actorId: number) {
         throw e;
     }
     if (reopened && !reopened.forgotRequest) await pickUpMissedSignature(process);
-    const { settleHouseholdBg } = await settleModule();
+    const { settleAfterEvent } = await settleModule();
     for (const id of await reviewHouseholds(prisma, process)) {
-        try {
-            await settleHouseholdBg(id);
-        } catch (error) {
-            await logBackendError(error, "household background-check settle after reopen", { householdId: id, processId });
-        }
+        await settleAfterEvent(id, "reopen", {}, { processId });
     }
     const advanced = await advanceExternalIfComplete(processId);
     return { status: advanced?.status ?? target };

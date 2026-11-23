@@ -1,6 +1,6 @@
 /**
  * QuickBooks rows for the System Status page: the connection, the books closing date, the account
- * types of the books map and of every other stored pick, the age of the app's copy of QuickBooks' lists, the buckets' Classes, and whether each posting lane is bound. Reads live (token, closing date) only when the page
+ * types of the books map and of every other stored pick, the age of the app's copy of QuickBooks' lists, the buckets' Classes, whether each posting lane is bound, and the posting slot: who holds it, the queue, each lane's last run, the throttle pause and today's request count. Reads live (token, closing date) only when the page
  * asks, cached briefly, each under a short timeout, so a QuickBooks outage cannot hang it.
  * Never names a realm id, token or secret. Not counted in the nav badge, which stays a
  * presence check with no network read.
@@ -11,6 +11,9 @@ import { message, withTimeout, type ConfigCheck } from "@/lib/configHealth";
 import { tryBuildQuickBooks } from "@/lib/quickbooks/client";
 import { quickBooksPicksCheck } from "@/lib/quickbooks/picksHealth";
 import { bucketClassesCheck } from "@/lib/finance/bucketClassCheck";
+import type { LastRun, PostingLane } from "@/lib/finance/postingRuns";
+import type { PostingSlotStatus } from "@/lib/finance/quickBooksPosting";
+import { formatDateTime } from "@/lib/time";
 
 const CACHE_MS = 60_000;
 
@@ -174,7 +177,69 @@ async function laneChecks(): Promise<ConfigCheck[]> {
     return Promise.all(lanes.map((lane) => laneCheck(lane, orgId)));
 }
 
+const LANES: PostingLane[] = ["expense", "in-kind", "income"];
+const LANE_LABEL: Record<PostingLane, string> = { expense: "expenses", "in-kind": "gifts of goods", income: "income" };
+const CAP_LABEL: Record<NonNullable<LastRun["capped"]>, string> = { count: "the per-run limit", day: "the daily limit", cents: "the per-run amount limit" };
+const ENDED_LABEL: Record<LastRun["ended"], string> = { done: "finished", yielded: "yielded to a QuickBooks throttle", crashed: "failed", expired: "lapsed without releasing the slot" };
+/** The posting slot's rows, from its status, with times in `timeZone`. A lane's last-run row is red while it carries a warning. */
+export function postingRows(s: PostingSlotStatus, timeZone: string): ConfigCheck[] {
+    const when = (d: Date | string) => formatDateTime(d, { timeZone, dateStyle: "medium", timeStyle: "short" });
+    const queued = s.waiting.map((w) => `${LANE_LABEL[w.lane]} (asked by ${w.requestedById === null ? "the daily run" : `person ${w.requestedById}`}, ${when(w.requestedAt)})`);
+    const stranded = s.heldBy === null && queued.length > 0;
+    const warnings = new Map(s.warnings.map((w) => [w.lane, w.text]));
+    const runs = LANES.flatMap((l): ConfigCheck[] => {
+        const run = s.lastRuns[l];
+        if (!run) return [];
+        const cap = run.capped ? `; stopped by ${CAP_LABEL[run.capped]}` : "";
+        const summary = `Ended ${when(run.endedAt)}: ${ENDED_LABEL[run.ended]}; created ${run.created}, matched ${run.matched}${cap}.`;
+        const warning = warnings.get(l);
+        return [{ id: `quickbooks-posting-run-${l}`, label: `QuickBooks posting: last ${LANE_LABEL[l]} run`, ok: !warning, detail: warning ? `${warning} ${summary}` : summary }];
+    });
+    return [
+        {
+            id: "quickbooks-posting-slot",
+            label: "QuickBooks posting slot",
+            ok: true,
+            detail: s.heldBy && s.until ? `Held by the ${LANE_LABEL[s.heldBy]} run until ${when(s.until)}.` : "Free.",
+        },
+        {
+            id: "quickbooks-posting-queue",
+            label: "QuickBooks posting queue",
+            ok: !stranded,
+            detail: queued.length === 0
+                ? "Empty."
+                : stranded
+                  ? `Stranded: the last run stopped without finishing, and ${queued.join("; ")} wait. Finance's Catch up restarts them, or they run with tonight's posting.`
+                  : `Waiting: ${queued.join("; ")}.`,
+        },
+        ...runs,
+        {
+            id: "quickbooks-posting-pause",
+            label: "QuickBooks throttle pause",
+            ok: true,
+            detail: s.pausedUntil ? `QuickBooks asked us to slow down; requests resume at ${when(s.pausedUntil)}.` : "None in force.",
+        },
+        {
+            id: "quickbooks-posting-requests",
+            label: "QuickBooks requests today",
+            ok: true,
+            // ponytail: this server process's count; the monthly allowance (Builder tier, 500,000 calls) is watched by hand.
+            detail: `${s.requestsToday} today (UTC) from this server. Intuit's Builder tier allows 500,000 a month.`,
+        },
+    ];
+}
+
+async function postingChecks(): Promise<ConfigCheck[]> {
+    try {
+        const [{ postingSlotStatus }, { resolveDisplayTimezone }] = await Promise.all([import("@/lib/finance/quickBooksPosting"), import("@/lib/appSettings")]);
+        const [status, timeZone] = await Promise.all([withTimeout(postingSlotStatus(), "The posting slot read"), resolveDisplayTimezone()]);
+        return postingRows(status, timeZone);
+    } catch (err) {
+        return [{ id: "quickbooks-posting-slot", label: "QuickBooks posting slot", ok: false, detail: `Could not read it: ${message(err)}.` }];
+    }
+}
+
 async function computeQuickBooksHealth(): Promise<ConfigCheck[]> {
-    const [connection, lists, picks, buckets, lanes] = await Promise.all([connectionChecks(), listsCheck(), quickBooksPicksCheck(), bucketClassesCheck(), laneChecks()]);
-    return [...connection, lists, picks, buckets, ...lanes];
+    const [connection, lists, picks, buckets, lanes, posting] = await Promise.all([connectionChecks(), listsCheck(), quickBooksPicksCheck(), bucketClassesCheck(), laneChecks(), postingChecks()]);
+    return [...connection, lists, picks, buckets, ...lanes, ...posting];
 }

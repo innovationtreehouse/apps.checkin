@@ -76,6 +76,23 @@ export async function api<T = unknown>(
     return { status: res.status, json: json as T };
 }
 
+const READING_STATES = ["ocr_queued", "auto_upload"];
+
+/**
+ * A receipt upload's answer once its background reading has landed: the receipt re-read until it
+ * leaves the reading states, for up to 60 seconds. Any other answer is returned as it is.
+ */
+export async function untilRead<T extends { id: string; state: string }>(s: Session | null, res: { status: number; json: T }): Promise<{ status: number; json: T }> {
+    if (res.status !== 200 || !READING_STATES.includes(res.json.state)) return res;
+    const until = Date.now() + 60_000;
+    for (;;) {
+        await new Promise((r) => setTimeout(r, 250));
+        const read = await api<T>(s, `/api/receipts/${res.json.id}`);
+        if (read.status !== 200 || !READING_STATES.includes(read.json.state)) return read;
+        if (Date.now() > until) throw new Error(`receipt ${res.json.id} still ${read.json.state} after 60 s`);
+    }
+}
+
 /**
  * Finance's Different purchases on a held receipt: reads its duplicate group and sends the live
  * members as the ids shown, as the compare panel does.

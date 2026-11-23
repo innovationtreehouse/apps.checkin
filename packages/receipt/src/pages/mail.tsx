@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Alert, Button, Group, Modal, Paper, Stack, Table, Text, TextInput, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { showError, showSuccess } from "@checkin/component-ui";
 import MailCatchUp from "../components/MailCatchUp";
 import ReceiptFile from "../components/ReceiptFile";
 import { BASE, send, useLoad } from "../components/api";
@@ -56,11 +56,8 @@ function ReleaseAllButton({ ids, label, onDone }: { ids: number[]; label: string
     setTried(null);
     setConfirming(false);
     const summary = `Released ${out.released}, skipped ${out.skipped}`;
-    notifications.show(
-      out.error
-        ? { color: "red", autoClose: false, message: `${summary}. Stopped: ${out.error}. ${out.notReached} not tried.` }
-        : { color: "green", message: `${summary}.` },
-    );
+    if (out.error) showError(`${summary}. Stopped: ${out.error}. ${out.notReached} not tried.`);
+    else showSuccess(`${summary}.`);
     onDone();
   };
   const running = tried !== null;

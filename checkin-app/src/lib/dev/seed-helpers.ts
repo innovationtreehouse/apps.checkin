@@ -5,7 +5,7 @@ import { systemActor } from "@/lib/auditActor";
 import { programNameFields } from "@/lib/programs/nameKey";
 import { createKva, currentKvaVersion, findOpenKva, hasSignedCurrentKva } from "@/lib/membership/keyVolunteerProcess";
 import { mintPersonId } from "@/lib/person/mintId";
-import { withTx } from "@/lib/db-client";
+import { withTx, type DbClient, type TxClient } from "@/lib/db-client";
 import { nextBoundary, programYearsTouched } from "@/lib/programYear";
 import { orgCalendarDay } from "@/lib/time";
 import { normalizePhone } from "@/lib/phone";
@@ -363,16 +363,10 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     }
 
     // 4. Tools & certifications
-    const tableSaw = await prisma.tool.upsert({
-        where: { id: 1 },
-        update: { name: "Table Saw" },
-        create: { name: "Table Saw", safetyGuide: "https://example.com/table-saw-safety" },
-    });
-    const drillPress = await prisma.tool.upsert({
-        where: { id: 2 },
-        update: { name: "Drill Press" },
-        create: { name: "Drill Press", safetyGuide: "https://example.com/drill-press-safety" },
-    });
+    const tool = async (name: string, safetyGuide: string) =>
+        (await prisma.tool.findFirst({ where: { name } })) ?? prisma.tool.create({ data: { name, safetyGuide } });
+    const tableSaw = await tool("Table Saw", "https://example.com/table-saw-safety");
+    const drillPress = await tool("Drill Press", "https://example.com/drill-press-safety");
     await prisma.toolStatus.upsert({
         where: { personId_toolId: { personId: certifiedAdult.id, toolId: tableSaw.id } },
         update: { level: "CERTIFIED" },
@@ -444,7 +438,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
 
 // A seeded program that crosses the boundary counts in its later year, which
 // prices it exactly as its end date would.
-async function seedProgramYear(prisma: Db, startAt: Date, endAt: Date): Promise<number> {
+async function seedProgramYear(prisma: DbClient, startAt: Date, endAt: Date): Promise<number> {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
     const boundary = settings?.orgMembershipYearBoundary;
     if (!boundary) throw new Error("Set the membership year boundary in Board settings before seeding programs.");
@@ -499,42 +493,47 @@ async function seedProgramSpread(prisma: Db): Promise<void> {
 
     for (const spec of specs) {
         if (await prisma.program.findFirst({ where: { name: spec.name } })) continue;
-        const { events, enroll, saleEnded, ...fields } = spec;
-        const program = await prisma.program.create({
+        // One transaction per program, so a failed write leaves no half-built program for the next run to skip.
+        await withTx(prisma, (tx) => seedSpreadProgram(tx, spec, leadId, youthIds));
+    }
+}
+
+async function seedSpreadProgram(tx: TxClient, spec: SeedProgram, leadId: number, youthIds: number[]): Promise<void> {
+    const { events, enroll, saleEnded, ...fields } = spec;
+    const program = await tx.program.create({
+        data: {
+            ...fields,
+            ...programNameFields(fields.name),
+            leadMentorId: leadId,
+            appliesToYear: await seedProgramYear(tx, spec.startAt, spec.endAt),
+            maxParticipants: spec.maxParticipants ?? 20,
+            saleEndedAt: saleEnded ? (spec.offSaleAt ?? spec.startAt) : null,
+        },
+    });
+    if (enroll) {
+        await tx.programParticipant.createMany({
+            data: youthIds.map((personId) => ({ programId: program.id, personId, status: "ACTIVE" as const })),
+        });
+    }
+    for (const offset of events) {
+        const startAt = new Date(day(offset).getTime() + 17 * 60 * 60 * 1000);
+        const endAt = new Date(startAt.getTime() + 2 * 60 * 60 * 1000);
+        const past = endAt.getTime() < Date.now();
+        const event = await tx.event.create({
             data: {
-                ...fields,
-                ...programNameFields(fields.name),
-                leadMentorId: leadId,
-                appliesToYear: await seedProgramYear(prisma, spec.startAt, spec.endAt),
-                maxParticipants: spec.maxParticipants ?? 20,
-                saleEndedAt: saleEnded ? (spec.offSaleAt ?? spec.startAt) : null,
+                name: `${spec.name} session`,
+                programId: program.id,
+                startAt,
+                endAt,
+                // Finished programs have their attendance confirmed; a running one leaves it to the lead.
+                attendanceConfirmedAt: past && spec.phase === "FINISHED" ? endAt : null,
+                attendanceConfirmedById: past && spec.phase === "FINISHED" ? leadId : null,
             },
         });
-        if (enroll) {
-            await prisma.programParticipant.createMany({
-                data: youthIds.map((personId) => ({ programId: program.id, personId, status: "ACTIVE" as const })),
+        if (past && enroll) {
+            await tx.visit.createMany({
+                data: youthIds.map((personId) => ({ personId, arrivedAt: startAt, departedAt: endAt, associatedEventId: event.id })),
             });
-        }
-        for (const offset of events) {
-            const startAt = new Date(day(offset).getTime() + 17 * 60 * 60 * 1000);
-            const endAt = new Date(startAt.getTime() + 2 * 60 * 60 * 1000);
-            const past = endAt.getTime() < Date.now();
-            const event = await prisma.event.create({
-                data: {
-                    name: `${spec.name} session`,
-                    programId: program.id,
-                    startAt,
-                    endAt,
-                    // Finished programs have their attendance confirmed; a running one leaves it to the lead.
-                    attendanceConfirmedAt: past && spec.phase === "FINISHED" ? endAt : null,
-                    attendanceConfirmedById: past && spec.phase === "FINISHED" ? leadId : null,
-                },
-            });
-            if (past && enroll) {
-                await prisma.visit.createMany({
-                    data: youthIds.map((personId) => ({ personId, arrivedAt: startAt, departedAt: endAt, associatedEventId: event.id })),
-                });
-            }
         }
     }
 }

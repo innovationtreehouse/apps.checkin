@@ -8,8 +8,9 @@ import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
 import type { ReceiptPrincipal } from "../contract";
 import { getOrgId, ports, requireActor } from "../runtime";
-import { intakeDeferred, isRefusalNote, MAIL_CATCH_UP_BUDGET_MS, MAIL_CATCH_UP_CAP, mailRunState, startMailRun, STORED_STATUSES, type DmarcVerdict } from "./mailIntake";
-import { intakeMailedReceipt } from "./receiptService";
+import { intakeDeferred, isRefusalNote, MAIL_CATCH_UP_BUDGET_MS, MAIL_CATCH_UP_CAP, mailRunState, processCapturedMessage, startMailRun, STORED_STATUSES, type CapturedOutcome, type DmarcVerdict } from "./mailIntake";
+import { intakeMailedReceipt, readInBackground } from "./receiptService";
+import { settleMailedBody } from "./ocrDrain";
 import { closeUnreplyable } from "./mailReplies";
 import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
 import { ServiceError } from "@checkin/component-kit";
@@ -32,10 +33,10 @@ export const CANNOT_REMEMBER = "Only mail whose sender check passed can be remem
 
 type Tx = Prisma.TransactionClient | typeof db;
 
-/** One audit row about a mail item; it belongs to no receipt, so the item id rides in valueBefore. */
-const auditItem = (tx: Tx, actor: ReceiptPrincipal, itemId: number, action: string, valueAfter: string | null = null) =>
+/** One audit row about a mail item; it belongs to no receipt, so the item id rides in valueBefore. A null actor is a system step. */
+export const auditItem = (tx: Tx, actor: ReceiptPrincipal | null, itemId: number, action: string, valueAfter: string | null = null) =>
   tx.receiptAuditLog.create({
-    data: { receiptId: null, userId: actor.id, username: actor.name, action, fieldChanged: "mail_item", valueBefore: String(itemId), valueAfter },
+    data: { receiptId: null, userId: actor?.id ?? null, username: actor?.name ?? null, action, fieldChanged: "mail_item", valueBefore: String(itemId), valueAfter },
   });
 
 /** One audit row about the ignore list; it belongs to no receipt, so no receipt's audit view returns it. */
@@ -130,6 +131,7 @@ export const mailQueueService = {
     const { fileBlob: _file, fileKey: _key, ...shown } = item;
     if (release) {
       const receiptId = await intakeDeferred(item, assignee, { uploadLimits: false, onClaim: auditClaim });
+      void readInBackground(receiptId, assignee, () => settleMailedBody(receiptId));
       return { ...shown, status: "assigned", receiptId };
     }
     const receiptId = await intakeMailedReceipt(assignee, Buffer.from(item.fileBlob), item.mimeType, async (tx, newId) => {
@@ -146,6 +148,7 @@ export const mailQueueService = {
         ? (insert) => rememberAlias({ actorId: actor.id, personId: assignee.id, address: item.senderAddress, mailItemId: id }, insert)
         : undefined,
     });
+    void readInBackground(receiptId, assignee, () => settleMailedBody(receiptId));
     return { ...shown, status: "assigned", receiptId };
   },
 
@@ -265,5 +268,10 @@ export const mailQueueService = {
     if (run.status === "started") run.done.catch((err: unknown) => console.error("[receipt] mail catch-up run failed:", err));
     const { lastRunAt, lastRun } = await mailRunState();
     return { status: run.status, lastRunAt, lastRun };
+  },
+
+  /** Processes one captured email again from its stored copy, audited with who asked; the answer is the outcome alone. */
+  async replay(id: number): Promise<CapturedOutcome> {
+    return processCapturedMessage(id, await requireActor());
   },
 };

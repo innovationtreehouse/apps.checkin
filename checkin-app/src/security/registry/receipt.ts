@@ -110,6 +110,9 @@ defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/discard', authorize:
 // Finance's mail catch-up: POST starts one background intake pass under the mail lease; GET reads whether one is running and the last run's counts. FINANCE only, like the queue.
 defineRoute({ endpoint: 'GET /api/receipts/mail-items/catch-up', authorize: 'finance', envelope: null, returns: ['ReceiptMailCatchUp'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/catch-up', authorize: 'finance', envelope: null, returns: ['ReceiptMailCatchUp'], orderedView: FINANCE_VIEW });
+// Replay of one captured email from the stored copy, for the catch-up button's
+// people: FINANCE only. The answer is the outcome, never the email, its key or headers.
+defineRoute({ endpoint: 'POST /api/receipts/mail-messages/[id]/replay', authorize: 'finance', envelope: null, returns: ['ReceiptMailReplay'], orderedView: FINANCE_VIEW });
 
 // Mail aliases: the extra addresses a person's
 // receipt mail may come from. FINANCE and the BOARD list, add, remove and

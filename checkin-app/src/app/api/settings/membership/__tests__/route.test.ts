@@ -5,11 +5,13 @@ import { PUT } from '../route';
 import { getServerSession } from 'next-auth/next';
 import prisma from '@/lib/prisma';
 import { variantSlotYears } from '@/lib/programYear';
+import { settleApplicationsAwaitingCheck } from '@/lib/membership/settleHouseholdBg';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
+jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleApplicationsAwaitingCheck: jest.fn() }));
 
 const tx = {
-    boardSettings: { upsert: jest.fn(), findUniqueOrThrow: jest.fn() },
+    boardSettings: { findUnique: jest.fn(), upsert: jest.fn(), findUniqueOrThrow: jest.fn() },
     membershipYearVariant: { deleteMany: jest.fn(), createMany: jest.fn() },
     $executeRaw: jest.fn(),
     auditLog: { create: jest.fn() },
@@ -119,5 +121,35 @@ describe('PUT /api/settings/membership client marker', () => {
         expect((await res.json()).error).toMatch(/reload/i);
         expect(prisma.$transaction).not.toHaveBeenCalled();
         expect(tx.boardSettings.upsert).not.toHaveBeenCalled();
+    });
+});
+
+describe('PUT /api/settings/membership check yardstick', () => {
+    const boundary = new Date('2000-09-01T00:00:00.000Z');
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        tx.boardSettings.findUnique.mockResolvedValue({ bgRecheckMonths: 0, orgMembershipYearBoundary: boundary });
+        tx.membershipYearVariant.createMany.mockReset();
+        asUser({ isSysadmin: false, isBoardMember: true });
+    });
+
+    it('settles every waiting application when the recheck window changes', async () => {
+        tx.boardSettings.findUniqueOrThrow.mockResolvedValue({ id: 1, bgRecheckMonths: 27, orgMembershipYearBoundary: boundary });
+        expect((await put({ bgRecheckMonths: 27 })).status).toBe(200);
+        expect(settleApplicationsAwaitingCheck).toHaveBeenCalledWith('a Board settings change');
+    });
+
+    it('settles every waiting application when the year boundary changes', async () => {
+        const moved = new Date('2000-08-01T00:00:00.000Z');
+        tx.boardSettings.findUniqueOrThrow.mockResolvedValue({ id: 1, bgRecheckMonths: 0, orgMembershipYearBoundary: moved });
+        expect((await put({ orgMembershipYearBoundary: moved.toISOString() })).status).toBe(200);
+        expect(settleApplicationsAwaitingCheck).toHaveBeenCalledTimes(1);
+    });
+
+    it('settles nothing when a save leaves both as they were', async () => {
+        tx.boardSettings.findUniqueOrThrow.mockResolvedValue({ id: 1, bgRecheckMonths: 0, orgMembershipYearBoundary: new Date(boundary) });
+        expect((await put({ bgRecheckMonths: 0, standardMembershipFeeCents: 5000 })).status).toBe(200);
+        expect(settleApplicationsAwaitingCheck).not.toHaveBeenCalled();
     });
 });

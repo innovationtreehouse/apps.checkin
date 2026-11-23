@@ -43,6 +43,7 @@
     "@checkin/workflows": "*",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "postal-mime": "^2.7.4",
     "xstate": "^5.32.0",
     "zod": "^4.4.3"
   },

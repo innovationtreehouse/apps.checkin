@@ -153,6 +153,7 @@ const RECEIPT: Decided<receipt.ReceiptConfig> = {
   reimbursees: "port",
   alerts: "port",
   mailbox: "port",
+  rawMailRetentionDays: "setting",
   replies: "port",
   outcomeMail: "port",
   limits: "setting",
@@ -263,7 +264,8 @@ describe("boot wiring with a deployed instance's environment", () => {
   it("binds workflow mapping's crossings to expense intake, donations and the shared catalog", async () => {
     await boot();
     const config = lastConfig(workflowMapping.configureWorkflowMapping);
-    expect(config?.catalogReader).toBe(catalogReader);
+    expect(config?.catalogReader).toMatchObject(catalogReader);
+    expect(config?.catalogReader?.getOrgProvisionalItem).toEqual(expect.any(Function));
     expect(config?.catalogEventSource?.eventsSince).toBe(catalogEventsSince);
     expect(config?.expenseSink).toBe(expenseSink);
     expect(config?.donationSink?.ingestInKind).toBe(bulkDonation.ingestInKind);

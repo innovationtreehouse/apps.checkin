@@ -17,7 +17,7 @@ jest.mock("@/lib/orgMembership", () => ({ membershipValidThrough: jest.fn() }));
 jest.mock("@/lib/emailIdentity", () => ({ getEmailSenderIdentity: jest.fn().mockResolvedValue({ replyTo: null }) }));
 jest.mock("@/lib/prisma", () => ({
     __esModule: true,
-    default: { person: { findUnique: jest.fn() } },
+    default: { person: { findUnique: jest.fn() }, boardSettings: { findUnique: jest.fn() } },
 }));
 
 const VALID = new Date(Date.UTC(2026, 8, 1));

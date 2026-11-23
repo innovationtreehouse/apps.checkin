@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
+import prisma from "@/lib/prisma";
 import { householdLeadship } from "@/lib/household/leads";
 import { ensurePaymentLinkForUser, PaymentError } from "@/lib/membership/payment";
 import { apiError } from "@/lib/api-response";
@@ -8,7 +9,7 @@ import { paymentErrorResponse } from "@/lib/domainErrorResponse";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/membership/payment — the caller's membership fee amount + Shopify checkout link.
+// GET /api/membership/payment — the caller's membership fee amount, Shopify checkout link and the finance contact address.
 export const GET = withAuth({}, async (_req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
 
@@ -22,7 +23,11 @@ export const GET = withAuth({}, async (_req, auth) => {
     }
 
     try {
-        return NextResponse.json(await ensurePaymentLinkForUser(auth.user.id));
+        const [payment, settings] = await Promise.all([
+            ensurePaymentLinkForUser(auth.user.id),
+            prisma.boardSettings.findUnique({ where: { id: 1 }, select: { financeContactEmail: true } }),
+        ]);
+        return NextResponse.json({ ...payment, financeContactEmail: settings?.financeContactEmail?.trim() || null });
     } catch (error) {
         if (error instanceof PaymentError) {
             return paymentErrorResponse(error);

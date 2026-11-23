@@ -4,7 +4,7 @@
  * A count endpoint (GET /api/catalog/items/count) returns a scalar total that no
  * Prisma model carries, and handler()'s stripper drops any bag key that isn't a
  * known model. Declaring the count's shape here — merged into `classifications`
- * in core.ts alongside the two generated maps — lets the total ride the same
+ * in classificationSources.ts with every other source — lets the total ride the same
  * audited model-bag regime as every other response instead of bypassing it.
  *
  * `total` is `public`: it is a count of public reference data (how many catalog

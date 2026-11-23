@@ -1,35 +1,22 @@
 import prisma from "@/lib/prisma";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
-import { nextBoundary } from "@/lib/membership/renewal";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { personBgOpen } from "@/lib/membership/lifecycle";
-import { bgObligatedWhere } from "@/lib/person/filters";
+import { programAttachedWhere } from "@/lib/person/filters";
+import { checkValidForApplication } from "@/lib/membership/checkStanding";
 import { systemActor } from "@/lib/auditActor";
 
 /**
- * Triggers that OPEN a per-person background-check obligation (PERSON_BG process,
- * warn-only). Two triggers, both keyed on the SAME "who needs a check"
- * rule as the compliance dashboard: personBgVerdict === "NEEDED" over
- * bgObligatedWhere (program-attached ∪ leads of ACTIVE member households — Trigger
- * A is a daily cron over all Persons, so that membership bound is what keeps it off
- * the leads of imports, abandoned intakes and denials). Deliberately NOT
- * triggered by role-assignment: age is judged as-of a boundary, so someone who
- * turns 18 mid-year is caught at the next annual run, not when they take a role.
- */
-
-
-/**
- * Open one PERSON_BG obligation for `personId`, evaluated as of `asOf` (the annual
- * boundary for the cron, activation time for a new join; `threshold` is
- * bgFreshThreshold(asOf, bgRecheckMonths)). Idempotent + concurrency-safe: a FOR
- * UPDATE lock on the Person row serializes the check-then-insert (mirrors
- * createRenewalProcess in renewal.ts), so the daily cron and a near-cutoff
- * activation can't both open one.
+ * Open one PERSON_BG obligation for `personId`, evaluated as of `asOf` against
+ * `threshold`, the earliest check date that still counts. Idempotent +
+ * concurrency-safe: a FOR UPDATE lock on the Person row serializes the
+ * check-then-insert (mirrors createRenewalProcess in renewal.ts), so two
+ * activations racing can't both open one.
  *
  * Dedup guards: (b) opens nothing unless personBgVerdict === "NEEDED" — which
  * already encodes "≥18 as of asOf AND not fresh" (FRESH/MINOR/DOB_MISSING all
  * skip); (a) opens nothing if a PERSON_BG is already in flight or blocked for this
- * person (BLOCKED is a manual-followup item, not something to auto-reopen nightly).
+ * person (BLOCKED is a manual-followup item, not something to auto-reopen).
  * Returns the created process, or null when skipped.
  */
 export async function openPersonBg(personId: number, asOf: Date, threshold: Date) {
@@ -67,47 +54,26 @@ export async function openPersonBg(personId: number, asOf: Date, threshold: Date
 }
 
 /**
- * Trigger A — annual cohort. For every check-obligated person NEEDED as of the
- * membership-year boundary, open a PERSON_BG. Idempotent: re-running opens none
- * (dedup guard), so the cron is safe to run daily. Skips entirely when the board
- * hasn't set bgRecheckMonths (policy unset) or has no membership-year boundary.
- */
-export async function runPersonBgAnnualSweep(now: Date) {
-    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    const months = settings?.bgRecheckMonths;
-    if (!isRecheckPolicySet(months)) return { opened: 0, reason: "bgRecheckMonths not configured" };
-    if (!settings?.orgMembershipYearBoundary) return { opened: 0, reason: "no membership-year boundary configured" };
-
-    const boundary = nextBoundary(settings.orgMembershipYearBoundary, now);
-    const threshold = bgFreshThreshold(boundary, months);
-    const people = await prisma.person.findMany({ where: { ...bgObligatedWhere(now) }, select: { id: true } });
-
-    let opened = 0;
-    for (const p of people) {
-        const created = await openPersonBg(p.id, boundary, threshold);
-        if (created) opened++;
-    }
-    return { opened, boundary: boundary.toISOString() };
-}
-
-/**
- * Trigger C — new-member activation. When a brand-new membership (INITIAL) first
- * goes ACTIVE, open a PERSON_BG for each check-obligated person in that household
- * who is ≥18 as of activation and not fresh. Age is judged as-of `asOf` (join),
- * NOT the annual boundary — this is what catches a just-turned-18 joiner the
- * boundary run would still classify as a minor. The lead the INITIAL check named is
- * freshly stamped and skipped by the dedup guard; the lead it did not name is
- * exactly who this opens for. Population is bgObligatedWhere — the same set as
- * Trigger A / the dashboard (one source of "who needs a check"). No-op when
- * bgRecheckMonths is unset.
+ * New-member activation. When a brand-new membership (INITIAL) first goes ACTIVE,
+ * open a PERSON_BG for each program-attached person in that household who is ≥18 as
+ * of activation and whose check is not valid at the start of the membership year the
+ * join paid for (activation minus the interval when no boundary is set). Household
+ * leads are not opened for as leads: the household needs one lead's check, which its
+ * own application already decided. A lead who is also program-attached is still
+ * opened for. No-op when bgRecheckMonths is unset.
  */
 export async function openPersonBgForNewMember(householdId: number, asOf: Date) {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     const months = settings?.bgRecheckMonths;
     if (!isRecheckPolicySet(months)) return;
-    const threshold = bgFreshThreshold(asOf, months);
+    const activated = await prisma.orgMembershipProcess.findFirst({
+        where: { orgMembership: { householdId }, kind: "INITIAL", status: "ACTIVE" },
+        orderBy: { id: "desc" },
+        select: { appliesToYear: true },
+    });
+    const threshold = (await checkValidForApplication({ appliesToYear: activated?.appliesToYear ?? null, createdAt: asOf })) ?? bgFreshThreshold(asOf, months);
     const people = await prisma.person.findMany({
-        where: { householdId, ...bgObligatedWhere(asOf) },
+        where: { householdId, household: { archivedAt: null }, ...programAttachedWhere(asOf) },
         select: { id: true },
     });
     for (const p of people) await openPersonBg(p.id, asOf, threshold);

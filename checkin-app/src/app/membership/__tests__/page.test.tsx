@@ -2,7 +2,7 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn() } }));
 // Renders the real panel and records its props, so a test can call onSave/onSubmit past disabled buttons.
 jest.mock("../IntakePanel", () => {
   const { createElement } = jest.requireActual<typeof import("react")>("react");
@@ -196,6 +196,26 @@ describe("membership page", () => {
 
     expect(await screen.findByText("$125.00", { exact: false })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Pay here with Shopify/ })).toHaveAttribute("href", "https://shop.example/checkout");
+  });
+
+  it.each([
+    ["shows the finance contact address as a mailto link when it is set", "finance@example.org"],
+    ["shows no finance address when the setting is unset", null],
+  ])("%s", async (_name, financeContactEmail) => {
+    setSession({ id: 1 });
+    mockFetchJson({
+      "/api/membership/payment": { amountCents: 12500, checkoutUrl: "https://shop.example/checkout", financeContactEmail },
+      "/api/membership": state({ process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" }, external: { contractSigned: true, contractStarted: true, checkStarted: true, bgCleared: true, deepLinkUrl: null } }),
+    });
+    renderWithProviders(<MembershipPage />);
+
+    expect(await screen.findByText("$125.00", { exact: false })).toBeInTheDocument();
+    if (financeContactEmail) {
+      expect(screen.getByRole("link", { name: financeContactEmail })).toHaveAttribute("href", `mailto:${financeContactEmail}`);
+    } else {
+      expect(screen.queryByText(/For any questions/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: /@/ })).not.toBeInTheDocument();
+    }
   });
 
   // ── non-lead household members see progress, never a lead-only task ────────

@@ -7,7 +7,7 @@
  * the empty receipt DB (docker-compose.flow.yml). The S1 push into workflow-mapping is
  * covered by receipt-pipeline.flow.test.ts.
  */
-import { api, BASE, loginAs, type Session } from "./helpers";
+import { api, BASE, loginAs, untilRead, type Session } from "./helpers";
 
 const SUBMITTER = "inventory.manager@example.com";
 const OTHER_VIEWER = "keyholder1@example.com";
@@ -118,10 +118,12 @@ describe("receipts — submitter journey", () => {
     // The type is checked by content: a NUL byte is not text.
     expect((await upload(submitter, `bad\u0000${stamp}`)).status).toBe(400);
 
-    // Auto: no details, so the local OCR mock reads it in the request; its reading is a
-    // proposal the uploader confirms.
-    const auto = await upload(submitter, `auto receipt ${stamp}`);
-    expect(auto.status).toBe(200);
+    // Auto: no details, so the upload answers saved and waiting to be read, and the local OCR mock
+    // reads it after the answer; its reading is a proposal the uploader confirms.
+    const saved = await upload(submitter, `auto receipt ${stamp}`);
+    expect(saved.status).toBe(200);
+    expect(saved.json.state).toBe("ocr_queued");
+    const auto = await untilRead(submitter, saved);
     expect(auto.json).toMatchObject({ state: "submitter_review", retailer: "Fixture Hardware", uploadedByUserId: submitter.personaId });
     expect(auto.json).not.toHaveProperty("fileBlob");
     expect((await post(submitter, `/api/receipts/${auto.json.id}/submitter-confirm`)).json.state).toBe("receipt_finalized");

@@ -118,6 +118,12 @@ describe("validateProgramAgeBounds", () => {
     expect(validateProgramAgeBounds(0, MAX_PROGRAM_AGE)).toBeNull();
   });
 
+  it("rejects a bound that is not a whole number, such as an empty form field", () => {
+    expect(validateProgramAgeBounds("", null)).toBe("minAge must be a whole number");
+    expect(validateProgramAgeBounds(null, "12")).toBe("maxAge must be a whole number");
+    expect(validateProgramAgeBounds(8.5, null)).toBe("minAge must be a whole number");
+  });
+
   it("rejects ages over 25 (the 'over 25' bucket, not a real age)", () => {
     expect(validateProgramAgeBounds(26, null)).toBe("minAge cannot exceed 25");
     expect(validateProgramAgeBounds(null, 26)).toBe("maxAge cannot exceed 25");

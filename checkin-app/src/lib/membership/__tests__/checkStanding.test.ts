@@ -1,4 +1,5 @@
-import { checkStanding, disputingReviews, householdQualifies, rejectionHistory, sentBackForSubject, type CheckReviewFacts, type CheckStanding } from '@/lib/membership/checkStanding';
+import { checkStanding, checkValidFor, checkValidForApplication, disputingReviews, householdQualifies, rejectionHistory, sentBackForSubject, type CheckReviewFacts, type CheckStanding } from '@/lib/membership/checkStanding';
+import type { DbClient } from '@/lib/db-client';
 
 const THRESHOLD = new Date('2026-01-01T00:00:00Z');
 const FRESH = new Date('2026-06-01T00:00:00Z');
@@ -138,5 +139,50 @@ describe('householdQualifies', () => {
 
     it('does not qualify while an open review is waiting for its first reviewer to name a person', () => {
         expect(householdQualifies({ members: [lead('CLEARED')], awaitingNaming: true })).toBe(false);
+    });
+});
+
+describe('checkValidFor: a check counts when it is valid at the start of the year', () => {
+    // Boundary Sept 1, 27-month interval: membership year 2026 starts 2026-09-01, so
+    // the earliest check that counts is 2024-06-01.
+    const db = (settings: { orgMembershipYearBoundary: Date | null; bgRecheckMonths: number | null } | null) =>
+        ({ boardSettings: { findUnique: jest.fn().mockResolvedValue(settings) } }) as unknown as DbClient;
+    const policy = db({ orgMembershipYearBoundary: new Date('2020-09-01T00:00:00Z'), bgRecheckMonths: 27 });
+    const at = (iso: string) => new Date(`${iso}T00:00:00Z`);
+    const counts = async (checkedOn: string, year: number) => checkStanding(at(checkedOn), [], await checkValidFor(year, policy)) === 'CLEARED';
+
+    it('takes a check exactly 27 months before the year starts', async () => {
+        expect(await checkValidFor(2026, policy)).toEqual(at('2024-06-01'));
+        expect(await counts('2024-06-01', 2026)).toBe(true);
+    });
+
+    it('takes a check a day under 27 months old at the start', async () => {
+        expect(await counts('2024-06-02', 2026)).toBe(true);
+    });
+
+    it('refuses a check a day over 27 months old at the start', async () => {
+        expect(await counts('2024-05-31', 2026)).toBe(false);
+    });
+
+    it('is null with no year, no boundary or no interval', async () => {
+        expect(await checkValidFor(null, policy)).toBeNull();
+        expect(await checkValidFor(2026, db({ orgMembershipYearBoundary: null, bgRecheckMonths: 27 }))).toBeNull();
+        expect(await checkValidFor(2026, db({ orgMembershipYearBoundary: new Date('2020-09-01T00:00:00Z'), bgRecheckMonths: null }))).toBeNull();
+        expect(await checkValidFor(2026, db(null))).toBeNull();
+    });
+
+    describe('for a household application', () => {
+        it('uses the year the application paid for', async () => {
+            expect(await checkValidForApplication({ appliesToYear: 2027, createdAt: at('2026-03-01') }, policy)).toEqual(at('2025-06-01'));
+        });
+
+        it('uses the year a renewal opened for, however late it is begun', async () => {
+            // Opened in the window before the 2026 boundary: it is the 2026 renewal.
+            expect(await checkValidForApplication({ appliesToYear: null, createdAt: at('2026-07-15') }, policy)).toEqual(at('2024-06-01'));
+        });
+
+        it('uses the year in progress for a join outside renewal season', async () => {
+            expect(await checkValidForApplication({ appliesToYear: null, createdAt: at('2026-03-01') }, policy)).toEqual(at('2023-06-01'));
+        });
     });
 });

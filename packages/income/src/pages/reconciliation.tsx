@@ -1,10 +1,9 @@
 "use client";
 import { Fragment, useState } from "react";
 import { Anchor, Badge, Button, Code, Group, Table, Text, TextInput, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { api, errorMessage, notifyNavCounts, useIsFinance, useLoad } from "../components/api";
 import { formatCents } from "@checkin/money";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, showError, showSuccess } from "@checkin/component-ui";
 
 interface ReconRow {
   id: number;
@@ -60,10 +59,10 @@ function RowActions({ row, onDone }: { row: ReconRow; onDone: () => void }) {
     setBusy(true);
     try {
       await fn();
-      notifications.show({ message, color: "green" });
+      showSuccess(message);
       onDone();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
+      showError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -71,7 +70,7 @@ function RowActions({ row, onDone }: { row: ReconRow; onDone: () => void }) {
 
   const resolve = (body: unknown, message: string) => act(() => post(`/reconciliation/${row.id}/resolve`, body), message);
   const needReason = () => {
-    if (!reason.trim()) notifications.show({ message: "Enter a reason first", color: "red", autoClose: false });
+    if (!reason.trim()) showError("Enter a reason first");
     return !!reason.trim();
   };
 
@@ -156,13 +155,10 @@ export default function ReconciliationPage() {
     setRunning(true);
     try {
       const r = await post<RunResult>("/reconciliation/run", {});
-      notifications.show({
-        message: r.status === "ran" ? `Matched ${r.matched}, opened ${r.opened}, drifted ${r.drifted}` : `Nothing to run (${r.status})`,
-        color: "green",
-      });
+      showSuccess(r.status === "ran" ? `Matched ${r.matched}, opened ${r.opened}, drifted ${r.drifted}` : `Nothing to run (${r.status})`);
       reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
+      showError(errorMessage(err));
     } finally {
       setRunning(false);
     }

@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useViewer, useUrlPage } from "@checkin/component-ui";
-import { notifications } from "@mantine/notifications";
+import { useViewer, useUrlPage, showError, showSuccess, showWarning } from "@checkin/component-ui";
 import { ActionIcon, Badge, Button, Group, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { act, api, errorMessage, isRefusal, loadError, paged, useLoad, when } from "../components/api";
 import { formatGtinDisplay } from "@checkin/gtin";
@@ -109,12 +108,11 @@ export default function ManualInKindPage() {
       });
       const res = await api<{ inventoryLoaded: boolean }>("/in-kind/manual", { method: "POST", body });
       setFirstName(""); setLastName(""); setCompanyName(""); setDonationDate(today()); setLines([]);
-      notifications.show(res.inventoryLoaded
-        ? { message: "Gift recorded and loaded into inventory", color: "green" }
-        : { message: "Gift recorded, but loading it into inventory failed. Use Retry load in the list.", color: "yellow" });
+      if (res.inventoryLoaded) showSuccess("Gift recorded and loaded into inventory");
+      else showWarning("Gift recorded, but loading it into inventory failed. Use Retry load in the list.", { autoClose: 4000 });
       rows.reload();
     } catch (e) {
-      notifications.show({ message: errorMessage(e), color: "red", autoClose: false });
+      showError(errorMessage(e));
     } finally {
       setSaving(false);
     }

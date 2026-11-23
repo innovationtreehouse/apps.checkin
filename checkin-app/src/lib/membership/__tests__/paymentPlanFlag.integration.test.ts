@@ -50,7 +50,7 @@ describe('payment-plan request ends when the application moves on', () => {
         mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         const res = await queueGet(new Request('http://localhost/api/finance-ops/membership-payment-plans') as unknown as import('next/server').NextRequest);
         expect(res.status).toBe(200);
-        return (await res.json()).map((r: { id: number }) => r.id);
+        return (await res.json()).OrgMembershipProcess.map((r: { id: number }) => r.id);
     }
 
     async function expectNoOpenRequest(processId: number) {

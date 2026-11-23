@@ -106,12 +106,9 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
   };
 
   // Volunteer + participant pickers both search this program's eligible members.
-  const searchEligible = useCallback(async (query: string): Promise<EligibleOption[]> => {
-    const res = await fetch(`/api/programs/${programId}/eligible-participants?q=${encodeURIComponent(query)}`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.members || [];
-  }, [programId]);
+  const searchEligible = useCallback((query: string): Promise<EligibleOption[]> =>
+    api<{ members?: EligibleOption[] }>(`/api/programs/${programId}/eligible-participants?q=${encodeURIComponent(query)}`)
+      .then((data) => data.members ?? [], () => []), [programId]);
 
   const handleAddVolunteer = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { errorMessage, showError } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 
 /**
  * Dev Zoho Sign mock UI. Two modes, both dev-only (the page 404s off a dev instance):
@@ -20,45 +22,31 @@ import { useRouter } from "next/navigation";
 export default function DevZohoSignClient({ rid }: { rid: string | null }) {
     const router = useRouter();
     const [busy, setBusy] = useState(false);
-    const [error, setError] = useState<string | null>(null);
 
     async function complete() {
         setBusy(true);
-        setError(null);
         try {
-            const res = await fetch("/api/dev/zoho-sign/complete", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ rid }),
-            });
-            if (!res.ok) {
-                setError(`Completion failed (${res.status}). Check server logs.`);
-                setBusy(false);
-                return;
-            }
+            await api("/api/dev/zoho-sign/complete", { method: "POST", body: JSON.stringify({ rid }) });
             router.push("/membership?signed=1");
         } catch (e) {
-            setError(e instanceof Error ? e.message : String(e));
+            showError(errorMessage(e));
             setBusy(false);
         }
     }
 
     async function startSigning() {
         setBusy(true);
-        setError(null);
         try {
-            const res = await fetch("/api/membership/contract/sign", { method: "POST" });
-            const data = await res.json().catch(() => ({}));
-            if (res.ok && data.url) {
+            const data = await api<{ url?: string }>("/api/membership/contract/sign", { method: "POST" });
+            if (data?.url) {
                 window.location.href = data.url;
                 return;
             }
-            setError(data.error ? `${data.error} (${res.status})` : `Could not start signing (${res.status}).`);
-            setBusy(false);
+            showError("Could not start signing.");
         } catch (e) {
-            setError(e instanceof Error ? e.message : String(e));
-            setBusy(false);
+            showError(errorMessage(e));
         }
+        setBusy(false);
     }
 
     const btn = (bg: string): React.CSSProperties => ({
@@ -79,8 +67,6 @@ export default function DevZohoSignClient({ rid }: { rid: string | null }) {
                 Zoho Sign is mocked on this instance (no OAuth secrets). This stands in for the
                 embedded signing ceremony — <strong>DEV, NOT A LEGAL AGREEMENT</strong>.
             </p>
-
-            {error && <p style={{ color: "#b91c1c", marginTop: "1rem" }}>{error}</p>}
 
             {rid ? (
                 <div style={{ marginTop: "1.5rem" }}>

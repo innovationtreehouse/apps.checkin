@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Button, Group } from "@mantine/core";
 import { CountBadge } from "@/components/ui/CountBadge";
 import { usePolling, POLL_IDLE_STOP_MS } from "@/hooks/usePolling";
+import { api } from "@/lib/api";
 
 interface NotificationData {
   membership: { pendingReviews: number; blocked: number };
@@ -20,10 +21,8 @@ export default function Notifications() {
   const [data, setData] = useState<NotificationData | null>(null);
 
   const fetchCounts = useCallback(() => {
-    fetch("/api/notifications")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((d) => { if (d) setData(d); })
-      .catch(() => { /* silent — indicators are best-effort */ });
+    // Indicators are best-effort, so a failed poll keeps the last counts.
+    api<NotificationData | null>("/api/notifications").then((d) => { if (d) setData(d); }, () => {});
   }, []);
   // Mounted in the root layout, so it polls from every open tab. Pause when
   // hidden and idle-stop so a forgotten tab stops pinning Aurora / re-waking prod.

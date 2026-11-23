@@ -10,7 +10,7 @@ import { runExpenseCatchUp } from "@checkin/expense";
 import { healProgramStock } from "@/lib/shopify/stock";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@checkin/local-inventory";
 import { catchUpOrgEvents as catchUpWorkflowEvents, sweepStuckApplying } from "@checkin/workflow-mapping";
-import { readMailbox, sweepInterruptedOcr, sweepOutcomeNotices, sweepStuckUploaded } from "@checkin/receipt";
+import { discardUnclaimedHeldMail, takeInMailbox, sweepExpiredFiles, sweepInterruptedOcr, sweepOutcomeNotices, sweepStuckUploaded } from "@checkin/receipt";
 
 /**
  * Runs one step so its failure stays its own: logged, reported to the run under the library lanes
@@ -89,16 +89,21 @@ function rowsFailed(outcome: object): number {
  * Then moves receipts whose intake checks never ran out of `uploaded` into finance's
  * `flow_error` queue (sweepStuckUploaded). Isolated the same way; counts only.
  *
- * Then it reads the receipt mailbox (readMailbox), the only slow step: one OCR call per new
- * file, capped per run. Isolated the same way; counts only, "unbound" when no mailbox is set. A run
+ * Then it takes in the receipt mailbox (takeInMailbox): each new file becomes a receipt waiting to
+ * be read, capped per run, and the reading drain runs on after this request has answered.
+ * Isolated the same way; counts only, "unbound" when no mailbox is set. A run
  * that could not read the mailbox counts toward the top-level `failed`, so the cron run records it.
  *
- * Last, it retries the receipt outcome emails still owed (sweepOutcomeNotices). Isolated the same
+ * Then it retries the receipt outcome emails still owed (sweepOutcomeNotices). Isolated the same
  * way; counts only.
+ *
+ * Last, the receipt retention steps: held mail nobody acted on for 90 days is discarded
+ * (discardUnclaimedHeldMail), and stored files past their retention date are deleted
+ * (sweepExpiredFiles). Each isolated the same way; counts only.
  *
  * The Shopify reconcile and the sale sweep run isolated too. The top-level `failed`, which the cron
  * run records, counts every step or expense part that crashed, every row a step reports as failed
- * (reconcile orders, receipt sweeps, outcome emails), provisionals not reconciled, a
+ * (reconcile orders, receipt sweeps, outcome emails, retention deletes), provisionals not reconciled, a
  * workflow-mapping catch-up that could not read the catalog's events, and a mailbox that could not
  * be read.
  */
@@ -113,15 +118,17 @@ export const GET = withCron(async () => {
     const receivingApply = await isolated("workflow-mapping stuck applies", "workflow-mapping stuck-apply sweep", sweepStuckApplying);
     const receipt = await isolated("receipt", "receipt catch-up", sweepInterruptedOcr);
     const receiptStuck = await isolated("receipt stuck uploads", "receipt stuck-upload sweep", sweepStuckUploaded);
-    const receiptMail = await isolated("receipt mail", "receipt mail intake", readMailbox);
+    const receiptMail = await isolated("receipt mail", "receipt mail intake", takeInMailbox);
     const receiptOutcomes = await isolated("receipt outcome emails", "receipt outcome emails", sweepOutcomeNotices);
-    const steps = [result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptMail, receiptOutcomes];
+    const receiptHeldDiscard = await isolated("receipt held-mail discard", "receipt held-mail auto-discard", discardUnclaimedHeldMail);
+    const receiptRetention = await isolated("receipt retention", "receipt file retention", sweepExpiredFiles);
+    const steps = [result, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptMail, receiptOutcomes, receiptHeldDiscard, receiptRetention];
     const expenseParts = "intake" in expense ? [expense.intake, expense.catalogEvents] : [];
     const failed = [...steps, ...expenseParts].filter(crashed).length
-        + [result, receipt, receiptStuck, receiptOutcomes].reduce((sum, step) => sum + rowsFailed(step), 0)
+        + [result, receipt, receiptStuck, receiptOutcomes, receiptHeldDiscard, receiptRetention].reduce((sum, step) => sum + rowsFailed(step), 0)
         + ("reconcileFailed" in inventoryEvents ? inventoryEvents.reconcileFailed : 0)
         + ("unreadable" in workflowEvents && workflowEvents.unreadable ? 1 : 0)
         + (receiptMail.status === "listing_failed" ? 1 : 0);
     const reconciled = "configured" in result ? result : { reconcile: result };
-    return NextResponse.json({ success: true, ...reconciled, failed, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptMail, receiptOutcomes });
+    return NextResponse.json({ success: true, ...reconciled, failed, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptMail, receiptOutcomes, receiptHeldDiscard, receiptRetention });
 });

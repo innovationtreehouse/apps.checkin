@@ -77,6 +77,21 @@ describeDb("provisional review actions", () => {
     await expect(approveProvisionalProposal(proposal.id, 1, {})).rejects.toMatchObject({ status: 400 });
   });
 
+  it("filing a proposal whose subcategory is in another category is a 400", async () => {
+    const { subcategoryId } = await seedCategory();
+    const other = await prisma.category.create({ data: { name: "Other", letter: "Q" } });
+    const { gtin13 } = await allocateNextProvisionalGtin();
+    await expect(createProvisionalItem({
+      ...ORG, provisionalGtin13: gtin13, localUserId: 1, proposedName: "Widget", proposedUsageBehavior: "Durable",
+      proposedCategoryId: other.id, proposedSubcategoryId: subcategoryId,
+    })).rejects.toMatchObject({ status: 400 });
+    await expect(createProvisionalItem({
+      ...ORG, provisionalGtin13: gtin13, localUserId: 1, proposedName: "Widget", proposedUsageBehavior: "Durable",
+      proposedSubcategoryId: subcategoryId,
+    })).rejects.toMatchObject({ status: 400 });
+    expect(await prisma.provisionalItem.count()).toBe(0);
+  });
+
   it("approve racing map-to-existing records one mapping", async () => {
     const proposal = await seedPendingProvisional();
     const categoryId = proposal.proposedCategoryId!;

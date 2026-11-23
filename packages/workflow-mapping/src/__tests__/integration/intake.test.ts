@@ -13,6 +13,7 @@ const recognizeAll = {
   checkReferences: async () => {
     throw new Error("unused");
   },
+  getOrgProvisionalItem: async () => null,
   getActiveItem: async () => {
     throw new Error("unused");
   },
@@ -108,6 +109,7 @@ describeDb("S1 — recognition and push", () => {
           throw new Error("catalog down");
         },
         checkReferences: recognizeAll.checkReferences,
+        getOrgProvisionalItem: async () => null,
         getActiveItem: recognizeAll.getActiveItem,
       },
     });
@@ -132,6 +134,7 @@ describeDb("S1 — recognition and push", () => {
           throw foreignNotWired("CatalogReader.lookupItems");
         },
         checkReferences: recognizeAll.checkReferences,
+        getOrgProvisionalItem: async () => null,
         getActiveItem: recognizeAll.getActiveItem,
       },
     });
@@ -148,6 +151,7 @@ describeDb("S1 — recognition and push", () => {
           throw Object.assign(new Error("Database does not exist"), { code: "P1003" });
         },
         checkReferences: recognizeAll.checkReferences,
+        getOrgProvisionalItem: async () => null,
         getActiveItem: recognizeAll.getActiveItem,
       },
     });

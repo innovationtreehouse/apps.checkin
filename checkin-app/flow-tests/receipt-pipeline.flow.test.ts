@@ -5,7 +5,7 @@
  * refuses restarts and edits, and a re-send is answered as a replay. Real HTTP against the
  * running dev server.
  */
-import { api, BASE, differentPurchases, loginAs, type Session } from "./helpers";
+import { api, BASE, differentPurchases, loginAs, untilRead, type Session } from "./helpers";
 
 const SUBMITTER = "inventory.manager@example.com";
 const FINANCE = "finance@example.com";
@@ -17,15 +17,16 @@ type Detail = { ReceivedReceipt: Received; ReceivedReceiptLineStatus: Array<{ id
 
 const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+/** Uploads a text receipt and answers it once its background reading has landed. */
 async function upload(s: Session, text: string) {
   const form = new FormData();
   form.append("file", new Blob([text], { type: "text/plain" }), "receipt.txt");
   const req = new Request(BASE, { method: "POST", body: form });
-  return api<Receipt>(s, "/api/receipts/upload", {
+  return untilRead(s, await api<Receipt>(s, "/api/receipts/upload", {
     method: "POST",
     body: await req.arrayBuffer(),
     headers: { "content-type": req.headers.get("content-type") ?? "" },
-  });
+  }));
 }
 
 const post = <T = unknown>(s: Session, path: string, body: unknown = {}) =>
@@ -80,5 +81,5 @@ describe("receipt pipeline — receipt to workflow mapping", () => {
     // A manual re-send is a replay: still one received receipt, state unchanged.
     expect((await post(finance, `/api/receipts/${auto.json.id}/push-to-inventory`)).json).toEqual({ pushed: true });
     expect(await received(submitter, auto.json.id)).toEqual([expect.objectContaining({ id: row.id, state: "resolved" })]);
-  });
+  }, 60_000);
 });

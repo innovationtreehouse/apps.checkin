@@ -28,9 +28,12 @@ async function notHandedOver(orgId: string, ids: string[]): Promise<Set<string>>
  */
 export async function unfinishedBucketUses(id: number): Promise<BucketUse[]> {
   const orgId = await getOrgId();
-  const [gifts, goods] = await Promise.all([
+  const capitalLines = { capitalBucketId: id, isCapital: true, registeredAt: null, donation: { orgId, decisionOutcome: "ACCEPTED" } };
+  const [gifts, goods, receiptCapital, manualCapital] = await Promise.all([
     db.transaction.findMany({ where: { orgId, ownerId: id, feeReleasedAt: null }, select: { disbursementId: true } }),
     unbookedGiftsIn(id),
+    db.inKindDonationLine.count({ where: capitalLines }),
+    db.manualInKindDonationLine.count({ where: capitalLines }),
   ]);
   const disbursements = [...new Set(gifts.flatMap((g) => (g.disbursementId ? [g.disbursementId] : [])))];
   const waiting = await notHandedOver(orgId, disbursements);
@@ -38,5 +41,6 @@ export async function unfinishedBucketUses(id: number): Promise<BucketUse[]> {
   return [
     { what: "Benevity gifts not yet deposited", count: undeposited, where: "Donations › Gifts" },
     { what: "gifts of goods not yet booked", count: goods, where: "Donations › Queue" },
+    { what: "donated capital lines without asset numbers", count: receiptCapital + manualCapital, where: "Donations › Queue" },
   ].filter((use) => use.count > 0);
 }

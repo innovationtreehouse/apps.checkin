@@ -25,7 +25,7 @@ const member: Partial<AuthenticatedUser> = {
 const FINANCE = { ...member, isFinance: true };
 const BOARD = { ...member, isBoardMember: true };
 const UNTIL = new Date('2026-11-18T14:05:00.000Z');
-const STATE = { lane: 'in-kind' as const, status: 'queued' as const, heldBy: 'expense' as const, until: UNTIL, queued: ['in-kind' as const] };
+const STATE = { lane: 'in-kind' as const, status: 'queued' as const, heldBy: 'expense' as const, until: UNTIL, queued: ['in-kind' as const], pausedUntil: null, lastRuns: {} };
 const STATE_JSON = { ...STATE, until: UNTIL.toISOString() };
 
 function as(user: Partial<AuthenticatedUser>) {

@@ -11,7 +11,7 @@ import { useOrgTime } from '@/components/TimezoneProvider';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
 import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
-import { membershipYearLabel } from '@/lib/programYear';
+import { endedPaymentPlanYearRefusal, membershipYearLabel } from '@/lib/programYear';
 
 import { errorMessage, HttpError, LoadError, showError, showSuccess, useUrlChoice } from '@checkin/component-ui';
 import { api, useLoad } from '@/lib/api';
@@ -32,6 +32,11 @@ type MembershipPaymentPlanRequest = {
       householdMembers?: HouseholdLead[];
     };
   };
+};
+
+type QueuePayload = {
+  OrgMembershipProcess: MembershipPaymentPlanRequest[];
+  BoardSettings: { orgMembershipYearBoundary: string | null } | null;
 };
 
 type PastMembershipDecision = PaymentPlanDecisionRow & { householdName: string | null };
@@ -62,7 +67,7 @@ export default function MembershipPaymentPlansPage() {
   const [busyId, setBusyId] = useState<number | null>(null);
 
   // Each read logs a finance view, so it reads once on mount and once after this page's own write, with no retry.
-  const { data: requests, error: loadError, reload } = useLoad<MembershipPaymentPlanRequest[]>(
+  const { data, error: loadError, reload } = useLoad<QueuePayload>(
     ready ? '/api/finance-ops/membership-payment-plans' : null,
     { retry: false, reconnect: false, skipWriteReload: true },
   );
@@ -127,6 +132,12 @@ export default function MembershipPaymentPlansPage() {
     closeConfirmDeny();
   };
 
+  const requests = data?.OrgMembershipProcess;
+  const boundary = data?.BoardSettings?.orgMembershipYearBoundary;
+  // The server refuses approval for an ended year with 409; this only greys the button out first.
+  const yearEnded = (req: MembershipPaymentPlanRequest) =>
+    endedPaymentPlanYearRefusal(req.paymentPlanYear, boundary ? new Date(boundary) : null, new Date());
+
   if (authLoading) {
     return <PageLoader />;
   }
@@ -185,7 +196,7 @@ export default function MembershipPaymentPlansPage() {
           <Button size="xs" fz={15} color="red" variant="light" disabled={ownHousehold(req) || busyId === req.id} title={ownHousehold(req) ? "You can't deny your own household's plan — someone outside your household must." : undefined} onClick={() => handleDeny(req.id)}>
             Deny
           </Button>
-          <Button size="xs" fz={15} variant="light" disabled={ownHousehold(req) || busyId === req.id} title={ownHousehold(req) ? "You can't approve your own household's plan — someone outside your household must." : undefined} onClick={() => handleApprove(req)}>
+          <Button size="xs" fz={15} variant="light" disabled={ownHousehold(req) || !!yearEnded(req) || busyId === req.id} title={ownHousehold(req) ? "You can't approve your own household's plan — someone outside your household must." : yearEnded(req) ?? undefined} onClick={() => handleApprove(req)}>
             Approve &amp; Activate
           </Button>
         </Group>

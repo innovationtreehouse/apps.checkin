@@ -7,8 +7,14 @@ export const sha256Hex = (bytes: Uint8Array): string => createHash("sha256").upd
 
 export const receiptFileKey = (receiptId: string): string => `receipts/${receiptId}`;
 
+/** The audit action retention writes when it deletes a receipt's file. */
+export const RETENTION_FILE_DELETED = "file_deleted";
+
 /** A mail item's id is assigned at insert, after its object is written, so its key is a fresh UUID. */
 export const newMailItemFileKey = (): string => `mail-items/${randomUUID()}`;
+
+/** A captured email's raw copy; the key says nothing about the message. */
+export const newRawMailKey = (): string => `mail-raw/${randomUUID()}`;
 
 /**
  * A held item's key when the backfill moves it. Derived from what makes the row unique, so a re-run

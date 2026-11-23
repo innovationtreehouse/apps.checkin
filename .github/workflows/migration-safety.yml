@@ -72,12 +72,12 @@ jobs:
           changed="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
           echo "Changed files:"; printf '%s\n' "$changed"
           SELF='^\.github/(workflows/migration-safety\.yml$|actions/(ecr-public-login|start-postgres)/)'
-          if printf '%s\n' "$changed" | grep -qE "^checkin-app/prisma/migrations/|$SELF"; then
+          if grep -qE "^checkin-app/prisma/migrations/|$SELF" <<<"$changed"; then
             echo "checkin=true" >> "$GITHUB_OUTPUT"
           else
             echo "checkin=false" >> "$GITHUB_OUTPUT"
           fi
-          if printf '%s\n' "$changed" | grep -qE "^packages/[^/]+/prisma/migrations/|$SELF"; then
+          if grep -qE "^packages/[^/]+/prisma/migrations/|$SELF" <<<"$changed"; then
             echo "libraries=true" >> "$GITHUB_OUTPUT"
           else
             echo "libraries=false" >> "$GITHUB_OUTPUT"
@@ -501,7 +501,7 @@ jobs:
             HEAD_DIRS=$(git ls-tree --name-only "HEAD:$DIR" 2>/dev/null | grep -v '^migration_lock\.toml$' | sort || true)
             while IFS= read -r d; do
               [ -z "$d" ] && continue
-              if ! printf '%s\n' "$HEAD_DIRS" | grep -qxF "$d"; then
+              if ! grep -qxF "$d" <<<"$HEAD_DIRS"; then
                 echo "::error::$DIR/$d existed at $LAST_RELEASE but is deleted here — released migrations are immutable (prod's ledger references them). Coalesce only the unreleased tail."
                 FAILED=1
               elif ! git diff --quiet "$LAST_RELEASE" HEAD -- "$DIR/$d"; then
@@ -560,8 +560,8 @@ jobs:
             [ -f "$(dirname "$f")/reconcile.sql" ] && continue
             grep -qE '^[[:space:]]*--[[:space:]]*no-transaction:[[:space:]]*[^[:space:]]' "$f" && continue
             SQL=$(perl -0777 -pe 's{/\*.*?\*/}{}gs' "$f" | grep -vE '^[[:space:]]*(--.*)?$' || true)
-            if ! head -n1 <<<"$SQL" | grep -qxE '[[:space:]]*BEGIN;[[:space:]]*' ||
-               ! tail -n1 <<<"$SQL" | grep -qxE '[[:space:]]*COMMIT;[[:space:]]*'; then
+            if ! grep -qxE '[[:space:]]*BEGIN;[[:space:]]*' <<<"$(head -n1 <<<"$SQL")" ||
+               ! grep -qxE '[[:space:]]*COMMIT;[[:space:]]*' <<<"$(tail -n1 <<<"$SQL")"; then
               echo "::error file=$f::$f must open with BEGIN; and close with COMMIT; (deploy rule 5). For SQL that cannot run in a transaction, add '-- no-transaction: <reason>' and make each statement retry-safe."
               FAILED=1
             fi

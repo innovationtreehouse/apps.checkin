@@ -339,20 +339,13 @@ export async function attest(reviewerId: number, processId: number, input: Attes
 }
 
 /**
- * Runs settleHouseholdBg for each household a review outcome touched, returning every
- * step taken. The outcome has committed, so a failure here is logged rather than
- * reported as a failed decision; the next settle (another decision, a reopen, the
- * daily sweep) repeats it.
+ * Settles each household a review outcome touched, returning every step taken. The
+ * outcome has committed, so a failure becomes a stuck settle rather than a failed decision.
  */
 async function settleAfterReview(householdIds: readonly number[], opts: { reviewJustCleared?: boolean } = {}): Promise<SettleStep[]> {
     const steps: SettleStep[] = [];
     for (const householdId of householdIds) {
-        try {
-            steps.push(...await (await settleModule()).settleHouseholdBg(householdId, opts));
-        } catch (error) {
-            logger.error("settle after review failed:", { householdId }, error);
-            await logBackendError(error, "settle after review", { householdId });
-        }
+        steps.push(...await (await settleModule()).settleAfterEvent(householdId, "review", opts));
     }
     return steps;
 }
@@ -647,8 +640,9 @@ async function afterClearanceCommitted(step: string, outcome: ClearanceOutcome, 
  * The sends every clearance owes after it commits: the board item for a refunded
  * order, congrats + the new-member triggers
  * on activation, else the payment-open notice. Never throws. What a failed step leaves
- * behind is picked up later: the daily reconcile raises a refunded order, and the
- * nightly and annual sweeps open what the triggers missed.
+ * behind is picked up later: the daily reconcile raises a refunded order, the nightly
+ * agreement sweep opens a missed agreement, and a missed background-check opening
+ * still shows on the compliance page, where the Board can start the check.
  */
 export async function notifyClearanceOutcome(outcome: ClearanceOutcome, opts?: { paymentOpenNotice?: (householdId: number) => Promise<void> }) {
     const { refunded, householdId } = outcome;

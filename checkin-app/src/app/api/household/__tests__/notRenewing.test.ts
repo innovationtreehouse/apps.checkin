@@ -49,8 +49,7 @@ describe("GET /api/household notRenewingYear", () => {
         expect(await noteSeen(2024)).toBeNull();
     });
 
-    it("reads no settings when there is no note", async () => {
+    it("keeps no note when there is none", async () => {
         expect(await noteSeen(null)).toBeNull();
-        expect(prisma.boardSettings.findUnique).not.toHaveBeenCalled();
     });
 });

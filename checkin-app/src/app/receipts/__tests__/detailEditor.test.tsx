@@ -18,7 +18,7 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush, replace: jest.fn() }),
 }));
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1, ageBand: "adult" } } }) }));
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn() } }));
 jest.mock("@checkin/receipt/components/ReceiptFile", () => ({ __esModule: true, default: () => null }));
 
 const line = (id: number, description: string, quantity: number, unitPriceCents: number) => ({
@@ -95,14 +95,14 @@ describe("correcting a receipt whose totals don't add up", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(resubmitted()).toBe(true));
     expect(mockApi.mock.calls.map((c) => c[0])).toEqual(["/r1/line-items/12", "/r1/resubmit"]);
-    expect(shown()).toContainEqual({ message: "Saved and resubmitted: Finance review", color: "green" });
+    expect(shown()).toContainEqual(expect.objectContaining({ message: "Saved and resubmitted: Finance review", color: "green" }));
   });
 
   it("saves without resubmitting while the totals are still off, and says by how much", async () => {
     wrap();
     type("Line 2 unit price", "10.25");
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(shown()).toContainEqual({ message: "Saved. Still $0.25 off; stays in Totals off.", color: "yellow", autoClose: false }));
+    await waitFor(() => expect(shown()).toContainEqual(expect.objectContaining({ message: "Saved. Still $0.25 off; stays in Totals off.", color: "yellow", autoClose: false })));
     expect(mockApi).toHaveBeenCalledWith("/r1/line-items/12", { method: "PATCH", body: JSON.stringify({ unitPrice: 10.25 }) });
     expect(resubmitted()).toBe(false);
   });
@@ -158,7 +158,7 @@ describe("correcting a receipt whose totals don't add up", () => {
     type("+ Shipping", "5.50");
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(resubmitted()).toBe(true));
-    expect(shown()).toContainEqual({ message: "Saved. The totals still don't add up; stays in Totals off.", color: "yellow", autoClose: false });
+    expect(shown()).toContainEqual(expect.objectContaining({ message: "Saved. The totals still don't add up; stays in Totals off.", color: "yellow", autoClose: false }));
     expect(shown().some((n) => n.color === "green")).toBe(false);
     expect(mockPush).not.toHaveBeenCalled();
   });
@@ -177,7 +177,7 @@ describe("correcting a receipt whose totals don't add up", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(resubmitted()).toBe(true));
     expect(mockApi).toHaveBeenCalledTimes(1);
-    expect(shown()).toContainEqual({ message: "Resubmitted: Finance review", color: "green" });
+    expect(shown()).toContainEqual(expect.objectContaining({ message: "Resubmitted: Finance review", color: "green" }));
   });
 
   it("keeps a failed resubmit on screen, naming what was saved", async () => {
@@ -189,7 +189,7 @@ describe("correcting a receipt whose totals don't add up", () => {
     type("+ Shipping", "5.50");
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() =>
-      expect(shown()).toContainEqual({ title: "Saved, but couldn't resubmit", message: "Receipt is not in validation_failed", color: "red", autoClose: false }),
+      expect(shown()).toContainEqual(expect.objectContaining({ title: "Saved, but couldn't resubmit", message: "Receipt is not in validation_failed", color: "red", autoClose: false })),
     );
   });
 
@@ -264,7 +264,7 @@ describe("correcting a receipt whose totals don't add up", () => {
     expect(screen.getByLabelText("Retailer")).toHaveValue("");
     type("+ Shipping", "5.50");
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(shown()).toContainEqual({ title: "Receipt not saved", message: "The retailer is required.", color: "red", autoClose: false }));
+    await waitFor(() => expect(shown()).toContainEqual(expect.objectContaining({ title: "Receipt not saved", message: "The retailer is required.", color: "red", autoClose: false })));
     expect(mockApi).not.toHaveBeenCalled();
   });
 
@@ -297,7 +297,7 @@ describe("reviewing an OCR-read receipt", () => {
     wrap();
     type("Retailer", "Acme Hardware");
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(shown()).toContainEqual({ message: "Saved", color: "green" }));
+    await waitFor(() => expect(shown()).toContainEqual(expect.objectContaining({ message: "Saved", color: "green" })));
     expect(resubmitted()).toBe(false);
   });
 
@@ -349,7 +349,7 @@ describe("typing the details of a receipt OCR could not read", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(resubmitted()).toBe(true));
     expect(mockApi.mock.calls.map((c) => c[0])).toEqual(["/r1", "/r1/resubmit"]);
-    expect(shown()).toContainEqual({ message: "Saved and resubmitted: Finance review", color: "green" });
+    expect(shown()).toContainEqual(expect.objectContaining({ message: "Saved and resubmitted: Finance review", color: "green" }));
   });
 
   it("reads a receipt with nothing typed again without asking", async () => {

@@ -6,6 +6,7 @@ import {
     createEvent,
     createCheckins,
 } from "@/lib/dev/seed-helpers";
+import { truncateDevDatabases } from "@/lib/dev/reset";
 import { classify, effectiveOffSaleAt, enrollmentClosedBy } from "@/lib/programs/saleState";
 import { membershipYearOf, nextBoundary } from "@/lib/programYear";
 import { orgCalendarDay } from "@/lib/time";
@@ -17,8 +18,7 @@ import { orgCalendarDay } from "@/lib/time";
  * `npm run test:integration` against a throwaway dev database.
  */
 
-// The same drift-proof truncation the reset action performs, factored here so the test exercises
-// the real list-from-catalog behavior rather than a hand-written table list.
+// Suite setup and teardown: empties checkin and restarts its ids.
 async function truncateAll() {
     const rows = await prisma.$queryRaw<{ tablename: string }[]>`
         SELECT tablename FROM pg_tables
@@ -166,6 +166,25 @@ describe("dev seed-helpers (integration)", () => {
             expect(seeded).toHaveLength(10);
             expect(seeded.every((g) => g._count === 1)).toBe(true);
         });
+
+        it("a program whose event fails to write is rolled back, so the next seed builds it whole", async () => {
+            const name = "Seed: upcoming";
+            const { id } = await prisma.program.findFirstOrThrow({ where: { name } });
+            await prisma.event.deleteMany({ where: { programId: id } });
+            await prisma.program.delete({ where: { id } });
+            const dropFixture = () => prisma.$executeRawUnsafe(`ALTER TABLE "Event" DROP CONSTRAINT IF EXISTS seed_spread_fail`);
+            try {
+                await dropFixture();
+                await prisma.$executeRawUnsafe(`ALTER TABLE "Event" ADD CONSTRAINT seed_spread_fail CHECK (name <> 'Seed: upcoming session')`);
+                await expect(seedBaseline(prisma)).rejects.toThrow();
+            } finally {
+                await dropFixture();
+            }
+            expect(await prisma.program.findFirst({ where: { name } })).toBeNull();
+
+            await seedBaseline(prisma);
+            expect((await byName(name)).events).toHaveLength(1);
+        });
     });
 
     it("+ Family adds a household with a lead, a partner, and a youth", async () => {
@@ -220,8 +239,16 @@ describe("dev seed-helpers (integration)", () => {
         });
         const ledgerBefore = await prisma.devLedger.count();
 
-        await truncateAll();
-        await seedBaseline(prisma);
+        // The reset's own truncate, which keeps ids running, run twice so reseeding meets ids above the first seed's.
+        const originalEnv = process.env.CHECKIN_ENV;
+        process.env.CHECKIN_ENV = "local";
+        try {
+            await truncateDevDatabases(prisma, () => seedBaseline(prisma), []);
+            await truncateDevDatabases(prisma, () => seedBaseline(prisma), []);
+            await seedBaseline(prisma);
+        } finally {
+            process.env.CHECKIN_ENV = originalEnv;
+        }
 
         // Macro fixtures are gone…
         expect(await prisma.program.findFirst({ where: { name: { startsWith: "Test Program" } } })).toBeNull();
@@ -230,6 +257,9 @@ describe("dev seed-helpers (integration)", () => {
         expect(await prisma.person.findUnique({ where: { email: "boardmember@example.com" } })).not.toBeNull();
         // …and the ledger survived the truncation.
         expect(await prisma.devLedger.count()).toBe(ledgerBefore);
+        // …and a later seed finds the tools by name rather than adding a second set.
+        const tools = await prisma.tool.groupBy({ by: ["name"], _count: true });
+        expect(tools.map((t) => [t.name, t._count]).sort()).toEqual([["Drill Press", 1], ["Table Saw", 1]]);
 
         await prisma.devLedger.deleteMany({ where: { detail: "pre-reset" } });
     });

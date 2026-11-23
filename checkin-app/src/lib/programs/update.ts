@@ -5,6 +5,7 @@ import { adjustProgramInventory, setProgramInventory, STOCK_BOOKKEEPING_RESET, s
 import { dollarsToCentsOrNull } from "@checkin/money";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { validateProgramAgeBounds, isLeaderAgeEligible, checkProgramAge } from "@/lib/programAge";
+import { recordSelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
@@ -149,6 +150,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
 
     const { name, startAt, endAt, orgMemberOnly, publiclyVisible, announceOnOpen, phase, enrollmentStatus, minAge, maxAge, maxParticipants, leadMentorNotificationSettings, memberPrice, nonMemberPrice, shopifyProductId, shopifyVariantId } = patch;
     let leadMentorId: number | undefined;
+    let namedLeader: { lastBackgroundCheck: Date | null } | undefined;
 
     let newName: string | undefined;
     if (name !== undefined) {
@@ -207,19 +209,20 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         if (!isLeaderAgeEligible(mentor)) {
             return refuse("invalid", "Program Leader must be at least 23 years old");
         }
-        // A leader already in place stays; only a new assignment meets the membership and clearance requirements.
-        if (leadMentorId !== currentProgram.leadMentorId) {
-            const ineligible = await programLeaderIneligibility(leadMentorId, mentor);
-            if (ineligible) return refuse("invalid", ineligible);
-        }
         // Nobody names themself or their household as a program's leader (Ethics
         // Policy III.5). The edit form resends the current lead on every save, so
         // only a change is refused.
         if (leadMentorId !== currentProgram.leadMentorId && (
             leadMentorId === actor.id || await hasHouseholdConflict(prisma, actor.id, mentor.householdId)
         )) {
+            await recordSelfGrantRefusal(prisma, {
+                actorId: actor.id,
+                affectedEntityId: leadMentorId,
+                newData: { reason: "own_household", table: "Program", subject: { personId: leadMentorId, householdId: mentor.householdId }, attempted: { programId, leadMentorId } },
+            });
             return refuse("forbidden", "Forbidden: You cannot make yourself or a member of your household a program lead");
         }
+        if (leadMentorId !== currentProgram.leadMentorId) namedLeader = mentor;
     }
 
     // An ended program stays ended: no other phase, and enrollment never reopens.
@@ -262,9 +265,12 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         return refuse("invalid", "Invalid end date");
     }
     // Effective values (body overrides current) so a one-sided edit can't invert the range.
+    // Checked on a date change or a move into a live phase, so a program saved with inverted dates can still save other fields.
     const effStartAt = newStartAt ?? currentProgram.startAt;
     const effEndAt = newEndAt ?? currentProgram.endAt;
-    if (effStartAt > effEndAt) {
+    const datesMoved = effStartAt.getTime() !== currentProgram.startAt.getTime() || effEndAt.getTime() !== currentProgram.endAt.getTime();
+    const goesLive = (phase === 'UPCOMING' || phase === 'RUNNING') && phase !== currentProgram.phase;
+    if ((datesMoved || goesLive) && effStartAt > effEndAt) {
         return refuse("invalid", "Start date must be on or before the end date");
     }
     // A program's leader marks it finished on or after its end date; before that, ending it is the Board's alone.
@@ -348,7 +354,6 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     }
 
     // Re-dating re-derives the membership year; a stated year is only supplied by the Board.
-    const datesMoved = effStartAt.getTime() !== currentProgram.startAt.getTime() || effEndAt.getTime() !== currentProgram.endAt.getTime();
     const yearSupplied = patch.appliesToYear != null && patch.appliesToYear !== currentProgram.appliesToYear;
     let newAppliesToYear: number | undefined;
     if (datesMoved || yearSupplied) {
@@ -361,6 +366,12 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         });
         if (!year.ok) return year;
         if (year.appliesToYear !== currentProgram.appliesToYear) newAppliesToYear = year.appliesToYear;
+    }
+    // A leader already in place stays; only a new assignment meets the membership and
+    // clearance requirements, measured at the start of the program's membership year.
+    if (leadMentorId !== undefined && namedLeader) {
+        const ineligible = await programLeaderIneligibility(leadMentorId, namedLeader, newAppliesToYear ?? currentProgram.appliesToYear);
+        if (ineligible) return refuse("invalid", ineligible);
     }
 
     const updateData: Record<string, unknown> = {

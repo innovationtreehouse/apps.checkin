@@ -17,7 +17,7 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush, replace: jest.fn() }),
 }));
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: mockUserId } } }) }));
-jest.mock("@mantine/notifications", () => ({ notifications: { show: (...args: unknown[]) => mockShow(...args) } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: (...args: unknown[]) => mockShow(...args), update: jest.fn() } }));
 jest.mock("@checkin/receipt/components/ReceiptFile", () => ({
   __esModule: true,
   default: ({ src, mimeType, title = "Receipt", rotation, onRotate }: { src: string; mimeType: string; title?: string; rotation?: number; onRotate?: (by: number) => void }) => (
@@ -214,7 +214,7 @@ describe("the N-way compare", () => {
     delete mockLoads["/r0"];
     mockErrors["/r0"] = "Receipt not found";
     await wrap();
-    expect(mockShow).toHaveBeenCalledWith({ title: "Couldn't load a possible copy", message: expect.any(String), color: "red", autoClose: false });
+    expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({ title: "Couldn't load a possible copy", message: expect.any(String), color: "red", autoClose: false }));
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Not this one: match 2" })).toBeInTheDocument();
     for (const name of ["Different purchases", "Keep this one"]) expect(screen.queryByRole("button", { name })).toBeNull();
@@ -224,7 +224,7 @@ describe("the N-way compare", () => {
     mockLoads["/r1/duplicate-group"] = null;
     mockErrors["/r1/duplicate-group"] = "Receipt not found";
     await wrap();
-    expect(mockShow).toHaveBeenCalledWith({ title: "Couldn't load the possible copies", message: "Receipt not found", color: "red", autoClose: false });
+    expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({ title: "Couldn't load the possible copies", message: "Receipt not found", color: "red", autoClose: false }));
   });
 
   it("offers Different purchases on this receipt alone when no other receipt still matches it", async () => {

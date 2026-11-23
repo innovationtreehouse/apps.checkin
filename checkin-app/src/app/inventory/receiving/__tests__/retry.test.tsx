@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithProviders } from "@/test-helpers/rtl";
 import ReceivingPage from "@checkin/workflow-mapping/pages/receiving";
 
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn() } }));
 import { notifications } from "@mantine/notifications";
 
 let mockSearch = new URLSearchParams("queue=failed");
@@ -78,7 +78,7 @@ describe("Receiving › Apply failed Retry", () => {
     renderWithProviders(<ReceivingPage />);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith({ message: "Receipt was already retried", color: "red", autoClose: false }),
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Receipt was already retried", color: "red", autoClose: false })),
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Failed Hardware")).toBeInTheDocument();
@@ -91,7 +91,7 @@ describe("Receiving › Apply failed Retry", () => {
     renderWithProviders(<ReceivingPage />);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith({ message: "Inventory: still down", color: "red", autoClose: false }),
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Inventory: still down", color: "red", autoClose: false })),
     );
   });
 
@@ -102,11 +102,11 @@ describe("Receiving › Apply failed Retry", () => {
     renderWithProviders(<ReceivingPage />);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith({
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
         message: "Still sending: it stays In progress and the system retries it automatically.",
-        color: "orange",
+        color: "yellow",
         autoClose: false,
-      }),
+      })),
     );
     expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ color: "green" }));
   });

@@ -12,12 +12,14 @@
  * accept step reads roles and bucket approvers through the expense library's
  * sign-off directory, households and surnames through donorSurname, and its
  * large-value warning through the expense library's capital review line threshold.
- * An accepted gift's lines go to the expense library's capital review, which
- * keeps donated equipment at or over its thresholds, and each gift line's account comes from the
- * expense library's account rules. Boot stays DB-free.
+ * An accepted gift meets the expense library's capital thresholds, takes its capital review
+ * through the expense library's review module on its own lines, and has its capital lines' assets
+ * minted by the expense library's register; each gift line's account comes from the expense
+ * library's account rules. Boot stays DB-free.
  */
 import { IN_KIND_ROLES, configureBulkDonation, inKindAccountsReady } from "@checkin/bulk-donation";
 import type { IncomeDeposits, InKindAccounts, InKindCapital, InKindDirectory, InKindQbPosting } from "@checkin/bulk-donation";
+import { CapitalReviewSchema, SetDepreciationCycleSchema, designate, setPeriod } from "@checkin/expense";
 import { getOrg, getPrincipal } from "@/lib/components/host";
 import { booksMap, budgetOwners, quickBooks, quickBooksAccounts } from "@/lib/components/ports";
 import { catalogReader } from "@/lib/catalog/reader";
@@ -98,6 +100,13 @@ const inKind: InKindDirectory = {
 };
 
 const capital: InKindCapital = {
+  async reviewNeeded(orgId, gift) {
+    return (await import("@checkin/expense")).giftCapitalReviewNeeded(orgId, gift);
+  },
+  review: { designationInput: CapitalReviewSchema, periodInput: SetDepreciationCycleSchema, designate, setPeriod },
+  async register(orgId, line) {
+    return (await import("@checkin/expense")).registerGiftLineAssets(orgId, line);
+  },
   async submit(orgId, lines) {
     await (await import("@checkin/expense")).submitDonatedLines(orgId, lines);
   },

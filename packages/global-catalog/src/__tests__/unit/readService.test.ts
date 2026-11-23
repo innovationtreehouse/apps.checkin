@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, expect, it } from "vitest";
 import { describeDb, resetDb } from "../helpers/db";
 import { initDb, prisma } from "../../db";
-import { getActiveItem, getItem, searchItems } from "../../services/readService";
+import { getActiveItem, getItem, getOrgProvisionalItem, searchItems } from "../../services/readService";
 
 beforeAll(async () => { await initDb(); });
 
@@ -33,6 +33,14 @@ describeDb("readService (X3/X10)", () => {
     expect(await getActiveItem("0011111111116")).toEqual({ gtin13: "0011111111116", name: "Cordless Drill" });
     expect(await getActiveItem("0033333333330")).toBeNull();
     expect(await getActiveItem("0000000000000")).toBeNull();
+  });
+
+  it("getOrgProvisionalItem returns this org's provisional part and null for another org's", async () => {
+    const part = { provisionalGtin13: "0200002700001", proposedName: "Shelf bracket", proposedUsageBehavior: "Durable", localUserId: 1 };
+    await prisma.provisionalItem.create({ data: { ...part, orgId: "org-a", status: "rejected" } });
+    expect(await getOrgProvisionalItem("org-a", part.provisionalGtin13)).toEqual({ status: "rejected", proposedName: "Shelf bracket", resolvedToGtin13: null });
+    expect(await getOrgProvisionalItem("org-b", part.provisionalGtin13)).toBeNull();
+    expect(await getOrgProvisionalItem("org-a", "0200002700018")).toBeNull();
   });
 
   it("searchItems matches active items by name (any case) or GTIN, returning gtin13 and name", async () => {

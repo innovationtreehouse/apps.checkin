@@ -9,7 +9,7 @@ import type { PostingTurn } from '@checkin/quickbooks';
 import { runExpenseQbPosting } from '@checkin/expense';
 import { runInKindQbPosting } from '@checkin/bulk-donation';
 import { drainIncomeOutbox } from '@checkin/income';
-import { catchUpPosting, postingCatchUpState, requestPostingRun, runPostingQueue } from '../quickBooksPosting';
+import { catchUpPosting, postingCatchUpState, postingSlotStatus, requestPostingRun, runPostingQueue } from '../quickBooksPosting';
 
 interface SlotRow { orgId: string; holder: string | null; runId: string | null; until: Date; lastRuns: Record<string, unknown> | null }
 interface QueueRow { id: number; orgId: string; lane: string; requestedById: number | null; requestedAt: Date }
@@ -184,4 +184,56 @@ it("reads a lane's place: running, queued, idle", async () => {
     expect((await postingCatchUpState('income')).status).toBe('queued');
     expect(await postingCatchUpState('in-kind')).toMatchObject({ lane: 'in-kind', status: 'idle', heldBy: 'expense', queued: ['income'] });
     expect(await postingCatchUpState(null)).toMatchObject({ lane: null, status: 'running', heldBy: 'expense', queued: ['income'] });
+});
+
+const run = async (lane: 'expense' | 'in-kind' | 'income') => {
+    const started = await requestPostingRun(lane, null);
+    if (started.status === 'started') await started.done.catch(() => {});
+    await settle();
+};
+
+it("records each run's counts, and counts yields in a row until a clean end", async () => {
+    income.mockResolvedValue({ reconcile: { status: 'unbound' }, post: { posted: 100, matched: 2, queued: 0, failed: 0, throttled: 0, waiting: 0, over_cap: 0, held: 0, capped: 'count' } });
+    await run('income');
+    expect(slots.get('org-1')?.lastRuns).toMatchObject({ income: { ended: 'done', created: 100, matched: 2, capped: 'count', yieldsInRow: 0 } });
+
+    expense.mockImplementation(async (turn) => {
+        if (turn) turn.yielded = true;
+        return EXPENSE_RESULT;
+    });
+    for (let i = 0; i < 3; i++) {
+        queue = [];
+        await run('expense');
+    }
+    expect(slots.get('org-1')?.lastRuns).toMatchObject({ expense: { ended: 'yielded', created: 0, capped: null, yieldsInRow: 3 } });
+    expect((await postingSlotStatus()).warnings).toEqual([expect.objectContaining({ lane: 'expense', cause: 'throttled' })]);
+
+    expense.mockResolvedValue(EXPENSE_RESULT);
+    queue = [];
+    await run('expense');
+    expect(slots.get('org-1')?.lastRuns).toMatchObject({ expense: { ended: 'done', yieldsInRow: 0 } });
+    expect((await postingSlotStatus()).warnings).toEqual([]);
+});
+
+it('a run that lapsed holding the slot is recorded as expired by the next taker, once', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    slots.set('org-1', { orgId: 'org-1', holder: 'in-kind', runId: 'dead', until: new Date('2026-11-18T14:05:00Z'), lastRuns: { 'in-kind': { endedAt: 'x', ended: 'yielded', yieldsInRow: 1 } } });
+    await run('expense');
+    await run('income');
+
+    expect(slots.get('org-1')?.lastRuns).toMatchObject({ 'in-kind': { ended: 'expired', endedAt: '2026-11-18T14:05:00.000Z', yieldsInRow: 1 } });
+    const status = await postingSlotStatus();
+    expect(status.warnings).toEqual([expect.objectContaining({ lane: 'in-kind', cause: 'expired' })]);
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('qb_slot_expired'))).toHaveLength(1);
+});
+
+it('the System Status read names who asked for each waiting lane, and the request count', async () => {
+    slots.set('org-1', { orgId: 'org-1', holder: 'expense', runId: 'r', until: new Date(Date.now() + 60_000), lastRuns: null });
+    queue.push({ id: nextId++, orgId: 'org-1', lane: 'income', requestedById: 7, requestedAt: new Date(++clock) });
+    expect(await postingSlotStatus()).toMatchObject({
+        heldBy: 'expense',
+        pausedUntil: null,
+        waiting: [{ lane: 'income', requestedById: 7 }],
+        requestsToday: expect.any(Number),
+    });
 });

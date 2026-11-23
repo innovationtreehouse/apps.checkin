@@ -7,7 +7,7 @@ import { REFUSAL_NOTE_KEY } from "../../services/mailIntake";
 import { intakeMailedReceipt, receiptService } from "../../services/receiptService";
 import type { ReceiptLimits } from "../../lib/limits";
 import { describeDb } from "../helpers/db";
-import { actAs, ALICE, BOB, clearAll, configure, FINANCE, okOcr, stateOf, storeFile, TEST_ORG_ID, textFile } from "../helpers/setup";
+import { actAs, ALICE, BOB, clearAll, configure, FINANCE, okOcr, settleReads, stateOf, storeFile, TEST_ORG_ID, textFile } from "../helpers/setup";
 
 const PEOPLE: Record<string, typeof ALICE> = { "alice@example.org": ALICE, "bob@example.org": BOB, "finn@example.org": FINANCE };
 
@@ -60,6 +60,7 @@ describeDb("finance mail queue", () => {
   it("assigns a held item as exactly one emailed receipt uploaded by the assignee", async () => {
     const id = await holdItem();
     const out = await mailQueueService.assign(id, { email: "Alice@Example.org" });
+    await settleReads();
 
     const receipts = await db.receipt.findMany();
     expect(receipts).toHaveLength(1);

@@ -46,6 +46,11 @@ export function membershipYearOf(boundary: Date, date: Date): number {
     return date.getTime() >= opens ? year : year - 1;
 }
 
+/** The boundary that opens membership year `year`. */
+export function membershipYearStart(boundary: Date, year: number): Date {
+    return new Date(Date.UTC(year, boundary.getUTCMonth(), boundary.getUTCDate()));
+}
+
 /** A membership year's name: 2026 → "2026-2027". */
 export function membershipYearLabel(year: number): string {
     return `${year}-${year + 1}`;

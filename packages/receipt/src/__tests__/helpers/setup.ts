@@ -5,6 +5,7 @@ import type { FailureKind } from "@checkin/component-kit";
 import type { InKindDonor, OcrProvider, ReceiptConfig, ReceiptPrincipal } from "../../contract";
 import { createMemoryFileStore, newMailItemFileKey, receiptFileKey, sha256Hex } from "../../lib/fileStorage";
 import { configureReceipt, fileStore } from "../../runtime";
+import { readsInFlight, receiptService } from "../../services/receiptService";
 
 export const TEST_ORG_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -64,6 +65,7 @@ export function configure(overrides: Partial<ReceiptConfig> = {}): void {
     auth: { getPrincipal: async () => current },
     org: async () => ({ id: TEST_ORG_ID, name: "Test Org" }),
     fileStore: testStore,
+    rawMailRetentionDays: 30,
     ...overrides,
   });
 }
@@ -82,6 +84,8 @@ export async function storedBytes(fileKey: string | null): Promise<string> {
 }
 
 export async function clearAll(): Promise<void> {
+  // A reading the last test left running would write audit rows after they are cleared.
+  await settleReads();
   testStore.objects.clear();
   await db.receiptAuditLog.deleteMany();
   await db.receiptPairDecision.deleteMany();
@@ -93,6 +97,7 @@ export async function clearAll(): Promise<void> {
   await db.receiptIgnoredFile.deleteMany();
   await db.receiptMailReply.deleteMany();
   await db.receiptMailAtRisk.deleteMany();
+  await db.receiptMailMessage.deleteMany();
   await db.receiptMailLease.deleteMany();
   await db.receiptOutcomeNotice.deleteMany();
 }
@@ -140,4 +145,25 @@ export async function stateOf(id: string): Promise<string | undefined> {
 
 export async function actions(id: string): Promise<string[]> {
   return (await db.receiptAuditLog.findMany({ where: { receiptId: id }, orderBy: { id: "asc" } })).map((a) => a.action);
+}
+
+/** Waits for every background reading started so far, and those they start in turn. */
+export async function settleReads(): Promise<void> {
+  while (readsInFlight.size > 0) await Promise.all([...readsInFlight]);
+}
+
+/** Uploads, waits for its background reading to land, and answers the uploader's view of the receipt then. */
+export async function uploadRead(...args: Parameters<typeof receiptService.upload>) {
+  const r = await receiptService.upload(...args);
+  await settleReads();
+  const { lineItems: _lines, financialReviewReasons: _reasons, purchaseOutcome: _outcome, duplicateNotice: _notice, ...view } = await receiptService.get(r.id, "submitter");
+  return view;
+}
+
+/** "Read it again", waits for that reading to land, and answers the receipt as it then stands. */
+export async function retryRead(...args: Parameters<typeof receiptService.retryOcr>) {
+  const [id, access] = args;
+  await receiptService.retryOcr(...args);
+  await settleReads();
+  return receiptService.get(id, access);
 }

@@ -102,6 +102,21 @@ jobs:
       - name: Check image sources (no anonymous Docker Hub pulls)
         run: bash scripts/check-image-sources.sh
 
+      # Under pipefail, piping into `grep -q` fails when grep exits early and the
+      # producer takes SIGPIPE, so a match reads as no match. Use a here-string.
+      - name: Check for piped grep -q
+        run: |
+          rc=0
+          grep -rnE '(^|[^|])\|&?\s*grep(\s+-\S+)*\s+-[a-zA-Z]*q' .github scripts checkin-app/scripts deploy client \
+            --include='*.sh' --include='*.yml' --include='*.yaml' --exclude=security-boundary-isolation-diff.selfcheck.sh || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::pipe into grep -q can misfire under pipefail; use grep -q PATTERN <<<\"\$VAR\" instead"
+            exit 1
+          elif [ "$rc" -ne 1 ]; then
+            echo "::error::the piped grep -q scan itself failed (grep exit $rc)"
+            exit 1
+          fi
+
       - id: detect
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -128,8 +143,8 @@ jobs:
           # vector is the exception inside client/: both this repo's Python tests
           # AND the Node verifyKioskSignature test read it, so editing it alone
           # must still run the Node tier.
-          if printf '%s\n' "$changed" | grep -qvE '(^client/|(^|/)docs/|\.md$)' \
-            || printf '%s\n' "$changed" | grep -qxF 'client/kiosk-signing-vector.test.json'; then
+          if grep -qvE '(^client/|(^|/)docs/|\.md$)' <<<"$changed" \
+            || grep -qxF 'client/kiosk-signing-vector.test.json' <<<"$changed"; then
             echo "App code changed — running full CI."
             echo "app=true" >> "$GITHUB_OUTPUT"
           else
@@ -139,7 +154,7 @@ jobs:
           # The Python kiosk client has its own tier (client-tests below). Also
           # run it when this workflow changes, so edits to that job are exercised
           # by the PR that makes them.
-          if printf '%s\n' "$changed" | grep -qE '^(client/|\.github/workflows/ci\.yml$)'; then
+          if grep -qE '^(client/|\.github/workflows/ci\.yml$)' <<<"$changed"; then
             echo "Kiosk client (or this workflow) changed — running the Python tier."
             echo "client=true" >> "$GITHUB_OUTPUT"
           else
@@ -158,7 +173,7 @@ jobs:
           # lint reads the root eslint.config.mjs; its plugins resolve through
           # package-lock.json, already listed. Every package and function
           # tsconfig extends the root tsconfig.base.json.
-          if printf '%s\n' "$changed" | grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|eslint\.config\.mjs$|tsconfig\.base\.json$|\.github/workflows/ci\.yml$|\.github/actions/ecr-public-login/|scripts/(test-)?check-library-boundaries\.(mjs|sh)$|checkin-app/prisma/schema\.prisma$)'; then
+          if grep -qE '^(packages/|[^/]+-function/|package(-lock)?\.json$|eslint\.config\.mjs$|tsconfig\.base\.json$|\.github/workflows/ci\.yml$|\.github/actions/ecr-public-login/|scripts/(test-)?check-library-boundaries\.(mjs|sh)$|checkin-app/prisma/schema\.prisma$)' <<<"$changed"; then
             echo "A package/function workspace (or this workflow) changed — running the Vitest tier."
             echo "packages=true" >> "$GITHUB_OUTPUT"
           else
@@ -167,14 +182,14 @@ jobs:
           fi
           # The deploy scripts' checks (dump-task-logs.sh, smoke-live-app.sh) run
           # when a script, its test, or this workflow changes.
-          if printf '%s\n' "$changed" | grep -qE '^(scripts/(test-)?(dump-task-logs|smoke-live-app)\.sh|\.github/workflows/ci\.yml)$'; then
+          if grep -qE '^(scripts/(test-)?(dump-task-logs|smoke-live-app)\.sh|\.github/workflows/ci\.yml)$' <<<"$changed"; then
             echo "A deploy script (or this workflow) changed — running the script checks."
             echo "scripts=true" >> "$GITHUB_OUTPUT"
           else
             echo "scripts=false" >> "$GITHUB_OUTPUT"
           fi
           # The AI-review router's self-tests run when the router, its config or this workflow changes.
-          if printf '%s\n' "$changed" | grep -qE '^(\.github/(scripts|ai-review)/|\.github/workflows/ci\.yml$)'; then
+          if grep -qE '^(\.github/(scripts|ai-review)/|\.github/workflows/ci\.yml$)' <<<"$changed"; then
             echo "aireview=true" >> "$GITHUB_OUTPUT"
           else
             echo "aireview=false" >> "$GITHUB_OUTPUT"
@@ -913,7 +928,7 @@ jobs:
 
           # The receipt file backfill's bundle loads in the image and stops at its unset database.
           docker run --rm --entrypoint sh checkin-deploy-build:${{ github.sha }} \
-            -c 'node checkin-app/receipt-file-backfill.mjs 2>&1 | grep -q RECEIPT_DATABASE_URL' \
+            -c 'node checkin-app/receipt-file-backfill.mjs 2>&1 | grep RECEIPT_DATABASE_URL >/dev/null' \
             || { echo "::error::the receipt file backfill bundle does not load inside the image"; exit 1; }
 
       # Probe each wired library's error statuses against the production image

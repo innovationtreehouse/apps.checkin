@@ -1,6 +1,6 @@
 /**
- * Outcome emails: the notice each final transition owes, the send right after commit, and the
- * daily sweep's retries, against the real database.
+ * Outcome emails: the notice each final transition owes, the send right after commit, the daily
+ * sweep of notices never tried, and a person's Retry of a stuck one, against the real database.
  */
 import { it, expect, vi, beforeEach } from "vitest";
 import { describeDb } from "../helpers/db";
@@ -9,7 +9,8 @@ import { bindPorts, directory, principal, seedAccountMapping, seedApproval, seed
 import type { OutcomeMail } from "../../contract";
 import { raiseException, rejectException, approveLine } from "../../services/approvalService";
 import { advanceWorkflow, advanceWorkflowInTx } from "../../lib/workflow-engine";
-import { OUTCOME_ATTEMPTS, oweOutcomeNotice, sweepOutcomeNotices } from "../../lib/outcome-notices";
+import { oweOutcomeNotice, retryOutcomeNotice, SEND_FAILED_AGAIN, sweepOutcomeNotices } from "../../lib/outcome-notices";
+import { retryStuckItem, stuckItems } from "../../stuckItems";
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
 import { SYSTEM_ACTOR } from "../../lib/system-actor";
 
@@ -57,7 +58,7 @@ describeDb("outcome notices: written by the final transitions only", () => {
 
     await rejectException(FINANCE, id, approvalId, "refusing this charge");
     const [row] = await notices(id);
-    expect(row).toMatchObject({ event: "expense_line_rejected", orgId: ORG, attempts: 0 });
+    expect(row).toMatchObject({ event: "expense_line_rejected", orgId: ORG, firstFailedAt: null });
     expect(row.doneAt).not.toBeNull();
     expect(row.uploaderSentAt).not.toBeNull();
     expect(row.reimburseeSentAt).not.toBeNull();
@@ -168,36 +169,61 @@ describeDb("outcome notices: the sweep", () => {
     expect((await notices(id))[0].doneAt).not.toBeNull();
   });
 
-  it("resends only the copy that failed, skips done rows, and gives up after the attempt limit", async () => {
+  it("a failed copy leaves the notice stuck with its error; the sweep never retries it", async () => {
     const id = await inQbPending({ needsReimbursement: true });
     send.mockImplementation(async (_n, to) => to === "uploader");
     await complete(id);
-    let [row] = await notices(id);
+    const [row] = await notices(id);
     expect(row.uploaderSentAt).not.toBeNull();
-    expect(row.reimburseeSentAt).toBeNull();
-    expect(row).toMatchObject({ attempts: 1, claimedAt: null, doneAt: null });
-
-    const done = await inQbPending({ needsReimbursement: false });
-    await complete(done);
-
-    send.mockClear();
-    for (let run = 2; run <= OUTCOME_ATTEMPTS; run++) expect(await sweepOutcomeNotices()).toEqual({ sent: 0, failed: 1 });
-    expect(sentTo()).toEqual(Array.from({ length: OUTCOME_ATTEMPTS - 1 }, () => [id, "reimbursement_complete", "reimbursee"]));
-    [row] = await notices(id);
-    expect(row.attempts).toBe(OUTCOME_ATTEMPTS);
-    expect(row.doneAt).not.toBeNull();
+    expect(row).toMatchObject({ reimburseeSentAt: null, claimedAt: null, doneAt: null, failureReason: "To the reimbursee: the mail out reported failure" });
+    expect(row.firstFailedAt).not.toBeNull();
 
     send.mockClear();
     expect(await sweepOutcomeNotices()).toEqual({ sent: 0, failed: 0 });
     expect(send).not.toHaveBeenCalled();
+    expect(await stuckItems()).toEqual([{ id: String(row.id), step: "outcome email", href: `/expense/expenses/${id}`, failedAt: row.firstFailedAt }]);
   });
 
-  it("a send that throws counts as a failure and is retried", async () => {
+  it("a send that throws records its error text", async () => {
     const id = await inQbPending({ needsReimbursement: true });
     send.mockRejectedValueOnce(new Error("provider down")).mockResolvedValue(true);
     await complete(id);
-    expect((await notices(id))[0]).toMatchObject({ attempts: 1, doneAt: null });
-    expect(await sweepOutcomeNotices()).toEqual({ sent: 1, failed: 0 });
-    expect((await notices(id))[0].doneAt).not.toBeNull();
+    expect((await notices(id))[0]).toMatchObject({ doneAt: null, failureReason: "To the uploader: provider down" });
+  });
+});
+
+describeDb("outcome notices: a person's Retry", () => {
+  it("sends only the copy still owed, keeps the first failure time, and finishes the notice", async () => {
+    const id = await inQbPending({ needsReimbursement: true });
+    send.mockImplementation(async (_n, to) => to === "uploader");
+    await complete(id);
+    const [failed] = await notices(id);
+
+    send.mockClear();
+    await expect(retryOutcomeNotice(failed.id)).rejects.toMatchObject({ status: 409, message: SEND_FAILED_AGAIN });
+    const [again] = await notices(id);
+    expect(again.firstFailedAt).toEqual(failed.firstFailedAt);
+    expect(again).toMatchObject({ doneAt: null, claimedAt: null });
+
+    send.mockClear().mockResolvedValue(true);
+    await retryStuckItem({ id: String(failed.id), step: "outcome email" }, SYSTEM_ACTOR);
+    expect(sentTo()).toEqual([[id, "reimbursement_complete", "reimbursee"]]);
+    const [done] = await notices(id);
+    expect(done.doneAt).not.toBeNull();
+    expect(await stuckItems()).toEqual([]);
+  });
+
+  it("answers 404 for a notice not stuck and 503 while the mail out is unbound", async () => {
+    const id = await inQbPending({ needsReimbursement: true });
+    await complete(id);
+    const [sent] = await notices(id);
+    await expect(retryOutcomeNotice(sent.id)).rejects.toMatchObject({ status: 404 });
+
+    send.mockResolvedValue(false);
+    const other = await inQbPending({ needsReimbursement: true });
+    await complete(other);
+    const [stuck] = await notices(other);
+    bindPorts({});
+    await expect(retryOutcomeNotice(stuck.id)).rejects.toMatchObject({ status: 503 });
   });
 });

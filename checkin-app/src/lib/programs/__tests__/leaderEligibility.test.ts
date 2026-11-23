@@ -2,12 +2,12 @@
  * @jest-environment node
  */
 import { leaderIneligibilities, leaderIneligibilityReason } from '@/lib/programs/leaderEligibility';
-import { liveBgThreshold, loadCheckReviews } from '@/lib/membership/checkStanding';
+import { checkValidFor, loadCheckReviews } from '@/lib/membership/checkStanding';
 import type { DbClient } from '@/lib/db-client';
 
 jest.mock('@/lib/membership/checkStanding', () => ({
     ...jest.requireActual('@/lib/membership/checkStanding'),
-    liveBgThreshold: jest.fn(),
+    checkValidFor: jest.fn(),
     loadCheckReviews: jest.fn(),
 }));
 
@@ -35,7 +35,7 @@ describe('leaderIneligibilityReason', () => {
 describe('leaderIneligibilities', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-        (liveBgThreshold as jest.Mock).mockResolvedValue(new Date('2099-01-01'));
+        (checkValidFor as jest.Mock).mockResolvedValue(new Date('2099-01-01'));
         (loadCheckReviews as jest.Mock).mockImplementation(async (_db: unknown, ids: number[]) => new Map(ids.map((id) => [id, []])));
     });
 
@@ -44,14 +44,15 @@ describe('leaderIneligibilities', () => {
             { id: 1, isMember: true, lastBackgroundCheck: new Date('2099-06-01') },
             { id: 2, isMember: false, lastBackgroundCheck: new Date('2099-06-01') },
             { id: 3, isMember: true, lastBackgroundCheck: new Date('2098-01-01') },
-        ]);
+        ], 2099);
+        expect(checkValidFor).toHaveBeenCalledWith(2099, db);
         expect(reasons.get(1)).toBeNull();
         expect(reasons.get(2)).toMatch(/active Treehouse Membership/);
         expect(reasons.get(3)).toMatch(/background-check clearance/);
     });
 
     it('reads nothing for nobody', async () => {
-        expect((await leaderIneligibilities(db, [])).size).toBe(0);
-        expect(liveBgThreshold).not.toHaveBeenCalled();
+        expect((await leaderIneligibilities(db, [], 2099)).size).toBe(0);
+        expect(checkValidFor).not.toHaveBeenCalled();
     });
 });

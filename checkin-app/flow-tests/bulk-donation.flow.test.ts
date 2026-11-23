@@ -81,6 +81,7 @@ async function seededIds(s: Session): Promise<{ txId: number; fileId: number }> 
 }
 
 describe("bulk donation — route auth", () => {
+  // First hit of each route compiles it under `next dev`, so the loop outlasts the 20 s default.
   it("rejects every donation route without a session", async () => {
     // CHECKIN_ENV=local resolves a cookieless request as the keyless kiosk (403); elsewhere 401.
     for (const path of [...READS, ...idReads(1, 1)]) {
@@ -91,7 +92,7 @@ describe("bulk donation — route auth", () => {
       const { status } = await api(null, path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
       expect([method, path, [401, 403].includes(status)]).toEqual([method, path, true]);
     }
-  });
+  }, 60_000);
 
   it("denies every donation route to a plain member", async () => {
     const member = await loginAs(MEMBER);
@@ -101,7 +102,7 @@ describe("bulk donation — route auth", () => {
     for (const [method, path, body] of WRITES) {
       expect([method, path, (await send(member, method, path, body)).status]).toEqual([method, path, 403]);
     }
-  });
+  }, 60_000);
 
   it("serves every read to FINANCE and BOARD, including donor names", async () => {
     const finance = await loginAs(FINANCE);

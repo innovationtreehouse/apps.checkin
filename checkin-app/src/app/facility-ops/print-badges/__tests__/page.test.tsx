@@ -74,6 +74,20 @@ const printedNameCell = (fullName: string) => cell(fullName, 4);
 const yearCell = (fullName: string) => cell(fullName, 6);
 const nicknameBox = (fullName: string) =>
   screen.getByRole("textbox", { name: `Nickname for ${fullName}` });
+// Reads answer John Smith's nickname as the last PUT left it, since a save re-reads every load.
+// Each PUT toggles it between null and "Johnny".
+const savingJohnRoutes = (initial: string | null = null) => {
+  let nickname = initial;
+  const smith = <T extends { id: number }>(rows: T[]) => rows.map((r) => (r.id === 1 ? { ...r, nickname } : r));
+  return {
+    "/api/people/search?roster=active": () => ({ people: smith(johnRoster) }),
+    "/api/people/search": () => ({ people: smith(johns) }),
+    "/api/membership-ops/participants/1": () => {
+      nickname = nickname === "Johnny" ? null : "Johnny";
+      return { participant: { id: 1, name: "John Smith", nickname } };
+    },
+  };
+};
 
 describe("facility-ops/print-badges page", () => {
   it("loads and renders the participant roster", async () => {
@@ -87,6 +101,24 @@ describe("facility-ops/print-badges page", () => {
     expect(screen.getByText("BOARD")).toBeInTheDocument();
   });
 
+  it("shows KEYHOLDER only for a keyholder whose household is not DENIED or REVOKED", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const keyholder = (id: number, name: string, status: string, isMember: boolean) =>
+      ({ id, name, email: `k${id}@example.com`, isMember, isKeyholder: true, household: { orgMembership: { status } } });
+    mockFetchJson({ "/api/people/search": { people: [
+      keyholder(1, "Active Kim", "ACTIVE", true),
+      keyholder(2, "Revoked Rae", "REVOKED", false),
+      keyholder(3, "Denied Dee", "DENIED", false),
+    ] } });
+    renderWithProviders(<PrintBadgesPage />);
+    await screen.findByText("Active Kim");
+    fireEvent.click(screen.getByRole("checkbox", { name: /hide inactive/i }));
+
+    expect(cell("Active Kim", 7)).toContain("KEYHOLDER");
+    expect(cell("Revoked Rae", 7)).not.toContain("KEYHOLDER");
+    expect(cell("Denied Dee", 7)).not.toContain("KEYHOLDER");
+  });
+
   it("re-searches participants as the search box changes", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({ "/api/people/search": { people: participants } });
@@ -96,7 +128,7 @@ describe("facility-ops/print-badges page", () => {
     fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "Kim" } });
 
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("q=Kim")),
+      expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("q=Kim"), expect.anything()),
     );
   });
 
@@ -320,10 +352,7 @@ describe("facility-ops/print-badges page", () => {
   // Name column has to follow the save or it stops being proof of what will print.
   it("saves a typed nickname and reprints the name around it", async () => {
     setSession({ id: 1, isSysadmin: true });
-    const fetchMock = mockFetchJson({
-      ...johnRoutes,
-      "/api/membership-ops/participants/1": { participant: { id: 1, name: "John Smith", nickname: "Johnny" } },
-    });
+    const fetchMock = mockFetchJson(savingJohnRoutes());
     renderWithProviders(<PrintBadgesPage />);
     await screen.findByText("John Smith");
     await waitFor(() => expect(printedNameCell("John Smith")).toBe("John S."));
@@ -344,12 +373,7 @@ describe("facility-ops/print-badges page", () => {
 
   it("clears a nickname when the box is emptied", async () => {
     setSession({ id: 1, isSysadmin: true });
-    const withNickname = [{ ...johns[0], nickname: "Johnny" }, johns[1]];
-    const fetchMock = mockFetchJson({
-      "/api/people/search?roster=active": { people: [{ ...johnRoster[0], nickname: "Johnny" }, johnRoster[1]] },
-      "/api/people/search": { people: withNickname },
-      "/api/membership-ops/participants/1": { participant: { id: 1, name: "John Smith", nickname: null } },
-    });
+    const fetchMock = mockFetchJson(savingJohnRoutes("Johnny"));
     renderWithProviders(<PrintBadgesPage />);
     await screen.findByText("John Smith");
     await waitFor(() => expect(printedNameCell("John Smith")).toBe("Johnny"));
@@ -375,7 +399,10 @@ describe("facility-ops/print-badges page", () => {
     const fetchMock = mockFetchJson({
       "/api/people/search?roster=active": { people: johnRoster },
       "/api/people/search": () => ({ people }),
-      "/api/membership-ops/participants/1": { participant: { id: 1, name: "John Smith", nickname: "Johnny" } },
+      "/api/membership-ops/participants/1": () => {
+        people = [{ ...johns[0], nickname: "Johnny" }, johns[1]];
+        return { participant: { id: 1, name: "John Smith", nickname: "Johnny" } };
+      },
     });
     renderWithProviders(<PrintBadgesPage />);
     await screen.findByText("John Smith");
@@ -573,88 +600,66 @@ describe("facility-ops/print-badges page", () => {
     expect(screen.getByRole("checkbox", { name: /hide inactive & admins \(2\)/i })).toBeChecked();
   });
 
-  it("holds badge generation when the member roster request fails", async () => {
+  it("shows a LoadError for the roster and holds printing until Retry loads it", async () => {
     setSession({ id: 1, isSysadmin: true });
-    const logged = jest.spyOn(console, "error").mockImplementation(() => {});
+    let rosterFails = true;
     global.fetch = jest.fn(async (input: RequestInfo | URL) => {
-      const isRoster = input.toString().includes("roster=active");
-      return {
-        ok: !isRoster,
-        status: isRoster ? 500 : 200,
-        json: async () => (isRoster ? { error: "Internal Server Error" } : { people: participants }),
-      } as Response;
+      const url = String(input);
+      if (url.includes("roster=years")) {
+        return { ok: true, status: 200, ...jsonBody({ years: ["2026-2027"], current: "2026-2027" }) } as Response;
+      }
+      const isRoster = url.includes("roster=active");
+      if (isRoster && rosterFails) return { ok: false, status: 400, ...jsonBody({ error: "Refused" }) } as Response;
+      return { ok: true, status: 200, ...jsonBody({ people: isRoster ? johnRoster : johns }) } as Response;
     }) as unknown as typeof fetch;
     renderWithProviders(<PrintBadgesPage />);
-    await screen.findByText("Kim Keyholder");
+    expect(await screen.findByText("Couldn't load active member roster")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load membership years")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Select all" }));
-    await waitFor(() => expect(logged).toHaveBeenCalled());
     expect(screen.getByRole("button", { name: "Generate Badge (2)" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Generate Sticker (2)" })).toBeDisabled();
-    expect(notifications.show).toHaveBeenCalledWith(
-      expect.objectContaining({ color: "red", autoClose: false }),
-    );
-    logged.mockRestore();
+
+    rosterFails = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Generate Badge (2)" })).toBeEnabled());
+    expect(screen.queryByText("Couldn't load active member roster")).not.toBeInTheDocument();
   });
 });
 
-describe("a load that answers after a newer one", () => {
+describe("load order", () => {
   const answer = (body: unknown) => ({ ok: true, status: 200, ...jsonBody(body) }) as Response;
 
-  it("keeps the selected year's roster when the opening no-year roster answers last", async () => {
+  it("shows a LoadError for the years and reads no roster until they answer", async () => {
     setSession({ id: 1, isSysadmin: true });
-    let finishNoYear: () => void = () => {};
-    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input));
-      if (url.searchParams.get("roster") === "years") return answer({ years: ["2026-2027"], current: "2026-2027" });
-      if (url.searchParams.get("roster") === "active") {
-        if (url.searchParams.get("year")) return answer({ people: johnRoster });
-        return new Promise<Response>((resolve) => {
-          finishNoYear = () => resolve(answer({ people: johnRoster.map((m) => ({ ...m, year: null })) }));
-        });
+    let yearsFail = true;
+    const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.searchParams.get("roster") === "years") {
+        return yearsFail
+          ? ({ ok: false, status: 400, ...jsonBody({ error: "Refused" }) } as Response)
+          : answer({ years: ["2026-2027"], current: "2026-2027" });
       }
+      if (url.searchParams.get("roster") === "active") return answer({ people: johnRoster });
       return answer({ people: johns });
-    }) as unknown as typeof fetch;
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<PrintBadgesPage />);
-    await screen.findByText("John Smith");
+    expect(await screen.findByText("Couldn't load membership years")).toBeInTheDocument();
+    const rosterReads = () => fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.includes("roster=active"));
+    expect(rosterReads()).toEqual([]);
+
+    yearsFail = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(yearCell("John Smith")).toBe("2026-2027"));
-
-    await act(async () => { finishNoYear(); await new Promise((resolve) => setTimeout(resolve, 0)); });
-    expect(yearCell("John Smith")).toBe("2026-2027");
-  });
-
-  it("ignores the opening no-year roster's failure when it answers after the selected year's roster", async () => {
-    setSession({ id: 1, isSysadmin: true });
-    (notifications.show as jest.Mock).mockClear();
-    const logged = jest.spyOn(console, "error").mockImplementation(() => {});
-    let failNoYear: () => void = () => {};
-    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input));
-      if (url.searchParams.get("roster") === "years") return answer({ years: ["2026-2027"], current: "2026-2027" });
-      if (url.searchParams.get("roster") === "active") {
-        if (url.searchParams.get("year")) return answer({ people: johnRoster });
-        return new Promise<Response>((resolve) => {
-          failNoYear = () => resolve({ ok: false, status: 500, ...jsonBody({ error: "Internal Server Error" }) } as Response);
-        });
-      }
-      return answer({ people: johns });
-    }) as unknown as typeof fetch;
-    renderWithProviders(<PrintBadgesPage />);
-    await screen.findByText("John Smith");
-    await waitFor(() => expect(yearCell("John Smith")).toBe("2026-2027"));
-
-    await act(async () => { failNoYear(); await new Promise((resolve) => setTimeout(resolve, 0)); });
-    expect(yearCell("John Smith")).toBe("2026-2027");
-    expect(notifications.show).not.toHaveBeenCalled();
-    expect(logged).not.toHaveBeenCalled();
-    logged.mockRestore();
+    expect(rosterReads()).toEqual([expect.stringContaining("year=2026-2027")]);
   });
 
   it("keeps the latest search's rows when an earlier search answers last", async () => {
     setSession({ id: 1, isSysadmin: true });
     let finishKi: () => void = () => {};
     global.fetch = jest.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input));
+      const url = new URL(String(input), "http://localhost");
       if (url.searchParams.get("roster")) return answer({ people: [] });
       const q = url.searchParams.get("q");
       if (q === "Ki") return new Promise<Response>((resolve) => { finishKi = () => resolve(answer({ people: participants })); });

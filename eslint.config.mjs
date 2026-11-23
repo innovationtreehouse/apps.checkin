@@ -67,12 +67,50 @@ const rawNotificationImport = [
 ];
 
 // Files still on raw notifications: background-check pages wait for that process's
-// redesign; the rest are edited by an open PR (attendance/current #2375, useMembershipPage #3486).
+// redesign; attendance/current is open in another change.
 const rawNotificationExemptions = [
   "checkin-app/src/app/membership-ops/review/page.tsx",
   "checkin-app/src/app/membership/BackgroundChecksPanel.tsx",
   "checkin-app/src/app/attendance/current/page.tsx",
+];
+
+// Client code reads through useLoad and writes through api() from @/lib/api, so a
+// write re-reads every load on screen and a failure arrives as the route's words.
+const rawFetchGlobal = [
+  { name: "fetch", message: "Use api() or useLoad from @/lib/api." },
+];
+const rawFetchProperties = ["window", "globalThis", "self"].map((object) => ({
+  object,
+  property: "fetch",
+  message: "Use api() or useLoad from @/lib/api.",
+}));
+
+// Files that still call fetch, one reason each.
+const rawFetchExemptions = [
+  // Each read is billed when it wakes the database, so it runs only from a button.
+  "checkin-app/src/app/finance-ops/payments/page.tsx",
+  // Billed diagnostics behind buttons, plus public GitHub calls outside the app's routes.
+  "checkin-app/src/components/admin/SystemHealthPanels.tsx",
+  // Its read wakes the database on purpose, on its own schedule.
+  "checkin-app/src/components/DbWakeNotice.tsx",
+  // It re-checks on every path change, which useLoad's dedupe would skip.
+  "checkin-app/src/components/OnboardingGate.tsx",
+  // A nav-wide shared store with its own refresh broadcast.
+  "checkin-app/src/hooks/useTodoCounts.ts",
+  // Its after-save read retries by hand.
   "checkin-app/src/app/membership/useMembershipPage.ts",
+  // Its mount sends a sync POST when the person returns from signing.
+  "checkin-app/src/app/membership/KeyVolunteerAgreementPanel.tsx",
+  // Kiosk reads send signed headers from the URL; open PR #2375 edits it.
+  "checkin-app/src/app/attendance/current/page.tsx",
+  // Kiosk reads send signed headers from the URL and handle a 204 resting answer.
+  "checkin-app/src/app/attendance/certifications/page.tsx",
+  // A 409 refusal carries the matching people, which HttpError cannot hold.
+  "checkin-app/src/app/membership-ops/volunteer-memberships/page.tsx",
+  // Background-check pages wait for that process's redesign.
+  "checkin-app/src/app/membership-ops/review/page.tsx",
+  "checkin-app/src/app/membership/BackgroundChecksPanel.tsx",
+  "checkin-app/src/app/dev/bg-consent/DevBgConsentClient.tsx",
 ];
 
 const eslintConfig = defineConfig([
@@ -121,6 +159,31 @@ const eslintConfig = defineConfig([
     ],
     rules: {
       "no-restricted-imports": ["error", { paths: rawNotificationImport }],
+    },
+  },
+  {
+    // The kit wraps @mantine/notifications for every package page.
+    files: ["packages/*/src/**/*.{ts,tsx}"],
+    ignores: ["packages/component-ui/**", "**/__tests__/**", "**/*.test.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": ["error", { paths: rawNotificationImport }],
+    },
+  },
+  {
+    files: [
+      "checkin-app/src/app/**/*.{ts,tsx}",
+      "checkin-app/src/components/**/*.{ts,tsx}",
+      "checkin-app/src/hooks/**/*.{ts,tsx}",
+    ],
+    ignores: [
+      "checkin-app/src/app/api/**",
+      "**/__tests__/**",
+      "**/*.test.{ts,tsx}",
+      ...rawFetchExemptions,
+    ],
+    rules: {
+      "no-restricted-globals": ["error", ...rawFetchGlobal],
+      "no-restricted-properties": ["error", ...rawFetchProperties],
     },
   },
   // API routes must log through @/lib/logger (console sink + logBackendError),

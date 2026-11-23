@@ -1,7 +1,8 @@
 import prisma from "@/lib/prisma";
+import { VALID_CONTACT_WHERE } from "@/lib/emergencyContacts/valid";
 import { isYouth } from "@/lib/time";
 import { LIVE_KEYHOLDER, LIVE_VISIT } from "@/lib/visit/filters";
-import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits } from "@/lib/supervision";
+import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, uncoveredYouth } from "@/lib/supervision";
 import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
 import { invalidatableCache } from "@/lib/invalidatableCache";
 import { getKioskDisplayNames } from "@/lib/kiosk-names";
@@ -104,7 +105,7 @@ async function computeFullAttendance(kiosk: boolean) {
                             id: true,
                             // Only valid (non-member, complete) contacts, primary first.
                             emergencyContacts: {
-                                where: { conflictParticipantId: null, name: { not: "" }, phone: { not: "" } },
+                                where: VALID_CONTACT_WHERE,
                                 orderBy: [{ priority: "asc" }, { id: "asc" }],
                                 select: { id: true, name: true, phone: true, relationship: true },
                             },
@@ -152,11 +153,10 @@ async function computeFullAttendance(kiosk: boolean) {
         total: activeVisits.length,
     };
 
-    const adultVisits = activeVisits.filter(v => !youthMap.get(v.id));
-    const unaccompaniedYouth = youthVisits.filter(sv => {
-        if (!sv.person.householdId) return true;
-        return !adultVisits.some(av => av.person.householdId === sv.person.householdId);
-    });
+    const unaccompaniedYouth = uncoveredYouth(activeVisits.map(v => ({
+        youth: youthMap.get(v.id)!,
+        householdId: v.person.householdId,
+    })));
     // Two deep is two SUPERVISING adults, not two bodies over 18 — the
     // same test the departure interrupt uses. ponytail: its own query rather than
     // widening the select above, so both surfaces run one shared rule. Asked only

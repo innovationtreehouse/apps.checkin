@@ -12,9 +12,8 @@
 import { checkStartedRows, markCheckStarted } from '@/lib/membership/checkStarted';
 import { advanceExternalIfComplete } from '@/lib/membership/external';
 import { notifyReviewers } from '@/lib/membership/review';
-import { settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
-import { logBackendError } from '@/lib/logger';
-import { liveBgThreshold } from '@/lib/membership/checkStanding';
+import { settleAfterEvent } from '@/lib/membership/settleHouseholdBg';
+import { checkValidForApplication } from '@/lib/membership/checkStanding';
 
 function mockMakeDb() {
     return {
@@ -31,9 +30,9 @@ jest.mock('@/lib/membership/external', () => {
     return { ExternalError: actual.ExternalError, advanceExternalIfComplete: jest.fn() };
 });
 jest.mock('@/lib/membership/review', () => ({ notifyReviewers: jest.fn() }));
-jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn() }));
+jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleAfterEvent: jest.fn() }));
 jest.mock('@/lib/logger', () => ({ ...jest.requireActual('@/lib/logger'), logBackendError: jest.fn() }));
-jest.mock('@/lib/membership/checkStanding', () => ({ liveBgThreshold: jest.fn() }));
+jest.mock('@/lib/membership/checkStanding', () => ({ checkValidForApplication: jest.fn() }));
 jest.mock('@/lib/membership/background-check/manual-adapter', () => ({ backgroundCheckProvider: { getConsentDeepLink: jest.fn() } }));
 
 const prisma = jest.requireMock<{ default: ReturnType<typeof mockMakeDb> }>('@/lib/prisma').default;
@@ -124,17 +123,10 @@ describe('markCheckStarted — the review', () => {
         expect(auditCreate).toHaveBeenCalledTimes(1);
         expect(auditCreate.mock.calls[0][0].data).toMatchObject({ actorId: 2, action: 'CREATE', affectedEntityId: 70, newData: expect.objectContaining({ checkStarted: true }) });
         expect(notifyReviewers).toHaveBeenCalledTimes(1);
-        expect(settleHouseholdBg).toHaveBeenCalledWith(10);
+        expect(settleAfterEvent).toHaveBeenCalledWith(10, expect.any(String), {}, expect.anything());
         expect(advanceExternalIfComplete).toHaveBeenCalledWith(40);
     });
 
-    it('a failed settle is logged; the started check stands and the external step still advances', async () => {
-        const failure = new Error('Shopify unavailable');
-        jest.mocked(settleHouseholdBg).mockRejectedValueOnce(failure);
-        await expect(markCheckStarted(2, 2)).resolves.toEqual({ processId: 70 });
-        expect(logBackendError).toHaveBeenCalledWith(failure, expect.any(String), { householdId: 10, processId: 70 });
-        expect(advanceExternalIfComplete).toHaveBeenCalledWith(40);
-    });
 
     it('takes the Person row lock before reading', async () => {
         await markCheckStarted(2, 2);
@@ -168,14 +160,14 @@ describe('markCheckStarted — the review', () => {
         expect(process_.updateMany).not.toHaveBeenCalled();
         expect(auditCreate).not.toHaveBeenCalled();
         expect(notifyReviewers).not.toHaveBeenCalled();
-        expect(settleHouseholdBg).not.toHaveBeenCalled();
+        expect(settleAfterEvent).not.toHaveBeenCalled();
         expect(advanceExternalIfComplete).not.toHaveBeenCalled();
     });
 
     it('a person with no household is marked but nothing is settled', async () => {
         given(actor({ id: 2, householdId: null }), subject({ householdId: null }));
         await markCheckStarted(2, 2);
-        expect(settleHouseholdBg).not.toHaveBeenCalled();
+        expect(settleAfterEvent).not.toHaveBeenCalled();
         expect(advanceExternalIfComplete).not.toHaveBeenCalled();
     });
 });
@@ -183,7 +175,7 @@ describe('markCheckStarted — the review', () => {
 describe('checkStartedRows', () => {
     const me = { id: 1, name: 'Me', householdId: 10, isHouseholdLead: true, ...adult, lastBackgroundCheck: null };
 
-    beforeEach(() => jest.mocked(liveBgThreshold).mockResolvedValue(new Date('2026-01-01')));
+    beforeEach(() => jest.mocked(checkValidForApplication).mockResolvedValue(new Date('2026-01-01')));
 
     it("returns a lead's own row and each other non-minor member, with only personId, name and state", async () => {
         person.findUnique.mockResolvedValue(me);
@@ -214,8 +206,16 @@ describe('checkStartedRows', () => {
         await expect(checkStartedRows(1)).resolves.toEqual([{ personId: 1, name: 'Me', state: 'NOTHING_TO_DO' }]);
     });
 
+    it("measures against the year of the household's open application", async () => {
+        person.findUnique.mockResolvedValue({ ...me, isHouseholdLead: false });
+        const app = { appliesToYear: null, createdAt: new Date('2026-07-15') };
+        process_.findFirst.mockResolvedValue(app);
+        await checkStartedRows(1);
+        expect(checkValidForApplication).toHaveBeenCalledWith(app);
+    });
+
     it('with no recheck policy no clearance counts, so a check needs marking', async () => {
-        jest.mocked(liveBgThreshold).mockResolvedValue(null);
+        jest.mocked(checkValidForApplication).mockResolvedValue(null);
         person.findUnique.mockResolvedValue({ ...me, isHouseholdLead: false, lastBackgroundCheck: new Date() });
         await expect(checkStartedRows(1)).resolves.toEqual([{ personId: 1, name: 'Me', state: 'NEEDS_MARKING' }]);
     });

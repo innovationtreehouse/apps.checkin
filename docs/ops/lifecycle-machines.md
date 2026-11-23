@@ -1,6 +1,6 @@
 # Lifecycle machines — running and regenerating
 
-Three machines are written down, each as one declarative definition with its
+Four machines are written down, each as one declarative definition with its
 legal states and its transition table:
 
 - **Enrollment** (`ProgramParticipant.status`): a participant's place in a program, from
@@ -12,6 +12,13 @@ legal states and its transition table:
   (paid and check cleared) makes it ACTIVE; DENIED's one exit is the board's
   restore to NONE. `setHouseholdStatus` is its one writer, and
   `noRawStatusWrites.test.ts` fails CI on a status write anywhere else.
+- **Program sale** (`Program.phase`, `enrollmentStatus` and the start, off-sale and
+  sale-ended dates): a program's time on sale — NOT_ON_SALE, ON_SALE,
+  SALE_ENDED, then FINISHED. `classify` reads those columns: phase FINISHED
+  gives FINISHED, a set sale-ended date, or an off-sale date (else the start
+  date) on or before today, gives SALE_ENDED, and otherwise `enrollmentStatus`
+  OPEN gives ON_SALE and CLOSED gives NOT_ON_SALE. The state has no column of
+  its own.
 
 Enrollment and the membership process also name the query filter for each state
 set and a `validate()` that flags rows sitting off the diagram.
@@ -33,6 +40,7 @@ Run everything below from `checkin-app/`.
 | Enrollment machine | `src/lib/programs/enrollmentState.ts` |
 | Membership process machine | `src/lib/membership/lifecycle.ts` |
 | Household status machine and its writer | `src/lib/membership/householdStatus.ts` |
+| Program sale machine | `src/lib/programs/saleState.ts` |
 | Generated diagrams, coverage matrix, reachability | `docs/generated/lifecycle/` |
 | Off-diagram sweep | `src/lib/lifecycleDrift.ts`, `src/app/api/cron/lifecycle-reconcile/` |
 
@@ -71,7 +79,8 @@ Seven guards cover this area, and each fails for a different reason:
 - **Enum parity** — a status was added to or removed from the Prisma enum without
   the machine's local union following.
 - **No raw status writes** — code writes a machine column on `ProgramParticipant`,
-  `OrgMembership` or `OrgMembershipProcess` outside a declared helper, flag-only
+  `OrgMembership`, `OrgMembershipProcess` or `Program` (`phase`,
+  `enrollmentStatus`, `offSaleAt`, `saleEndedAt`) outside a declared helper, flag-only
   writes included, or an allowlisted file's write count changed. Route the write
   through the machine's helper, or drop the allowlist row once its file has moved
   onto it.

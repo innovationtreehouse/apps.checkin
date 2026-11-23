@@ -38,10 +38,11 @@ jest.mock('next-auth/next', () => ({
 
 const TAG = 'roles-api-test';
 
-function patchReq(body: unknown) {
+// Every grant here acknowledges the background-check warning; positionCheckRoles covers the warning itself.
+function patchReq(body: Record<string, unknown>) {
     return new Request('http://localhost:4000/api/roles', {
         method: 'PATCH',
-        body: JSON.stringify(body),
+        body: JSON.stringify({ acknowledgeCheck: true, ...body }),
     }) as unknown as import("next/server").NextRequest;
 }
 
@@ -116,6 +117,24 @@ describe('Admin Roles API Integration Tests', () => {
             expect(res.status).toBe(403);
             const data = await res.json();
             expect(data.error).toContain('Forbidden');
+        });
+
+        it.each(['isKeyholder', 'isBackgroundCheckReviewer', 'isFinance', 'isOperations', 'isKeyVolunteer'])(
+            'should return 403 for a %s who is not Board or sysadmin',
+            async (flag) => {
+                asSession({ id: testUserId, [flag]: true });
+                const res = await GET(getReq());
+                expect(res.status).toBe(403);
+                expect(await res.json()).not.toHaveProperty('people');
+            },
+        );
+
+        it('should list people for a Board member', async () => {
+            asSession({ id: testUserId, isBoardMember: true });
+            const res = await GET(getReq());
+            expect(res.status).toBe(200);
+            const ids = (await res.json()).people.map((p: { id?: number }) => p.id);
+            expect(ids).toContain(testTargetUserId);
         });
 
         it('should return all participants (youth flagged, dob hidden) for a isSysadmin', async () => {
@@ -627,18 +646,19 @@ describe('Admin Roles API Integration Tests', () => {
             // Reset so this request changes both at once.
             await prisma.person.update({ where: { id: stagingTargetId }, data: { canAccessStaging: false } });
             await prisma.personRole.deleteMany({ where: { personId: stagingTargetId, role: 'OPERATIONS' } });
-            const before = await prisma.auditLog.count({ where: { affectedEntityId: stagingTargetId } });
+            const changeRows = { affectedEntityId: stagingTargetId, tableName: { in: ['Person', 'PersonRole'] } };
+            const before = await prisma.auditLog.count({ where: changeRows });
 
             asSession({ id: testSysAdminId, isSysadmin: true });
             const res = await PATCH(patchReq({ targetUserId: stagingTargetId, canAccessStaging: true, isOperations: true }));
             expect(res.status).toBe(200);
 
             const rows = await prisma.auditLog.findMany({
-                where: { affectedEntityId: stagingTargetId },
+                where: changeRows,
                 orderBy: { id: 'desc' },
                 take: 2,
             });
-            expect(await prisma.auditLog.count({ where: { affectedEntityId: stagingTargetId } })).toBe(before + 2);
+            expect(await prisma.auditLog.count({ where: changeRows })).toBe(before + 2);
 
             const person = rows.find((r) => r.tableName === 'Person');
             const personRole = rows.find((r) => r.tableName === 'PersonRole');

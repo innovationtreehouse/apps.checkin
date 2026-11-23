@@ -5,7 +5,7 @@
  * Finance books, skips or matches by id what the drain hands over.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { MAX_DRIFT_CHECKS_PER_RUN, Pacer, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboAccount, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_DRIFT_CHECKS_PER_RUN, Pacer, QboThrottledError, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboAccount, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
 import type { FailureReport } from "@checkin/component-kit";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
@@ -19,6 +19,14 @@ import { DEFAULT_DONATION_SETTINGS, readDonationSettings, updateDonationSettings
 import type { InKindAccounts, InKindCapital, OwnerInfo } from "../../contract";
 import { TEST_ORG_ID } from "../helpers/factories";
 import { retryStuckItem, stuckItems } from "../../stuckItems";
+import { z } from "zod";
+
+/** Finance's capital decision on a gift's lines, as its two review steps leave it. */
+async function decideCapital(giftId: number, capitalLineIds: number[], registeredAt: Date | null = new Date()) {
+  await db.inKindDonation.update({ where: { id: giftId }, data: { capitalReviewNeeded: true } });
+  await db.inKindDonationLine.updateMany({ where: { donationId: giftId }, data: { isCapital: false } });
+  await db.inKindDonationLine.updateMany({ where: { id: { in: capitalLineIds } }, data: { isCapital: true, depreciationYears: 5, capitalBucketId: 1, registeredAt } });
+}
 
 const orgId = TEST_ORG_ID;
 const FINANCE = 10;
@@ -129,8 +137,8 @@ class FakeQbo {
 
 let qbo: FakeQbo;
 let accounts: Partial<Record<BooksMapRole, string>>;
-let awaiting: { giftSource: string; giftId: number }[];
-let assets: number[];
+/** What the register was asked to mint, by gift line. */
+let registered: number[];
 /** The expense account rules: supplies for any part, equipment for an asset; a GTIN here has no rule. */
 let unruled: Set<string>;
 let alerts: number;
@@ -140,7 +148,20 @@ let failures: FailureReport[];
 
 function configure() {
   const client = new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }, new Pacer({ perSecond: 1e6, maxInFlight: 1e6 }));
-  const capital: InKindCapital = { submit: async () => {}, awaitingReview: async () => awaiting, assetLineIds: async () => assets };
+  const notCalled = async (): Promise<never> => {
+    throw new Error("the drain reads capital from the gift's lines");
+  };
+  const capital: InKindCapital = {
+    reviewNeeded: async () => false,
+    review: { designationInput: z.never(), periodInput: z.never(), designate: notCalled, setPeriod: notCalled },
+    register: async (_org, line) => {
+      registered.push(line.giftLineId);
+      return [`ITFA${line.giftLineId}`];
+    },
+    submit: notCalled,
+    awaitingReview: notCalled,
+    assetLineIds: notCalled,
+  };
   const rules: InKindAccounts = {
     resolve: async (_org, parts) => {
       if (rulesThrow) throw rulesThrow;
@@ -253,8 +274,7 @@ beforeEach(async () => {
   qbo.closeDate = "2026-06-30";
   globalThis.fetch = qbo.handle as typeof fetch;
   accounts = { ...ACCOUNTS };
-  awaiting = [];
-  assets = [];
+  registered = [];
   unruled = new Set();
   alerts = 0;
   failures = [];
@@ -282,7 +302,7 @@ describeDb("in-kind drain", () => {
     await switchOn();
     const id = await acceptedGift();
     const [, lathe] = await lineIds(id);
-    assets = [lathe];
+    await decideCapital(id, [lathe]);
 
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
 
@@ -309,10 +329,23 @@ describeDb("in-kind drain", () => {
   it("never books a gift while a line waits on capital review", async () => {
     await switchOn();
     const id = await acceptedGift();
-    awaiting = [{ giftSource: "receipt", giftId: id }];
+    await db.inKindDonation.update({ where: { id }, data: { capitalReviewNeeded: true } });
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0 });
     expect(qbo.posts).toHaveLength(0);
     expect(await db.inKindPosting.count()).toBe(0);
+  });
+
+  it("registers a capital line before its gift books, in the same run, and never again", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    const [, lathe] = await lineIds(id);
+    await decideCapital(id, [lathe], null);
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, capital: { registered: 1, failed: 0 } });
+    expect(registered).toEqual([lathe]);
+    expect(qbo.posts[0].body.Line.map((l) => l.JournalEntryLineDetail.AccountRef.value)).toEqual(["400", "600", "150"]);
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ capital: { registered: 0, failed: 0 } });
+    expect(registered).toEqual([lathe]);
   });
 
   it("a $0 line that reaches the drain is a bug: the post fails for finance, never booked", async () => {
@@ -491,30 +524,54 @@ describeDb("in-kind drain", () => {
     expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
   });
 
-  it("a settle that throws after the create leaves the gift POSTING, the run carries on, and the stale claim links the entry without a second create", async () => {
+  it("a settle that throws after the create leaves the gift stuck with its error, the run carries on, and a retry links the entry without a second create", async () => {
     await switchOn();
     const stuck = await acceptedGift();
     // Another value: an unclaimed entry of the same value and date would send this gift to finance.
     const next = await acceptedGift({ totalCents: 4400 });
     const transaction = vi.spyOn(getPrisma(), "$transaction");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     qbo.afterCreate = async () => {
       qbo.afterCreate = null;
       transaction.mockRejectedValueOnce(new Error("deadlock detected"));
     };
 
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1, posted: 1, sweep: { entries: 2, flagged: 0 } });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1, posted: 1 });
     transaction.mockRestore();
-    expect(await posting(stuck)).toMatchObject({ matchState: "POSTING", claimedAt: expect.any(Date) });
+    expect(await posting(stuck)).toMatchObject({ matchState: "NEEDS_FINANCE", claimedAt: null, qbCreateAttemptedAt: expect.any(Date), qbFirstFailedAt: expect.any(Date), qbLastError: expect.stringMatching(/deadlock detected/) });
     expect(await bookings(stuck)).toEqual([]);
     expect(await posting(next)).toMatchObject({ matchState: "CREATED" });
+    expect(await stuckItems()).toEqual([expect.objectContaining({ id: `receipt ${stuck}`, step: "QuickBooks posting" })]);
+    expect(failures).toEqual([expect.objectContaining({ lane: "in-kind-posting", detail: `receipt gift ${stuck}` })]);
 
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ waiting: 1, posted: 0 });
     expect(qbo.posts).toHaveLength(2);
 
-    await db.inKindPosting.update({ where: { orgId_source_giftId: { orgId, source: "receipt", giftId: stuck } }, data: { claimedAt: new Date(Date.now() - STALE_CLAIM_MS - 1000) } });
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, failed: 0 });
+    await retryStuckItem({ id: `receipt ${stuck}`, step: "QuickBooks posting" });
     expect(qbo.posts).toHaveLength(2);
     expect(await bookings(stuck)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
+    expect(await stuckItems()).toEqual([]);
+  });
+
+  it("a settle that throws a throttle releases the claim unfailed; the run's one retry links the entry and goes on to the next gift", async () => {
+    await switchOn();
+    const throttled = await acceptedGift();
+    const next = await acceptedGift({ totalCents: 4400 });
+    const transaction = vi.spyOn(getPrisma(), "$transaction");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    qbo.afterCreate = async () => {
+      qbo.afterCreate = null;
+      transaction.mockRejectedValueOnce(new QboThrottledError("QBO create failed 429", "tid", new Date()));
+    };
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ throttled: 1, posted: 2, failed: 0 });
+    transaction.mockRestore();
+    expect(await posting(throttled)).toMatchObject({ matchState: "CREATED", qbFirstFailedAt: null, qbLastError: null });
+    expect(await bookings(throttled)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
+    expect(await posting(next)).toMatchObject({ matchState: "CREATED" });
+    expect(qbo.posts).toHaveLength(2);
+    expect(failures).toEqual([]);
+    expect(await stuckItems()).toEqual([]);
   });
 
   it("claims that throw are counted failed and the run goes on to every gift", async () => {
@@ -811,7 +868,7 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
 
   it("book is refused while a line waits on capital review", async () => {
     const id = await unbookedGift();
-    awaiting = [{ giftSource: "receipt", giftId: id }];
+    await db.inKindDonation.update({ where: { id }, data: { capitalReviewNeeded: true } });
     await expect(resolve(id, { action: "book" })).rejects.toMatchObject({ status: 409 });
     expect(qbo.posts).toHaveLength(0);
     expect((await posting(id)).matchState).toBe("UNBOOKED");
@@ -1020,7 +1077,7 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
     unruled.add(LATHE_GTIN);
     const id = await acceptedGift();
     const [, lathe] = await lineIds(id);
-    assets = [lathe];
+    await decideCapital(id, [lathe]);
     await runInKindQbPosting(orgId);
 
     await expect(resolve(id, { action: "set-account", lineId: lathe, quickBooksAccountId: "600" })).rejects.toMatchObject({
@@ -1086,6 +1143,11 @@ describeDb("in-kind drain settings", () => {
     await expect(readDonationSettings(db, orgId)).resolves.toEqual(DEFAULT_DONATION_SETTINGS);
     await db.donationOrgSettings.create({ data: { orgId } });
     await expect(readDonationSettings(db, orgId)).resolves.toEqual(DEFAULT_DONATION_SETTINGS);
+  });
+
+  it("answers a save with the per-run limit as read, a stored one above 100 as 100", async () => {
+    await db.donationOrgSettings.create({ data: { orgId, qbMaxCreatesPerRun: 1_000 } });
+    await expect(updateDonationSettings(orgId, { qbMatchWindowDays: 3 }, { isFinance: true, isBoard: false }, ACTOR)).resolves.toEqual({ qbMatchWindowDays: 3, qbMaxCreatesPerRun: 100 });
   });
 
   it("records a change with its before and after", async () => {
@@ -1305,8 +1367,11 @@ describeDb("in-kind drain — a QuickBooks throttle", () => {
     await switchOn();
     const gifts = [await acceptedGift(), await acceptedGift()];
     qbo.createAnswer = () => ({ status: 429 });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ throttled: 2, failed: 0, posted: 0 });
+    expect(warn).toHaveBeenCalledWith("[bulk-donation] qb_drain_throttled", { remaining: 2 });
+    warn.mockRestore();
     for (const id of gifts) expect((await posting(id).catch(() => null))?.qbFirstFailedAt ?? null).toBeNull();
     expect(failures).toEqual([]);
     expect(await stuckItems()).toEqual([]);

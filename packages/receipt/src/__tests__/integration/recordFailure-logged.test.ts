@@ -1,8 +1,7 @@
 /** A failure that cannot be recorded on the receipt is logged with the receipt id, and the request goes on. */
 import { beforeEach, expect, it, vi } from "vitest";
-import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { clearAll, configure, manualDetails, recordingPorts, textFile } from "../helpers/setup";
+import { clearAll, configure, manualDetails, recordingPorts, textFile, uploadRead } from "../helpers/setup";
 
 const unrecorded = new Error("database unavailable");
 
@@ -26,7 +25,7 @@ describeDb("recordFailure errors", () => {
     ports.fail[step] = true;
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), ...(step === "donor" ? { isInKind: true, donor: { self: true } } : {}) });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails(), ...(step === "donor" ? { isInKind: true, donor: { self: true } } : {}) });
 
     expect(logged).toHaveBeenCalledWith(expect.stringContaining(`recording the failure of receipt ${r.id}`), unrecorded);
     logged.mockRestore();

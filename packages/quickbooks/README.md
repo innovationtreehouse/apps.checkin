@@ -55,12 +55,12 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   in the note, for the candidate adapters. Two different markers come back space-joined
   and match no key, so `findMatch` sends the entry to a person.
   Writes re-check the realm guard, so production needs `CHECKIN_ENV=prod` at write time.
-- Every request goes through one pacer per process (`pacer.ts`): 5 a second, 4 in flight. A 429 pauses every request for `Retry-After` (at most 120 s) or 60 s, the request is tried once more after the pause, and a second 429 throws `QboThrottledError`. The pacer logs the previous day's request count at the first request of each UTC day. Every request has a 30 s timeout. Errors name
+- Every request goes through one pacer per process (`pacer.ts`): 5 a second, 4 in flight. Two processes on one realm share no budget or pause; the host's posting slot keeps their drains apart. A 429 pauses every request for `Retry-After` (at most 120 s) or 60 s, the request is tried once more after the pause, and a second 429 throws `QboThrottledError`. The pacer logs the previous day's request count at the first request of each UTC day. Every request has a 30 s timeout. Errors name
   the status, `intuit_tid` and QBO fault codes only, never the fault text (it can echo names and memos).
 - `findOrCreateInKindJournal(client, request)` creates one in-kind gift as one balanced JournalEntry;
   no other path creates a JournalEntry. Each line names its account: credits go only to in-kind
-  income, debits to no books-map role's account, and an unbalanced entry or a non-positive amount throws
-  before any read. It matches by the app's key alone, so a hand entry of the same amount is never taken
+  income, debits to no books-map role's account, and an unbalanced entry or a non-positive amount answers
+  `failed` before any read. It matches by the app's key alone, so a hand entry of the same amount is never taken
   for the gift, and a crash after QuickBooks accepts is found by key next run. Finance's own booking of a
   gift, a Deposit into and a Purchase out of the in-kind clearing account, is matched by the in-kind lane
   (`packages/bulk-donation`) before it calls this.

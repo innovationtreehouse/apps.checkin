@@ -9,7 +9,7 @@ import { PUSH_GRACE_MS, receiptRepo } from "../../repositories/receipt";
 import { receiptService } from "../../services/receiptService";
 import { READING_FAILURES_NOTICE_AT, STILL_STUCK, problemNotices, retryStuckItem, stuckItems } from "../../stuckItems";
 import { describeDb } from "../helpers/db";
-import { ALICE, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile, uploadRead } from "../helpers/setup";
 
 let ports: ReturnType<typeof recordingPorts>;
 
@@ -68,7 +68,7 @@ describeDb("stuckItems", () => {
 
   it("keeps the first failure's time through a second failure, which records its own error", async () => {
     ports.fail.push = new Error("first");
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     const first = await failure(r.id);
     expect(first).toMatchObject({ lastError: "first" });
     expect(first.firstFailedAt).toBeInstanceOf(Date);
@@ -82,7 +82,7 @@ describeDb("stuckItems", () => {
 
   it("a delivered push clears the failure and leaves the list", async () => {
     ports.fail.push = true;
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     ports.fail.push = false;
 
     await retryStuckItem({ id: r.id, step: "push to mapping" });
@@ -93,7 +93,7 @@ describeDb("stuckItems", () => {
 
   it("a retry of a receipt already delivered sends nothing", async () => {
     ports.fail.push = true;
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     ports.fail.push = false;
     await retryStuckItem({ id: r.id, step: "push to mapping" });
     const sent = ports.calls.pushes.length;
@@ -104,7 +104,7 @@ describeDb("stuckItems", () => {
   });
 
   it("a flow retry reruns the checks, and the receipt leaves flow_error with its failure cleared", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     await db.receiptDetail.update({ where: { id: r.id }, data: { state: "flow_error" } });
     await db.receipt.update({ where: { id: r.id }, data: { pushedAt: null, firstFailedAt: new Date(), lastError: "boom" } });
 
@@ -156,7 +156,7 @@ async function history(receiptId: string, rows: Array<[action: string, at: strin
 /** A receipt finalized by the flow whose push never ran or never recorded its failure, finalized `agoMs` before now. */
 async function undeliveredSilently(agoMs: number): Promise<{ id: string; finalizedAt: Date }> {
   ports.fail.push = true;
-  const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+  const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
   ports.fail.push = false;
   const finalizedAt = new Date(Date.now() - agoMs);
   await db.receipt.update({ where: { id: r.id }, data: { firstFailedAt: null, lastError: null } });
@@ -253,5 +253,35 @@ describeDb("problemNotices", () => {
       ],
     });
     expect(await problemNotices(now)).toEqual([]);
+  });
+});
+
+describeDb("problemNotices: receipts waiting to be read", () => {
+  const now = new Date("2026-11-08T12:00:00Z");
+  const hoursAgo = (h: number) => new Date(now.getTime() - h * 3600_000);
+  async function queued(at: Date, orgId = TEST_ORG_ID) {
+    const id = await makeReceipt("ocr_queued", { orgId });
+    await db.receiptDetail.update({ where: { id }, data: { ocrQueuedAt: at } });
+  }
+
+  it("shows no line while every waiting receipt has waited 25 hours or less", async () => {
+    await queued(hoursAgo(25));
+    await queued(hoursAgo(1));
+    expect(await problemNotices(now)).toEqual([]);
+  });
+
+  it("counts receipts waiting more than 25 hours and names the oldest's wait in days", async () => {
+    await queued(hoursAgo(26));
+    await queued(hoursAgo(75));
+    await queued(hoursAgo(1));
+    expect(await problemNotices(now)).toEqual(["2 receipts waiting to be read, the oldest for 3 days"]);
+  });
+
+  it("says one receipt and one day, and leaves out another org's and one already being read", async () => {
+    await queued(hoursAgo(30));
+    await queued(hoursAgo(80), "00000000-0000-0000-0000-000000000099");
+    const reading = await makeReceipt("auto_upload");
+    await db.receiptDetail.update({ where: { id: reading }, data: { ocrQueuedAt: hoursAgo(80) } });
+    expect(await problemNotices(now)).toEqual(["1 receipt waiting to be read, the oldest for 1 day"]);
   });
 });

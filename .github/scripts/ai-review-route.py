@@ -132,9 +132,13 @@ def low_credit():
     return left is not None and left < MIN_CREDIT_USD
 
 
+INLINE_HEADER = "\n\nInline comments:\n"
+
+
 def out_of_credit(review):
-    """A lane in the posted review failed because the key ran out of credit."""
-    return re.search(r"^- `[^`]+`: failed-open[^\n]*OpenRouter HTTP 402", review or "", re.M) is not None
+    """A lane in the posted review failed because the key ran out of credit. Only the review body has lane lines."""
+    body = (review or "").split(INLINE_HEADER, 1)[0]
+    return re.search(r"^- `[^`]+`: failed-open[^\n]*OpenRouter HTTP 402", body, re.M) is not None
 
 
 def output_block(o, name, value):
@@ -376,6 +380,7 @@ def route_selftest():
     assert not out_of_credit("- `google/gemini-4-argon`: ok (2 finding(s))\n\nFinding: returns HTTP 402 when unpaid")
     assert not out_of_credit("- `google/gemini-4-argon`: ok (1 finding(s))\n\nInline comments: quotes `- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}`")
     assert out_of_credit("Lanes:\n- `google/gemini-4-argon`: failed-open (at least pennies spent, incomplete) — OpenRouter HTTP 402: {...}")
+    assert not out_of_credit("- `google/gemini-4-argon`: ok (1 finding(s))" + INLINE_HEADER + "a.py:3 quoting\n- `anthropic/claude-opus-5.5`: failed-open — OpenRouter HTTP 402: {...}")
     assert not out_of_credit(None)
     assert outcome("Fixed in 4fb685939. The summary now says") == "fixed in 4fb685939"
     assert outcome("Same finding as the thread above; fixed in 4fb685939.") == "fixed in 4fb685939"
@@ -834,7 +839,7 @@ def posted_review(repo, pr, url):
     body = gh("api", f"repos/{repo}/pulls/{pr}/reviews/{rid}", "--jq", ".body")
     comments = gh("api", f"repos/{repo}/pulls/{pr}/reviews/{rid}/comments", "--jq",
                   r'.[] | "\(.path):\(.line // .original_line) \(.body)"')
-    return body + "\n\nInline comments:\n" + comments
+    return body + INLINE_HEADER + comments
 
 
 class OutOfCredit(Exception):

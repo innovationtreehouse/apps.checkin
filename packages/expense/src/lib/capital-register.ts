@@ -2,7 +2,7 @@
 // (Innovation Treehouse Fixed Asset, e.g. "ITFA23"; 2-digit zero-pad, no space/dash). ONE ROW PER
 // PHYSICAL ASSET. Assets are only ever added: `registerAssets` mints them, and historical numbers
 // hand-typed in QuickBooks are loaded via the seed endpoint (seeded=true).
-import type { PrismaClient, Prisma } from "../generated/prisma/client";
+import type { CapitalAsset, PrismaClient, Prisma } from "../generated/prisma/client";
 import type { Actor } from "./workflow-engine";
 import { writeOrgAudit } from "./audit";
 import { allocateCents } from "@checkin/money";
@@ -71,9 +71,29 @@ export async function raiseHighestIssued(tx: Prisma.TransactionClient, orgId: st
     ON CONFLICT (org_id) DO UPDATE SET highest_issued = GREATEST(capital_asset_sequences.highest_issued, ${seq})`;
 }
 
+/** The columns a seed row sets from QuickBooks history. */
+export type SeedColumns = Pick<
+  CapitalAsset,
+  "parentAssetNumber" | "description" | "acquisitionDate" | "costCents" | "depreciationYears" | "sourceQbTxnId" | "sourceQbTxnEntity"
+>;
+
+const SEED_COLUMNS = Object.keys({
+  parentAssetNumber: true, description: true, acquisitionDate: true, costCents: true, depreciationYears: true, sourceQbTxnId: true, sourceQbTxnEntity: true,
+} satisfies Record<keyof SeedColumns, true>) as (keyof SeedColumns)[];
+
+/**
+ * Why a seed row cannot take a number an asset already holds, or null when the row repeats that
+ * asset's own seed exactly. A number is a physical label, so a collision is never skipped silently.
+ */
+export function seedCollision(assetNumber: string, existing: SeedColumns & { seeded: boolean }, seed: SeedColumns): string | null {
+  if (!existing.seeded) return `${assetNumber} was already issued by the app to a new asset; it cannot be seeded`;
+  if (SEED_COLUMNS.every((c) => existing[c] === seed[c])) return null;
+  return `${assetNumber} was already issued and seeded with different details; it cannot be seeded again`;
+}
+
 export type AssetSource =
   | { kind: "expense_line"; expenseId: string; lineItemId: number }
-  | { kind: "gift_line"; giftSource: "receipt" | "manual"; giftId: number; giftLineId: number; donatedLineId: number };
+  | { kind: "gift_line"; giftSource: "receipt" | "manual"; giftId: number; giftLineId: number; donatedLineId?: number };
 
 export interface AssetUnit {
   costCents: number;

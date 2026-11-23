@@ -147,6 +147,33 @@ describe("HouseholdPage", () => {
     expect(screen.getByText("No emergency contact on file. Add at least one.")).toBeInTheDocument();
   });
 
+  it("labels each background-check status the route sends, and shows none without one", async () => {
+    setSession({ id: 10, email: "sam@example.com" });
+    const member = (id: number, name: string, status?: string) => ({ id, name, isDeclaredAdult: true, bgStatus: { personId: id, ...(status && { status }) } });
+    mockRoutes({
+      "/api/household": {
+        household: {
+          ...householdData,
+          householdMembers: [
+            { ...member(10, "Sam Smith", "VALID"), isHouseholdLead: true },
+            member(12, "Alex Smith", "EXPIRES_BEFORE_NEXT_YEAR"),
+            member(13, "Robin Smith", "EXPIRED"),
+            member(14, "Kim Smith"),
+            { id: 11, name: "Jamie Smith", dateOfBirth: "2012-05-01" },
+          ],
+        },
+      },
+    });
+    renderWithProviders(<HouseholdPage />);
+
+    const card = async (name: string) => (await screen.findByText(name)).closest(".mantine-Card-root") as HTMLElement;
+    expect(within(await card("Sam Smith")).getByText("Background check: Valid")).toBeInTheDocument();
+    expect(within(await card("Alex Smith")).getByText("Background check: Expires before upcoming year")).toBeInTheDocument();
+    expect(within(await card("Robin Smith")).getByText("Background check: Expired")).toBeInTheDocument();
+    expect(within(await card("Kim Smith")).queryByText(/Background check/)).toBeNull();
+    expect(within(await card("Jamie Smith")).queryByText(/Background check/)).toBeNull();
+  });
+
   it("does not load emergency contacts for a member who is not the household lead", async () => {
     setSession({ id: 11, email: "" });
     const fetchMock = mockRoutes();

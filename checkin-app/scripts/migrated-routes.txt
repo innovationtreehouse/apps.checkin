@@ -231,3 +231,4 @@ GET /api/membership/key-volunteer
 POST /api/membership/key-volunteer/sign
 POST /api/membership/key-volunteer/sync
 POST /api/settings/membership/key-volunteer-version
+GET /api/quickbooks/fault-codes

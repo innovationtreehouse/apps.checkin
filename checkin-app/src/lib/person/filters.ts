@@ -1,4 +1,5 @@
 import type { Prisma } from "@/generated/prisma/client";
+import { orgCalendarDay } from "@/lib/time";
 
 /** An enrollment that still counts: a WITHDRAWN row is kept for history only. */
 export const ENROLLED_PARTICIPANT: Prisma.ProgramParticipantWhereInput = { status: { not: "WITHDRAWN" } };
@@ -25,12 +26,14 @@ export const ATTACHMENT_LOOKBACK_MONTHS = 12;
  * ago every cycle forever.
  */
 export function recentProgramWhere(now: Date): Prisma.ProgramWhereInput {
-    const since = new Date(now);
+    // startAt and endAt are calendar days, so the bounds are the org's day, not the UTC instant.
+    const today = orgCalendarDay(now);
+    const since = new Date(today);
     since.setUTCMonth(since.getUTCMonth() - ATTACHMENT_LOOKBACK_MONTHS);
     return {
         AND: [
             { endAt: { gte: since } },
-            { startAt: { lte: now } },
+            { startAt: { lte: today } },
         ],
     };
 }
@@ -56,24 +59,33 @@ export function programAttachedWhere(now: Date): Prisma.PersonWhereInput {
 }
 
 /**
- * Person who owes a background check of their own: program-attached, or a signing
- * adult of an ACTIVE member household. Clearing a household review stamps only the one
- * adult its reviewers named, so without the lead arm the other signing adult — the
- * parent who signs and drops off, attached to no program — is on no track at all.
+ * Person holding a position that needs a check of their own and that program attachment
+ * does not already cover: a run leader, a bucket owner or treasurer of a live bucket, or
+ * anyone with a role (the positions `positionHolders` lists). A run counts under the
+ * same program window as the program arms.
+ */
+export function positionHeldWhere(now: Date): Prisma.PersonWhereInput {
+    return {
+        OR: [
+            { instancesLed: { some: { program: recentProgramWhere(now) } } },
+            { budgetOwnersOwned: { some: { archivedAt: null } } },
+            { budgetOwnerTreasurerships: { some: { budgetOwner: { archivedAt: null } } } },
+            { roles: { some: {} } },
+        ],
+    };
+}
+
+/**
+ * Person who owes a background check of their own: program-attached, or holding a
+ * position. Being a household lead adds nobody: a household needs one lead's check,
+ * which its application decides.
  *
- * The ACTIVE bound is load-bearing, not decoration. `isHouseholdLead` marks the lead of
- * EVERY household the app creates: imported legacy, program-only, abandoned intakes
- * (startIntake anchors a membership at status NONE), DENIED and REVOKED. A bare lead arm
- * would open a PERSON_BG on the daily cron for people who never became members. Mirrors
- * the agreement track's autoPopulationWhere, and matches the rule the obligation states
- * ("activating a membership opens...").
- *
- * The PERSON_BG openers and the board's compliance worklist share it, so what the
- * triggers open is what the board can act on.
+ * The board's compliance worklist reads it. The new-member PERSON_BG trigger opens for
+ * the program-attached arm only.
  */
 export function bgObligatedWhere(now: Date): Prisma.PersonWhereInput {
     return {
         household: { archivedAt: null },
-        OR: [programAttachedWhere(now), { isHouseholdLead: true, household: { orgMembership: { status: "ACTIVE" } } }],
+        OR: [programAttachedWhere(now), positionHeldWhere(now)],
     };
 }

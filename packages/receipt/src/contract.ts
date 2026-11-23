@@ -227,16 +227,6 @@ export interface ReceiptReimbursees {
   addNonMemberAdult(name: string, actorId: number): Promise<ReimburseeOption>;
 }
 
-export const MailPartSchema: z.ZodType<MailPart> = z.lazy(() =>
-  z.object({
-    mimeType: z.string(),
-    filename: z.string().optional(),
-    headers: z.array(z.object({ name: z.string(), value: z.string() })).optional(),
-    body: z.object({ data: z.string().optional(), attachmentId: z.string().optional(), size: z.number().optional() }).optional(),
-    parts: z.array(MailPartSchema).optional(),
-  }),
-);
-
 /** One MIME part as the Gmail API's `format=full` returns it; `body.data` is base64url. */
 export interface MailPart {
   mimeType: string;
@@ -246,8 +236,12 @@ export interface MailPart {
   parts?: MailPart[];
 }
 
-export const MailMessageSchema = z.object({ id: z.string().min(1), internalDate: z.string().regex(/^\d+$/), payload: MailPartSchema });
-export type MailMessage = z.infer<typeof MailMessageSchema>;
+/** A message in the Gmail API's `format=full` shape; `internalDate` is epoch ms as a string. */
+export interface MailMessage {
+  id: string;
+  internalDate: string;
+  payload: MailPart;
+}
 
 /** Read-only access to the receipt mailbox. */
 export interface MailboxReader {
@@ -255,8 +249,8 @@ export interface MailboxReader {
   address: string;
   /** Ids of messages received in the last `days` days, oldest first. Mail the mailbox sent is not listed. */
   listRecent(days: number): Promise<string[]>;
-  getMessage(id: string): Promise<MailMessage>;
-  getAttachment(messageId: string, attachmentId: string): Promise<Buffer>;
+  /** The whole message as the mailbox holds it (Gmail's `format=raw`), and when it arrived (epoch ms, as a string). */
+  getRaw(id: string): Promise<{ raw: Buffer; internalDate: string }>;
 }
 
 /** Mail intake stopped storing mail because too many held or deferred items are stored. */
@@ -375,6 +369,8 @@ export interface ReceiptConfig {
   alerts?: ReceiptAlerts;
   /** Unset means mail intake is unbound and the step does nothing. */
   mailbox?: MailboxReader;
+  /** Days the store keeps a captured message's raw copy (its `mail-raw/` lifecycle rule), set per environment. */
+  rawMailRetentionDays: number;
   /** Unset means acknowledgements wait unsent. */
   replies?: ReceiptReplies;
   /** Unset means outcome emails wait unsent. */

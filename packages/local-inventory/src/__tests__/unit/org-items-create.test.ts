@@ -1,4 +1,4 @@
-/** Adding an org item takes only a checked GTIN-13 of an active catalog item or a pending provisional part of the org. Real Postgres; describeDb skips without one. */
+/** Adding an org item takes only a checked GTIN-13 of an active catalog item, or a pending or catalog-rejected provisional part of the org. Real Postgres; describeDb skips without one. */
 import { beforeEach, expect, it } from "vitest";
 import { buildProvisionalGtin13 } from "@checkin/gtin";
 import { describeDb } from "../helpers/db";
@@ -47,9 +47,9 @@ describeDb("POST org-items", () => {
     await expect(post(PROVISIONAL)).rejects.toMatchObject({ status: 400, message: `P000123 is now ${CATALOG_GTIN}; pick that part instead` });
   });
 
-  it("refuses a rejected provisional part", async () => {
+  it("adds a catalog-rejected provisional part as a local-only part", async () => {
     await provisional(PROVISIONAL, "rejected");
-    await expect(post(PROVISIONAL)).rejects.toMatchObject({ status: 400, message: "P000123 was rejected by the catalog" });
+    expect(await post(PROVISIONAL)).toMatchObject({ OrgItem: { gtin13: PROVISIONAL } });
   });
 
   it("refuses another org's provisional part", async () => {

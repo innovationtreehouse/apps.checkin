@@ -1,11 +1,13 @@
 /**
  * The Shopify bulk-operation lifecycle calls in bulk.ts: starting an export
- * (success, the "already running" userError, and the no-operation response), polling an op by id, and
+ * (success, the "already running" userError, and the no-operation response), polling an op by id
+ * (including an id Shopify rejects), and
  * downloading the JSONL (success + HTTP error). reassembly itself is covered in
  * bulk-reassemble.test.ts.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { startOrdersBackfill, getBulkOperation, downloadBulkJsonl } from "../../src/shopify/bulk.js";
+import { ShopifyGraphQLError } from "../../src/shopify/client.js";
 import { fakeClient } from "../helpers/fakeClient.js";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -51,6 +53,21 @@ describe("getBulkOperation", () => {
 
   it("returns null when Shopify no longer knows the id", async () => {
     expect(await getBulkOperation(fakeClient({ bulkOperation: null }), "gid://op/9")).toBeNull();
+  });
+
+  it("returns null when Shopify rejects the id with a GraphQL error", async () => {
+    const client = fakeClient(new ShopifyGraphQLError([{ message: "Invalid global id 'gid://op/9'" }]));
+    expect(await getBulkOperation(client, "gid://op/9")).toBeNull();
+  });
+
+  it("rethrows Shopify's INTERNAL_SERVER_ERROR so the running export stays tracked", async () => {
+    const err = new ShopifyGraphQLError([{ message: "Internal error", extensions: { code: "INTERNAL_SERVER_ERROR" } }]);
+    await expect(getBulkOperation(fakeClient(err), "gid://op/9")).rejects.toBe(err);
+  });
+
+  it("rethrows a transport failure rather than forgetting the tracked op", async () => {
+    const client = fakeClient(new Error("Shopify request failed after 8 attempts: HTTP 503"));
+    await expect(getBulkOperation(client, "gid://op/9")).rejects.toThrow("HTTP 503");
   });
 });
 

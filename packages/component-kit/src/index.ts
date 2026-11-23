@@ -120,10 +120,12 @@ export async function settleCounts<T extends Record<string, unknown>>(
   return settled;
 }
 
-/** A positive integer path or query id: decimal digits only, so `0x1f`, `1e2` and ` 42` are a 400. */
+const MAX_INT4 = 2_147_483_647;
+
+/** A positive int4 path or query id: decimal digits only, so `0x1f`, `1e2`, ` 42` and `2147483648` are a 400. */
 export function parseId(raw: string | null | undefined, label = "id"): number {
   const n = Number(raw);
-  if (!raw || !/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(n)) throw httpError(400, `Invalid ${label}`);
+  if (!raw || !/^[1-9]\d*$/.test(raw) || n > MAX_INT4) throw httpError(400, `Invalid ${label}`);
   return n;
 }
 

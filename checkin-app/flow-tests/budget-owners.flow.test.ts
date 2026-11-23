@@ -138,11 +138,11 @@ describe("changing a bucket", () => {
 
   it("finance changes the flag, refused while the Board's owner or treasurer holds the bucket", async () => {
     const { id } = await create();
-    await send(board, "PUT", `/api/budget-owners/${id}/owner`, { personId: outsider.personaId });
+    await send(board, "PUT", `/api/budget-owners/${id}/owner`, { personId: outsider.personaId, acknowledgeCheck: true });
     expect((await send(finance, "PATCH", `/api/budget-owners/${id}`, { isOrgLevel: true })).status).toBe(409);
 
     await send(board, "PUT", `/api/budget-owners/${id}/owner`, { personId: null });
-    await send(board, "PUT", `/api/budget-owners/${id}/treasurers/${outsider.personaId}`);
+    await send(board, "PUT", `/api/budget-owners/${id}/treasurers/${outsider.personaId}`, { acknowledgeCheck: true });
     expect((await send(finance, "PATCH", `/api/budget-owners/${id}`, { isOrgLevel: true })).status).toBe(409);
 
     await send(board, "DELETE", `/api/budget-owners/${id}/treasurers/${outsider.personaId}`);
@@ -158,12 +158,12 @@ describe("changing a bucket", () => {
 
 describe("bucket approvers", () => {
   it("the board names an owner and adds and removes a treasurer; finance reads them", async () => {
-    const owner = await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: outsider.personaId });
+    const owner = await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: outsider.personaId, acknowledgeCheck: true });
     expect(owner.status).toBe(200);
     expect(owner.json).toEqual([expect.objectContaining({ personId: outsider.personaId, role: "OWNER" })]);
 
     const peer = await loginAs(OUTSIDER_HOUSEHOLD_PEER);
-    const added = await send(board, "PUT", `/api/budget-owners/${bucketId}/treasurers/${peer.personaId}`);
+    const added = await send(board, "PUT", `/api/budget-owners/${bucketId}/treasurers/${peer.personaId}`, { acknowledgeCheck: true });
     expect(added.status).toBe(200);
     expect((await approvers(finance)).map((a) => [a.personId, a.role])).toEqual([
       [outsider.personaId, "OWNER"],

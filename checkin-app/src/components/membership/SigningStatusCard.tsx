@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { Button, Card, Group, Stack, Text, Textarea, Title } from "@mantine/core";
-import { showError, showSuccess } from "@checkin/component-ui";
+import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 import { APP_TIMEZONE, formatDate } from "@/lib/time";
 
 export type Signing = {
@@ -24,22 +25,16 @@ export function SigningStatusCard({ signing, onChange }: { signing: Signing | nu
   const reset = async () => {
     setSaving(true);
     try {
-      const res = await fetch("/api/membership-ops/applications/external", {
+      await api("/api/membership-ops/applications/external", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ processId: signing.processId, action: "reset-signing", reason }),
       });
-      const data = await res.json().catch(() => null);
-      if (res.ok) {
-        showSuccess("Signing reset. The next lead to click sign gets a new request.");
-        setResetting(false);
-        setReason("");
-        onChange();
-      } else {
-        showError(data?.error ?? "Couldn't reset the signing.");
-      }
-    } catch {
-      showError("Network error.");
+      showSuccess("Signing reset. The next lead to click sign gets a new request.");
+      setResetting(false);
+      setReason("");
+      onChange();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSaving(false);
     }

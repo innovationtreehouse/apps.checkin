@@ -44,7 +44,7 @@ describe('capacity and phase are judged under the Program lock', () => {
     beforeAll(async () => {
         await cleanup();
         householdId = (await prisma.household.create({ data: { name: `${TAG} household`, ...WITH_EMERGENCY_CONTACT } })).id;
-        leadId = (await prisma.person.create({ data: { email: `lead-${TAG}@example.com`, name: 'Lead', householdId, isHouseholdLead: true } })).id;
+        leadId = (await prisma.person.create({ data: { email: `lead-${TAG}@example.com`, name: 'Lead', householdId, isHouseholdLead: true, isDeclaredAdult: true } })).id;
         seatedId = (await prisma.person.create({ data: { email: `seated-${TAG}@example.com`, name: 'Seated', householdId } })).id;
         claimantId = (await prisma.person.create({ data: { email: `claimant-${TAG}@example.com`, name: 'Claimant', householdId } })).id;
         board.id = (await prisma.person.create({ data: { email: `board-${TAG}@example.com`, name: 'Board', householdId: (await prisma.household.create({ data: { name: `${TAG} board household` } })).id } })).id;

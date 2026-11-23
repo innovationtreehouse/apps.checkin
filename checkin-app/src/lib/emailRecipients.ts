@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { runPaced } from "@/lib/email";
 import { sendTemplated } from "@/lib/email-templates/send";
 import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
-import { logBackendError, logger } from "@/lib/logger";
+import { logBackendError, logIntegrationError, logger } from "@/lib/logger";
 
 /**
  * Email fan-out helpers. Kept dependency-light (prisma + email + templates + logger only) so
@@ -79,11 +79,17 @@ async function boardMemberEmails(): Promise<string[]> {
 
 /**
  * Email every board member with an address on file. Resolve + fan-out; all errors logged and swallowed.
+ * A Board with no address is logged as an email failure, so the Problems digest counts it.
  * Resolves to how many sends the provider accepted, which is 0 after any swallowed error.
  */
 export async function emailBoardMembers<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>, errorLabel: string): Promise<number> {
     try {
-        const sent = await fanOutEmails(await boardMemberEmails(), key, ctx);
+        const emails = await boardMemberEmails();
+        if (emails.length === 0) {
+            await logIntegrationError("email", `No Board member has an email address on file; "${key}" was not sent.`, { template: key });
+            return 0;
+        }
+        const sent = await fanOutEmails(emails, key, ctx);
         return sent.filter(Boolean).length;
     } catch (e) {
         logger.error(errorLabel, e);

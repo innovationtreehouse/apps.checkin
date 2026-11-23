@@ -22,7 +22,7 @@ export interface StorefrontVariant {
 }
 
 /** A product as the Admin REST products.json returns it with `fields=id,title,status,variants`. */
-interface AdminProduct {
+export interface AdminProduct {
     id?: number | string;
     title?: string;
     status?: string;
@@ -38,7 +38,7 @@ class ShopifyStatusError extends Error {
 }
 
 /** The Admin API product carrying `handle`; null when there is none. Throws on a failed lookup. */
-async function getProductByHandle(storeDomain: string, accessToken: string, handle: string): Promise<AdminProduct | null> {
+export async function getProductByHandle(storeDomain: string, accessToken: string, handle: string): Promise<AdminProduct | null> {
     const res = await shopifyFetch(
         `https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json?handle=${encodeURIComponent(handle)}&fields=id,title,status,variants`,
         { method: "GET", headers: { "X-Shopify-Access-Token": accessToken } },
@@ -113,8 +113,12 @@ export async function lookupProductVariantsByUrl(productUrl: string): Promise<{ 
 
 /** Stable Shopify handle for a program's product, so a retried sync finds what an earlier run created. */
 export function programProductHandle(program: { id: number; name: string }, kind: "public" | "claimant"): string {
-    const slug = program.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
-    return `checkin-program-${program.id}-${slug}${kind === "claimant" ? "-reserved-seat" : ""}`;
+    return `checkin-program-${program.id}-${programProductSlug(program.name)}${kind === "claimant" ? "-reserved-seat" : ""}`;
+}
+
+/** A program name as a handle segment: lower-case letters, digits and hyphens, at most 60 characters. */
+export function programProductSlug(name: string): string {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
 }
 
 /** The Program fields a product create sends, as outboundCall hands them back after stripping. */

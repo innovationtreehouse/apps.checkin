@@ -11,10 +11,12 @@ import { db } from "../../db";
 import { configureBulkDonation } from "../../runtime";
 import { ingestInKind, recordInKindDonor, recordInKindWithoutReceipt } from "../../inKind";
 import { inKindAcceptService, InKindDecisionInputSchema, type InKindDecisionInput } from "../../services/inKindAcceptService";
-import type { CapitalReviewLine, InKindCapital, InKindDirectory, OwnerInfo } from "../../contract";
+import type { CapitalAssetLine, CapitalCostLine, CapitalReview, InKindCapital, InKindDirectory, OwnerInfo } from "../../contract";
 import { TEST_ORG_ID } from "../helpers/factories";
+import { inKindCapitalService, registerCapitalLines } from "../../services/inKindCapitalService";
 import { retryStuckItem, stuckItems } from "../../stuckItems";
 import { ServiceError } from "@checkin/component-kit";
+import { z } from "zod";
 
 const orgId = TEST_ORG_ID;
 const R1 = "22222222-2222-4222-8222-222222222222";
@@ -560,145 +562,198 @@ describeDb("getGift", () => {
   });
 });
 
+/** The review's contract as the expense library keeps it: every line answered, then every capital line's period. */
+const REVIEW: CapitalReview = {
+  designationInput: z.object({ lineItems: z.array(z.object({ lineItemId: z.number(), isCapital: z.boolean(), capitalOwnerId: z.number().nullable().optional() })) }),
+  periodInput: z.object({ items: z.array(z.object({ lineItemId: z.number(), depreciationYears: z.number(), ownerId: z.number(), seededAssetNumbers: z.array(z.string()).optional() })) }),
+  async designate(store, input) {
+    const lines = await store.lines();
+    for (const before of lines) {
+      const li = input.lineItems.find((l) => l.lineItemId === before.id);
+      if (!li) throw new ServiceError(400, `Missing designation for line item ${before.id}`);
+      await store.save("designated", { ...before, isCapital: li.isCapital, ownerId: li.isCapital ? (li.capitalOwnerId ?? null) : null, depreciationYears: null }, before);
+    }
+    await store.afterStep("designated");
+  },
+  async setPeriod(store, input, register) {
+    for (const before of (await store.lines()).filter((l) => l.isCapital)) {
+      const item = input.items.find((i) => i.lineItemId === before.id);
+      if (!item) throw new ServiceError(400, `Missing depreciation for capital line item ${before.id}`);
+      const line = { ...before, isCapital: true, depreciationYears: item.depreciationYears, ownerId: item.ownerId };
+      await store.save("period_set", line, before);
+      await register(line, item);
+    }
+    await store.afterStep("period_set");
+  },
+};
+
 describeDb("capital review", () => {
-  function captureCapital(awaiting: { giftSource: string; giftId: number }[] = []) {
-    const sent: CapitalReviewLine[][] = [];
-    capital = { submit: async (_org, lines) => void sent.push(lines), awaitingReview: async () => awaiting, assetLineIds: async () => [] };
+  function captureCapital(needed = true, register: (line: CapitalAssetLine) => Promise<string[]> = async (l) => [`ITFA${l.giftLineId}`]) {
+    const tested: { totalCents: number; lines: CapitalCostLine[] }[] = [];
+    const registered: CapitalAssetLine[] = [];
+    capital = {
+      reviewNeeded: async (_org, gift) => {
+        tested.push(gift);
+        return needed;
+      },
+      review: REVIEW,
+      register: async (_org, line) => {
+        registered.push(line);
+        return register(line);
+      },
+      submit: async () => { throw new Error("the copy is never sent"); },
+      awaitingReview: async () => { throw new Error("capital waits are read from the gift"); },
+      assetLineIds: async () => { throw new Error("assets are read from the gift"); },
+    };
     configure();
-    return sent;
+    return { tested, registered };
   }
 
-  it("accepting sends a receipt gift's lines with the tax and shipping spread across them by value", async () => {
-    const sent = captureCapital();
+  async function twoLineGift(): Promise<{ id: number; lineIds: number[] }> {
     const r = receipt(1000);
     r.lineItems = [
       { ...r.lineItems[0], receiptLineItemId: 1, totalPriceCents: 300 },
-      { ...r.lineItems[0], receiptLineItemId: 2, lineNumber: 2, description: "Saw", totalPriceCents: 600 },
+      { ...r.lineItems[0], receiptLineItemId: 2, lineNumber: 2, description: "Saw", quantity: 2, totalPriceCents: 600 },
     ];
     await ingestInKind(r);
     await recordInKindDonor(orgId, R1, { firstName: "Jane", lastName: "Doe", companyName: null }, 0);
     const { id } = await db.inKindDonation.findUniqueOrThrow({ where: { orgId_receiptId: { orgId, receiptId: R1 } } });
+    const lines = await db.inKindDonationLine.findMany({ where: { donationId: id }, orderBy: { id: "asc" } });
+    return { id, lineIds: lines.map((l) => l.id) };
+  }
 
+  const designation = (lineIds: number[], capitalIds: number[]) => ({
+    lineItems: lineIds.map((lineItemId) => ({ lineItemId, isCapital: capitalIds.includes(lineItemId), ...(capitalIds.includes(lineItemId) ? { capitalOwnerId: 2 } : {}) })),
+  });
+
+  it("accepting tests the thresholds once, on the gift's total and each line as it books", async () => {
+    const { tested } = captureCapital();
+    const { id } = await twoLineGift();
     await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
-    expect(sent).toHaveLength(1);
-    expect(sent[0].map((l) => [l.description, l.costCents, l.acquisitionDate, l.budgetOwnerId])).toEqual([
-      ["Drill", 333, "2026-09-01", 1],
-      ["Saw", 667, "2026-09-01", 1],
-    ]);
-    expect(JSON.stringify(sent)).not.toMatch(/Jane|Doe/);
+    expect(tested).toEqual([{ totalCents: 1000, lines: [{ costCents: 333, quantity: 1 }, { costCents: 667, quantity: 2 }] }]);
+    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalReviewNeeded: true, capitalSubmittedAt: null });
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "capital", waitingOn: ["capital", "booking"] });
 
     await inKindAcceptService.decide("receipt", id, { ...ACCEPT, bucketId: 2 }, by(FINANCE));
-    expect(sent).toHaveLength(1);
+    expect(tested).toHaveLength(1);
   });
 
-  it("a gift without a receipt sends finance's values on its donation date", async () => {
+  it("a gift under every threshold has no capital review and waits only on booking", async () => {
+    captureCapital(false);
+    const id = await receiptGift();
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalReviewNeeded: false });
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "booking", waitingOn: ["booking"] });
+    const [line] = await db.inKindDonationLine.findMany({ where: { donationId: id } });
+    await expect(inKindCapitalService.designate("receipt", id, designation([line.id], []), by(FINANCE))).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("a gift without a receipt is tested at finance's values", async () => {
     const { id, lineIds } = await manualGift();
-    const sent = captureCapital();
+    const { tested } = captureCapital();
     await inKindAcceptService.decide("manual", id, { ...ACCEPT, lineValues: [{ lineId: lineIds[0], valueCents: 3000 }, { lineId: lineIds[1], valueCents: 500 }] }, by(FINANCE));
-    expect(sent[0].map((l) => [l.giftSource, l.costCents, l.acquisitionDate])).toEqual([
-      ["manual", 3000, "2026-10-02"],
-      ["manual", 500, "2026-10-02"],
-    ]);
+    expect(tested).toEqual([{ totalCents: 3500, lines: [{ costCents: 3000, quantity: 1 }, { costCents: 500, quantity: 2 }] }]);
   });
 
-  it("a refused gift sends nothing", async () => {
+  it("a refused gift is never tested", async () => {
     const id = await receiptGift();
-    const sent = captureCapital();
+    const { tested } = captureCapital();
     await inKindAcceptService.decide("receipt", id, { outcome: "refuse", confirmOutsideDonorHousehold: true }, by(FINANCE));
-    expect(sent).toEqual([]);
+    expect(tested).toEqual([]);
   });
 
-  const failingCapital = (thrown: unknown) => {
-    capital = { submit: async () => { throw thrown; }, awaitingReview: async () => [], assetLineIds: async () => [] };
+  it("a failed threshold test fails the accept, which leaves the gift undecided", async () => {
+    const id = await receiptGift();
+    captureCapital();
+    capital!.reviewNeeded = async () => { throw new ServiceError(503, "expense down"); };
     configure();
-  };
-
-  it.each([
-    ["an outage", new ServiceError(503, "expense down")],
-    ["a refusal", new ServiceError(404, "Organization not found")],
-    ["a 401", new ServiceError(401, "Unauthorized")],
-    ["an unbranded error", new Error("Forbidden")],
-  ])("%s from capital review keeps the accept successful and leaves the gift stuck", async (_, thrown) => {
-    const id = await receiptGift();
-    failingCapital(thrown);
-    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    const view = await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
-    expect(view).toMatchObject({ outcome: "ACCEPTED" });
-    expect(logged).toHaveBeenCalledWith(expect.stringContaining(`gift ${id}`));
-    expect(JSON.stringify(logged.mock.calls)).not.toContain(thrown.message);
-    logged.mockRestore();
-    const row = await db.inKindDonation.findUniqueOrThrow({ where: { id } });
-    expect(row).toMatchObject({ decisionOutcome: "ACCEPTED", capitalSubmittedAt: null, capitalFirstFailedAt: expect.any(Date), capitalLastError: thrown.message });
-    expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "capital", waitingOn: ["capital", "booking"] });
+    await expect(inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE))).rejects.toMatchObject({ status: 503 });
+    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ decisionOutcome: null, capitalReviewNeeded: null });
   });
 
-  it("lines our own schema rejects are never sent, and the accept still succeeds", async () => {
-    const id = await receiptGift();
-    await db.inKindDonationLine.updateMany({ where: { donationId: id }, data: { quantity: 100001 } });
-    const sent = captureCapital();
-    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    await expect(inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE))).resolves.toMatchObject({ outcome: "ACCEPTED" });
-    logged.mockRestore();
-    expect(sent).toHaveLength(0);
-    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalSubmittedAt: null, capitalFirstFailedAt: expect.any(Date) });
+  it("designate, then period, then the drain registers and stamps; the gift waits until every capital line is stamped", async () => {
+    const { registered } = captureCapital();
+    const { id, lineIds } = await twoLineGift();
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+
+    await expect(inKindCapitalService.setPeriod("receipt", id, { items: [] }, by(FINANCE))).rejects.toMatchObject({ status: 409 });
+    const designated = await inKindCapitalService.designate("receipt", id, designation(lineIds, [lineIds[1]]), by(FINANCE));
+    expect(designated.InKindDonationLine?.map((l) => [l.isCapital, l.capitalBucketId, l.capitalDecidedByUserId])).toEqual([[false, null, FINANCE], [true, 2, FINANCE]]);
+    await expect(inKindCapitalService.designate("receipt", id, designation(lineIds, []), by(FINANCE))).rejects.toMatchObject({ status: 409 });
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ waitingOn: ["capital", "booking"] });
+
+    const period = { items: [{ lineItemId: lineIds[1], depreciationYears: 7, ownerId: 1 }] };
+    await expect(inKindCapitalService.setPeriod("receipt", id, { items: [{ ...period.items[0], seededAssetNumbers: ["ITFA01", "ITFA02"] }] }, by(FINANCE))).rejects.toMatchObject({ status: 400 });
+    await inKindCapitalService.setPeriod("receipt", id, period, by(FINANCE));
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "register", waitingOn: ["register", "booking"] });
+    expect(registered).toEqual([]);
+
+    expect(await registerCapitalLines(orgId)).toEqual({ registered: 1, failed: 0 });
+    expect(registered).toEqual([{ giftSource: "receipt", giftId: id, giftLineId: lineIds[1], description: "Saw", costCents: 667, quantity: 2, acquisitionDate: "2026-09-01", depreciationYears: 7 }]);
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ waitingOn: ["booking"] });
+    expect(await registerCapitalLines(orgId)).toEqual({ registered: 0, failed: 0 });
+
+    const events = await db.workflowEvent.findMany({ where: { eventType: { startsWith: "IN_KIND_CAPITAL" } }, orderBy: { id: "asc" } });
+    expect(events.map((e) => [e.eventType, e.actorUsername])).toEqual([
+      ["IN_KIND_CAPITAL_DESIGNATED", `u${FINANCE}`],
+      ["IN_KIND_CAPITAL_DESIGNATED", `u${FINANCE}`],
+      ["IN_KIND_CAPITAL_PERIOD_SET", `u${FINANCE}`],
+      ["IN_KIND_CAPITAL_REGISTERED", "system:in-kind-drain"],
+    ]);
+    expect(JSON.parse(events[3].payload!)).toEqual({ lineId: lineIds[1], assetNumbers: [`ITFA${lineIds[1]}`] });
   });
 
-  it("accepting again does not resend", async () => {
-    const id = await receiptGift();
-    failingCapital(new ServiceError(503, "expense down"));
-    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+  it("a failed registration is on the Problems list until a run registers the line, which clears it", async () => {
+    let fail = true;
+    captureCapital(true, async (l) => {
+      if (fail) throw new ServiceError(503, "expense down");
+      return [`ITFA${l.giftLineId}`];
+    });
+    const { id, lineIds } = await twoLineGift();
     await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
-    logged.mockRestore();
-    const sent = captureCapital();
-    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
-    expect(sent).toHaveLength(0);
-    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalSubmittedAt: null });
-  });
+    await inKindCapitalService.designate("receipt", id, designation(lineIds, [lineIds[0]]), by(FINANCE));
+    await inKindCapitalService.setPeriod("receipt", id, { items: [{ lineItemId: lineIds[0], depreciationYears: 5, ownerId: 1 }] }, by(FINANCE));
 
-  it("an accepted gift left unsent with no failure recorded is stuck an hour after its decision", async () => {
-    const id = await receiptGift();
-    const sent = captureCapital();
-    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
-    const recent = new Date(Date.now() - 30 * 60 * 1000);
-    await db.inKindDonation.update({ where: { id }, data: { capitalSubmittedAt: null, decidedAt: recent } });
-    expect(await stuckItems()).toEqual([]);
-
-    const decidedAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
-    await db.inKindDonation.update({ where: { id }, data: { decidedAt } });
-    expect(await stuckItems()).toEqual([{ id: `receipt ${id}`, step: "capital review send", href: `/donations/in-kind/receipt/${id}`, failedAt: decidedAt }]);
-    await retryStuckItem({ id: `receipt ${id}`, step: "capital review send" });
-    expect(sent).toHaveLength(2);
-    expect(await stuckItems()).toEqual([]);
-  });
-
-  it("a failed send is stuck on the Problems list until a retry sends it, which clears it", async () => {
-    const id = await receiptGift();
-    const item = { id: `receipt ${id}`, step: "capital review send" };
-    failingCapital(new ServiceError(503, "expense down"));
-    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await registerCapitalLines(orgId)).toEqual({ registered: 0, failed: 1 });
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ waitingOn: ["register", "booking"] });
     const { capitalFirstFailedAt } = await db.inKindDonation.findUniqueOrThrow({ where: { id } });
+    const item = { id: `receipt ${id}`, step: "capital asset registration" };
     expect(await stuckItems()).toEqual([{ ...item, href: `/donations/in-kind/receipt/${id}`, failedAt: capitalFirstFailedAt }]);
 
-    failingCapital(new ServiceError(503, "still down"));
+    expect(await registerCapitalLines(orgId)).toEqual({ registered: 0, failed: 1 });
     const again = await retryStuckItem(item).catch((e: unknown) => e);
     expect(again).toMatchObject({ status: 503 });
-    expect((again as Error).message).not.toContain("still down");
-    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalFirstFailedAt, capitalLastError: "still down" });
+    expect((again as Error).message).not.toContain("expense down");
+    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalFirstFailedAt, capitalLastError: "expense down" });
     logged.mockRestore();
 
-    const sent = captureCapital();
-    await expect(retryStuckItem(item)).resolves.toBeUndefined();
-    expect(sent).toHaveLength(1);
-    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalSubmittedAt: expect.any(Date), capitalFirstFailedAt: null, capitalLastError: null });
+    fail = false;
+    expect(await registerCapitalLines(orgId)).toEqual({ registered: 1, failed: 0 });
+    expect(await db.inKindDonationLine.findUniqueOrThrow({ where: { id: lineIds[0] } })).toMatchObject({ registeredAt: expect.any(Date) });
+    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalFirstFailedAt: null, capitalLastError: null });
     expect(await stuckItems()).toEqual([]);
     await expect(retryStuckItem(item)).rejects.toMatchObject({ status: 404 });
   });
 
-  it("a gift with a line in capital review waits on it before booking", async () => {
-    const id = await receiptGift();
-    captureCapital([{ giftSource: "receipt", giftId: id }]);
+  it("a Problems-list retry registers a stuck gift", async () => {
+    let fail = true;
+    captureCapital(true, async (l) => {
+      if (fail) throw new ServiceError(503, "expense down");
+      return [`ITFA${l.giftLineId}`];
+    });
+    const { id, lineIds } = await twoLineGift();
     await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
-    expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "capital", waitingOn: ["capital", "booking"] });
+    await inKindCapitalService.designate("receipt", id, designation(lineIds, [lineIds[1]]), by(FINANCE));
+    await inKindCapitalService.setPeriod("receipt", id, { items: [{ lineItemId: lineIds[1], depreciationYears: 5, ownerId: 1 }] }, by(FINANCE));
+    const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await registerCapitalLines(orgId);
+    logged.mockRestore();
+
+    fail = false;
+    await expect(retryStuckItem({ id: `receipt ${id}`, step: "capital asset registration" })).resolves.toBeUndefined();
+    expect(await db.inKindDonationLine.findUniqueOrThrow({ where: { id: lineIds[1] } })).toMatchObject({ registeredAt: expect.any(Date) });
+    expect(await stuckItems()).toEqual([]);
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ waitingOn: ["booking"] });
   });
 });

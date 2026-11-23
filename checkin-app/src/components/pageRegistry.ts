@@ -51,7 +51,8 @@ const FINANCE_REVIEW = linkGate(FINANCE, FINANCE_REVIEW_PATH);
 const RECEIPT_FLOW: NavGate = (u, c) => linkGate(FINANCE, '/receipt-flow')(u, c) || (linkGate(INVENTORY, '/inventory/receiving')(u, c) && u?.isInventoryManager === true);
 const MOPS = (href: string): NavGate => linkGate(MEMBERSHIP_OPS, href);
 const FACILITY = (href: string): NavGate => linkGate(FACILITY_OPS, href);
-const SYSTEM = SYSTEM_STATUS.visible;
+// /system-status redirects to Health, so it is listed to whoever opens that tab.
+const SYSTEM_INDEX = linkGate(SYSTEM_STATUS, '/system-status/health');
 const SETTING = (href: string): NavGate => linkGate(SETTINGS, href);
 
 export type PageEntry = {
@@ -206,7 +207,6 @@ export const PAGES: PageEntry[] = [
   { href: '/expense/qb-accounts', label: 'QuickBooks Accounts', section: 'Finance', keywords: 'qb account list chart of accounts category', visible: EXPENSES },
   { href: '/expense/ownership-map', label: 'Part Buckets', section: 'Finance', keywords: 'budget owner bucket part ownership map gtin', visible: EXPENSES },
   { href: '/expense/capital-seed', label: 'Capital Seed', section: 'Finance', keywords: 'itfa capital register asset', visible: EXPENSES },
-  { href: '/expense/donated-capital', label: 'Donated Equipment', section: 'Finance', keywords: 'in-kind gift capital asset itfa', visible: EXPENSES },
 
   // Donations — FINANCE or BOARD
   { href: '/donations', label: 'Donations', section: 'Donations', visible: DONATIONS },
@@ -222,14 +222,15 @@ export const PAGES: PageEntry[] = [
   { href: '/donations/in-kind-gifts', label: 'In-kind Gifts', section: 'Donations', keywords: 'donation donor gift no receipt', visible: linkGate(DONATIONS_SECTION, '/donations/in-kind-gifts') },
 
   // System Status — board
-  { href: '/system-status', label: 'System Status', section: 'System Status', visible: SYSTEM },
-  { href: '/system-status/health', label: 'Health', section: 'System Status', visible: SYSTEM },
-  { href: '/system-status/errors', label: 'Errors', section: 'System Status', visible: SYSTEM },
+  { href: '/system-status', label: 'System Status', section: 'System Status', visible: SYSTEM_INDEX },
+  { href: '/system-status/health', label: 'Health', section: 'System Status', visible: linkGate(SYSTEM_STATUS, '/system-status/health') },
+  { href: '/system-status/errors', label: 'Errors', section: 'System Status', visible: linkGate(SYSTEM_STATUS, '/system-status/errors') },
   { href: '/system-status/unsynced-scans', label: 'Unsynced Scans', section: 'System Status', keywords: 'kiosk parked replay badge scan review stale out of order offline queue', visible: linkGate(SYSTEM_STATUS, '/system-status/unsynced-scans') },
-  { href: '/system-status/audit-log', label: 'Audit Log', section: 'System Status', visible: SYSTEM },
+  { href: '/system-status/audit-log', label: 'Audit Log', section: 'System Status', visible: linkGate(SYSTEM_STATUS, '/system-status/audit-log') },
   { href: '/system-status/finance-views', label: 'Finance Views', section: 'System Status', keywords: 'finance view log who looked viewed receipt expense donation payout payment record audit board', visible: linkGate(SYSTEM_STATUS, '/system-status/finance-views') },
-  { href: '/system-status/links', label: 'Links', section: 'System Status', visible: SYSTEM },
-  { href: '/system-status/lifecycle', label: 'Lifecycle', section: 'System Status', keywords: 'invariant validate off-diagram drift reconcile enrollment membership state machine', visible: SYSTEM },
+  { href: '/system-status/links', label: 'Links', section: 'System Status', visible: linkGate(SYSTEM_STATUS, '/system-status/links') },
+  { href: '/system-status/lifecycle', label: 'Lifecycle', section: 'System Status', keywords: 'invariant validate off-diagram drift reconcile enrollment membership state machine', visible: linkGate(SYSTEM_STATUS, '/system-status/lifecycle') },
+  { href: '/system-status/qbo-codes', label: 'QuickBooks codes', section: 'System Status', keywords: 'quickbooks qbo fault code error refused kind data settings connection', visible: linkGate(SYSTEM_STATUS, '/system-status/qbo-codes') },
 
   // Settings — board
   { href: '/settings/membership', label: 'Membership Settings', section: 'Settings', visible: SETTING('/settings/membership') },

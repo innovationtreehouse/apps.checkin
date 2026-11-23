@@ -48,6 +48,12 @@ export function createProposalRepository(db: PrismaClient) {
     findProvisionalItemById: (id: number) =>
       db.provisionalItem.findFirst({ where: { id } }),
 
+    findOrgProvisionalItemByGtin13: (orgId: string, provisionalGtin13: string) =>
+      db.provisionalItem.findFirst({
+        where: { orgId, provisionalGtin13 },
+        select: { status: true, proposedName: true, resultGtin13: true },
+      }),
+
     createProvisionalItem: (data: Prisma.ProvisionalItemUncheckedCreateInput) =>
       db.provisionalItem.create({ data }),
 

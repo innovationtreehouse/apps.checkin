@@ -1,4 +1,4 @@
-import { SWEEP_DAYS, appKeyOf, findOrCreate, isThrottled, postFailure, postFailureError, type BooksMapRole, type PostFailure, type PostingTurn, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
+import { MAX_CREATES_PER_RUN_CEILING, SWEEP_DAYS, appKeyOf, findOrCreate, isThrottled, runDrain, postFailure, postFailureError, type BooksMapRole, type PostFailure, type PostingTurn, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror, QbDeposit } from "../contract";
@@ -526,10 +526,7 @@ export async function postPayout(
       case "failed":
         // The post failed whether or not this update commits, so the report stands either way.
         reportFailed(result);
-        if (current.kind === RECON_KIND.POST_FAILED) {
-          return { outcome: "failed" as const, row: await tx.payoutReconciliation.update({ where: { id }, data: { postClaimedAt: null } }) };
-        }
-        return settle("failed", "reconciliation.post_failed", { status: RECON_STATUS.OPEN, kind: RECON_KIND.POST_FAILED, reason: null }, result.error);
+        return settle("failed", "reconciliation.post_failed", { status: RECON_STATUS.OPEN, kind: RECON_KIND.POST_FAILED, reason: failureNote(result) }, result.error);
     }
   });
 
@@ -543,6 +540,13 @@ export async function postPayout(
     result = { kind: "conflict", note: `deposit ${depositId} is already held by payout ${holder?.id ?? "unknown"}` };
     return settleIn();
   }
+}
+
+/** What finance reads on a failed post: a refusal's fault codes and request id, never the fault text; else the error. */
+function failureNote(f: PostFailure): string {
+  if (!f.codes) return f.error.slice(0, 500);
+  const codes = f.codes.length ? `code ${f.codes.join(", ")}` : "no fault code";
+  return `QuickBooks refused: ${codes} (request ${f.requestId ?? "unknown"})`;
 }
 
 /** Park a row larger than its source's per-run cents cap for finance; it is never auto-created. */
@@ -587,8 +591,8 @@ export function closedThroughOf(closeDate: string | null, onAt: Date | null): st
  * after switch-on books itself, however late it arrived; one seen before goes to finance as
  * NO_DEPOSIT on its first turn, unless it matches. A payout with an undecided item, unusable bucket or sale
  * missing lines holds as NEEDS_MAPPING until the gap closes. Creates stop at the org's count and cents caps, which
- * fire the finance alert; failures and amount matches do not count. The host calls it in a
- * try/catch; it returns counts only.
+ * fire the finance alert; failures and amount matches do not count. A payout whose post throws is
+ * reported and the run goes on. The host calls it in a try/catch; it returns counts only.
  */
 export async function drainIncomeOutbox(orgId: string, now: Date = new Date(), turn?: PostingTurn): Promise<DrainResult> {
   const reconcile = await runReconcile(orgId, now);
@@ -641,7 +645,9 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date(), t
   const alert = (cap: "count" | "cents", remaining: number, source: string) =>
     alerts.postCapReached({ orgId, cap, created: post.posted, createdCents: createdCents[source] ?? 0, remaining });
 
-  for (const [i, r] of due.entries()) {
+  // Null ends the run: another holder has the lock (busy), or a cap stopped it.
+  let busy = false;
+  const postDue = async (r: PayoutReconciliation): Promise<PostOutcome | null> => {
     const cents = Math.abs(r.payoutNetCents);
     const cap = centsCap(r.source);
     const sofar = createdCents[r.source] ?? 0;
@@ -653,49 +659,57 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date(), t
     const gap = expected ? expectedGap(expected, problem) : sales ? mappingGap(sales, problem) : null;
     if (gap) {
       const held = await holdForMapping(orgId, r.id, gap, false);
-      if (!held) return { reconcile, post: "busy" };
-      post[heldOutcome(held).outcome]++;
-      continue;
+      busy = !held;
+      return held && heldOutcome(held).outcome;
     }
     // A row whose roles finance has not mapped is skipped before the caps, so it never counts or parks.
-    if (missingRoles(r, accounts).length) {
-      post.waiting++;
-      continue;
-    }
+    if (missingRoles(r, accounts).length) return "waiting";
     // Only a row the app may create is held to the caps.
     if (mayCreate) {
       if (cents > cap) {
-        if (!(await parkOverCap(orgId, r.id, r.payoutNetCents, cap))) return { reconcile, post: "busy" };
-        post.over_cap++;
+        if (!(await parkOverCap(orgId, r.id, r.payoutNetCents, cap))) {
+          busy = true;
+          return null;
+        }
         await alert("cents", 1, r.source);
-        continue;
+        return "over_cap";
       }
       if (post.posted >= caps.maxCreatesPerRun || sofar + cents > cap) {
         // ponytail: the cents cap stops the whole run, as with one source; skip just that source if Benevity volume grows.
         post.capped = post.posted >= caps.maxCreatesPerRun ? "count" : "cents";
-        await alert(post.capped, due.length - i, r.source);
-        break;
+        await alert(post.capped, due.length - due.indexOf(r), r.source);
+        return null;
       }
     }
-    const closedThrough = closedThroughOf(closeDate, onAt);
-    const postIt = () => postPayout(orgId, r.id, { closedThrough, mayCreate }, false, { problem, sales, accounts, benevityWindowDays: caps.benevityMatchWindowDays });
-    // A run that lost the posting slot stops before its next post; another run holds it.
-    const holds = async () => !turn || (await turn.renew());
-    if (!(await holds())) break;
-    let result = await postIt();
-    // The first throttle in a run tries the payout again once the client's pause ends; the second ends the run.
-    if (result?.outcome === "throttled" && post.throttled === 0) {
-      post.throttled++;
-      if (!(await holds())) break;
-      result = await postIt();
-    }
-    if (!result) return { reconcile, post: "busy" };
-    post[result.outcome]++;
-    if (result.outcome === "throttled") {
-      if (turn) turn.yielded = true;
-      break;
-    }
-    if (result.outcome === "posted") createdCents[r.source] = sofar + cents;
+    const result = await postPayout(orgId, r.id, { closedThrough: closedThroughOf(closeDate, onAt), mayCreate }, false, {
+      problem, sales, accounts, benevityWindowDays: caps.benevityMatchWindowDays,
+    });
+    busy = !result;
+    if (result?.outcome === "posted") createdCents[r.source] = sofar + cents;
+    return result?.outcome ?? null;
+  };
+
+  const stop = await runDrain<PayoutReconciliation, PostOutcome>(due, {
+    counts: post,
+    throttled: "throttled",
+    turn,
+    // The org's own count cap stops the run in postDue, with its alert; this is only the shared ceiling.
+    maxCreatesPerRun: MAX_CREATES_PER_RUN_CEILING,
+    post: async (r) => {
+      try {
+        return await postDue(r);
+      } catch (err) {
+        // A claim the post took waits out STALE_CLAIM_MS; the post that takes it over looks for its deposit by key first.
+        incomeRuntime.failed("deposit-post", err, `payout reconciliation ${r.id}`);
+        return "failed";
+      }
+    },
+  });
+  if (busy) return { reconcile, post: "busy" };
+  if (stop?.by === "throttled") console.warn("[income] qb_drain_throttled", { remaining: stop.remaining });
+  if (stop?.by === "count") {
+    post.capped = "count";
+    await alert("count", stop.remaining, due[due.length - stop.remaining].source);
   }
   return { reconcile, post };
 }

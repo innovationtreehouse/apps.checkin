@@ -58,8 +58,10 @@ const SELECT = {
 /** Reads without an org assertion, for in-library callers that already hold a row's orgId. */
 export async function readExpenseSettings(client: Db, orgId: string): Promise<ExpenseSettings> {
   const row = await client.expenseOrgSettings.findUnique({ where: { orgId }, select: SELECT });
-  return row ? { ...row, qbMaxCreatesPerRun: Math.min(row.qbMaxCreatesPerRun, MAX_CREATES_PER_RUN_CEILING) } : DEFAULT_EXPENSE_SETTINGS;
+  return row ? capped(row) : DEFAULT_EXPENSE_SETTINGS;
 }
+
+const capped = (row: ExpenseSettings): ExpenseSettings => ({ ...row, qbMaxCreatesPerRun: Math.min(row.qbMaxCreatesPerRun, MAX_CREATES_PER_RUN_CEILING) });
 
 export async function getExpenseSettings(orgId: string): Promise<ExpenseSettings> {
   await assertOrg(orgId);
@@ -107,6 +109,6 @@ export async function updateExpenseSettings(
         after: JSON.stringify(pick(changes)),
       },
     });
-    return next;
+    return capped(next);
   });
 }

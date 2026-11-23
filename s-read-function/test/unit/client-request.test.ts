@@ -10,7 +10,7 @@
  * the real backoff durations are asserted without any real waiting.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createShopifyClient, MAX_ATTEMPTS, REQUEST_TIMEOUT_MS } from "../../src/shopify/client.js";
+import { createShopifyClient, MAX_ATTEMPTS, REQUEST_TIMEOUT_MS, ShopifyGraphQLError } from "../../src/shopify/client.js";
 import type { ShopifyConfig } from "@checkin/s-ingest-core";
 
 // Silence the retry warn/info logs and avoid pulling the generated Prisma client in.
@@ -176,7 +176,10 @@ describe("createShopifyClient.request — exhaustion and hard failures", () => {
     const fetchMock = vi.fn().mockResolvedValue(resp({ body: { errors: [{ message: "Field 'x' doesn't exist" }] } }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(createShopifyClient(cfg).request("q")).rejects.toThrow("Shopify GraphQL error: Field 'x' doesn't exist");
+    const err = await createShopifyClient(cfg).request("q").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ShopifyGraphQLError);
+    expect((err as Error).message).toBe("Shopify GraphQL error: Field 'x' doesn't exist");
+    expect((err as ShopifyGraphQLError).codes).toEqual([]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

@@ -26,7 +26,7 @@ const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType
 
 const SECRET = 'qbo-posting-secret-under-test';
 const EXPENSE_DRAIN = { posted: 0, matched: 0, queued: 0, failed: 0, throttled: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0, unpostable: 0, capped: null, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false } };
-const IN_KIND_DRAIN = { posted: 0, matched: 0, unbooked: 0, needs_finance: 0, held: 0, failed: 0, throttled: 0, waiting: 0, capped: false, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false }, drift: { checked: 0, drifted: 0 } };
+const IN_KIND_DRAIN = { posted: 0, matched: 0, unbooked: 0, needs_finance: 0, held: 0, failed: 0, throttled: 0, waiting: 0, capped: false, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false }, drift: { checked: 0, drifted: 0 }, capital: { registered: 0, failed: 0 } };
 const expensePosting = (qbPost: Awaited<ReturnType<typeof runExpenseQbPosting>>['qbPost']) =>
     ({ stranded: { checked: 0, failed: 0 }, qbPost, qbDrift: 'unbound' as const, outcomeNotices: { sent: 0, failed: 0 }, failedParts: [] });
 const req = (secret = SECRET) =>
@@ -196,5 +196,22 @@ describe('GET /api/cron/qbo-posting', () => {
 
         expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: null });
         expect(create.mock.calls[1][0].data).toMatchObject({ success: true, error: 'failed: in-kind unconfigured' });
+    });
+
+    it('records a lane throttled three runs in a row and a run that lapsed holding the slot as failures of the run', async () => {
+        const lastRuns = {
+            income: { endedAt: '2026-11-18T13:58:00.000Z', ended: 'yielded', created: 0, matched: 0, capped: null, yieldsInRow: 3 },
+            expense: { endedAt: '2026-11-18T13:00:00.000Z', ended: 'expired', created: 0, matched: 0, capped: null, yieldsInRow: 0 },
+            'in-kind': { endedAt: '2026-11-18T13:00:00.000Z', ended: 'yielded', created: 0, matched: 0, capped: null, yieldsInRow: 2 },
+        };
+        prisma.quickBooksPostingSlot.findUnique = jest.fn().mockResolvedValue({ orgId: 'org-1', holder: null, runId: null, until: new Date(0), lastRuns });
+
+        await GET(req());
+
+        expect(create.mock.calls[0][0].data).toMatchObject({
+            success: true,
+            error: 'failed: expense posting warning, income posting warning',
+            failuresByKind: { system: 1, connection: 1 },
+        });
     });
 });

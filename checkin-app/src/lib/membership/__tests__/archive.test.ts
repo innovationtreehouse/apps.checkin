@@ -4,8 +4,7 @@
 import prisma from '@/lib/prisma';
 import { archiveApplication, unarchiveApplication } from '@/lib/membership/archive';
 import type { OrgMembershipProcess } from '@/generated/prisma/client';
-import { settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
-import { logBackendError } from '@/lib/logger';
+import { settleAfterEvent } from '@/lib/membership/settleHouseholdBg';
 import { pickUpMissedSignature } from '@/lib/membership/external';
 
 const tx = {
@@ -28,7 +27,7 @@ jest.mock('@/lib/membership/review', () => ({
     applicantHousehold: jest.fn().mockResolvedValue(5),
     reviewHouseholds: jest.fn().mockResolvedValue([5]),
 }));
-jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn().mockResolvedValue([]) }));
+jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleAfterEvent: jest.fn().mockResolvedValue([]) }));
 jest.mock('@/lib/logger', () => ({ ...jest.requireActual('@/lib/logger'), logBackendError: jest.fn() }));
 jest.mock('@/lib/conflictOfInterest', () => ({ hasHouseholdConflict: jest.fn().mockResolvedValue(false) }));
 jest.mock('@/lib/membership/external', () => ({
@@ -101,19 +100,9 @@ describe('unarchiveApplication (Reopen)', () => {
         tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
         await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'PENDING_RENEWAL' });
         // Reopen settles the household on its people's check standing.
-        expect(settleHouseholdBg).toHaveBeenCalledWith(5);
+        expect(settleAfterEvent).toHaveBeenCalledWith(5, expect.any(String), {}, expect.anything());
     });
 
-    it('a failed settle is logged and the reopen still succeeds', async () => {
-        findUnique.mockResolvedValue(row({ kind: 'RENEWAL', status: 'ARCHIVED', archivedFromStatus: 'PENDING_RENEWAL' }));
-        tx.orgMembership.findUnique.mockResolvedValue({ status: 'ACTIVE' });
-        tx.orgMembershipProcess.findFirst.mockResolvedValue(null);
-        tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
-        const failure = new Error('Shopify unavailable');
-        jest.mocked(settleHouseholdBg).mockRejectedValueOnce(failure);
-        await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'PENDING_RENEWAL' });
-        expect(logBackendError).toHaveBeenCalledWith(failure, expect.any(String), { householdId: 5, processId: 1 });
-    });
 
     describe('signing request across a denial', () => {
         const reopen = async () => {
@@ -201,6 +190,49 @@ describe('unarchiveApplication (Reopen) within the membership year', () => {
         at('2026-06-01T00:00:00.000Z');
         await expect(unarchiveApplication(1, 2)).rejects.toMatchObject({
             message: "This application is for 2025-2026. The 2026-2027 renewal period has started, so it can't be reopened; start a new application.",
+        });
+    });
+
+    describe('a paid row closed with no year', () => {
+        const paid = (over: Partial<OrgMembershipProcess>) => row({
+            kind: 'RENEWAL', status: 'ARCHIVED', archivedFromStatus: 'PENDING_BG_CLEARANCE',
+            createdAt: new Date('2026-06-05T00:00:00.000Z'), paidAt: new Date('2026-06-10T00:00:00.000Z'), appliesToYear: null, ...over,
+        });
+        const written = () => tx.orgMembershipProcess.updateMany.mock.calls[0][0].data;
+
+        it('reopens with the year its payment falls in, and audits it', async () => {
+            at('2026-12-01T00:00:00.000Z');
+            findUnique.mockResolvedValue(paid({}));
+            await unarchiveApplication(1, 2);
+            expect(written()).toMatchObject({ status: 'PENDING_BG_CLEARANCE', appliesToYear: 2026 });
+            expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+                data: expect.objectContaining({ newData: expect.objectContaining({ appliesToYear: 2026 }) }),
+            }));
+        });
+
+        it('places a payment before the window opens in the year before', async () => {
+            at('2026-12-01T00:00:00.000Z');
+            findUnique.mockResolvedValue(paid({ createdAt: new Date('2026-06-01T00:00:00.000Z'), paidAt: new Date('2026-05-31T00:00:00.000Z') }));
+            await unarchiveApplication(1, 2);
+            expect(written()).toMatchObject({ appliesToYear: 2025 });
+        });
+
+        it.each([
+            ['a recorded year', { appliesToYear: 2025 }],
+            ['no payment', { paidAt: null }],
+        ] as const)('leaves the year alone with %s', async (_label, over) => {
+            at('2026-12-01T00:00:00.000Z');
+            findUnique.mockResolvedValue(paid(over));
+            await unarchiveApplication(1, 2);
+            expect(written()).not.toHaveProperty('appliesToYear');
+        });
+
+        it('writes no year when no boundary is configured', async () => {
+            at('2026-12-01T00:00:00.000Z');
+            tx.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: null });
+            findUnique.mockResolvedValue(paid({}));
+            await unarchiveApplication(1, 2);
+            expect(written()).not.toHaveProperty('appliesToYear');
         });
     });
 

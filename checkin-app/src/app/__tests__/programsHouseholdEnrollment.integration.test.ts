@@ -18,6 +18,7 @@
  */
 
 import { POST } from '@/app/api/programs/[id]/participants/route';
+import { POST as requestPlan } from '@/app/api/programs/[id]/request-payment-plan/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
@@ -181,5 +182,42 @@ describe('Multi-select household enrollment (integration)', () => {
         expect(enrolled).toHaveLength(2);
         expect(enrolled.map(r => r.personId).sort((x, y) => x - y))
             .toEqual([leadId, depAId].sort((x, y) => x - y));
+    });
+
+    // Enrolling a member or asking for a payment plan takes on a payment, so a lead
+    // of unknown age is refused until they add a date of birth; they stay the lead.
+    describe('a lead of unknown age', () => {
+        let pricedProgramId: number;
+
+        beforeAll(async () => {
+            pricedProgramId = (await prisma.program.create({
+                data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Household Enroll Test Priced', phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), nonOrgMemberPriceCents: 5000 }
+            })).id;
+            await prisma.programParticipant.create({ data: { programId: pricedProgramId, personId: depBId, status: 'PENDING', pendingSince: new Date() } });
+            await prisma.person.update({ where: { id: leadId }, data: { dateOfBirth: null, isDeclaredAdult: false } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
+        });
+
+        it('is refused when enrolling a household member, and nothing is claimed', async () => {
+            const res = await enroll(pricedProgramId, depCId);
+            expect(res.status).toBe(403);
+            expect((await res.json()).error).toMatch(/Add your date of birth/);
+            expect(await prisma.programParticipant.findUnique({ where: { programId_personId: { programId: pricedProgramId, personId: depCId } } })).toBeNull();
+        });
+
+        it('is refused when requesting a payment plan, and the place is unchanged', async () => {
+            const res = await requestPlan(
+                new Request(`http://localhost:4000/api/programs/${pricedProgramId}/request-payment-plan`, {
+                    method: 'POST',
+                    body: JSON.stringify({ participantId: depBId, kind: 'SCHOLARSHIP' })
+                }) as unknown as import('next/server').NextRequest,
+                params(pricedProgramId)
+            );
+            expect(res.status).toBe(403);
+            expect((await res.json()).error).toMatch(/Add your date of birth/);
+            const row = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId: pricedProgramId, personId: depBId } }, select: { isPaymentPlanRequested: true } });
+            expect(row?.isPaymentPlanRequested).toBe(false);
+            expect((await prisma.person.findUnique({ where: { id: leadId }, select: { isHouseholdLead: true } }))?.isHouseholdLead).toBe(true);
+        });
     });
 });

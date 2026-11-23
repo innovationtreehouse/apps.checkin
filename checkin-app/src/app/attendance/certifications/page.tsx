@@ -3,7 +3,7 @@
 import { useState, Suspense, useCallback, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import { Alert, Badge, Box, Card, Center, Group, Loader, Text, Title } from "@mantine/core";
-import { clearError, showError } from "@checkin/component-ui";
+import { clearError, NETWORK_FAILURE_TEXT, showError } from "@checkin/component-ui";
 import { useAutoCycle } from "../../../hooks/useAutoCycle";
 import { usePolling } from "@/hooks/usePolling";
 import { goesBy } from "@/lib/person/name";
@@ -11,7 +11,6 @@ import { ToolLevelBadge, toToolLevel, toolLevelDot } from "@/components/ToolLeve
 
 import { PageLoader } from "@/components/ui/PageLoader";
 const NETWORK_ERROR_KEY = "certifications-network";
-const UNREACHABLE = "Couldn't reach the server. Check your connection and try again.";
 
 type ToolStatusLevel = "BASIC" | "DOF" | "CERTIFIED" | "INSTRUCTOR" | "MAY_CERTIFY_OTHERS";
 
@@ -106,7 +105,7 @@ function KioskCertificationsInner() {
       console.error("Failed to fetch certifications data:", error);
       setUnreachable(true);
       // Nobody can dismiss a message on the door screen, so the kiosk shows staleness inline only.
-      if (!isKioskMode) showError(UNREACHABLE, { key: NETWORK_ERROR_KEY });
+      if (!isKioskMode) showError(NETWORK_FAILURE_TEXT, { key: NETWORK_ERROR_KEY });
     } finally {
       setLoading(false);
     }
@@ -225,7 +224,7 @@ function KioskCertificationsInner() {
         ) : error ? (
           <Alert color="red">{error}</Alert>
         ) : !loaded && unreachable ? (
-          <Alert color="red">{UNREACHABLE}</Alert>
+          <Alert color="red">{NETWORK_FAILURE_TEXT}</Alert>
         ) : !loaded && kioskResting ? (
           <Center py="xl"><Text c="dimmed">Kiosk resting — zzz. Badge in to wake it.</Text></Center>
         ) : participants.length === 0 || tools.length === 0 ? (

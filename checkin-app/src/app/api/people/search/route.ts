@@ -9,7 +9,7 @@ import { searchId } from "@/lib/searchId";
 import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 import { leaderAgeCutoff } from "@/lib/programAge";
 import { leaderIneligibilities } from "@/lib/programs/leaderEligibility";
-import { membershipYearCycle, membershipYearCycleForLabel } from "@/lib/membership/renewal";
+import { liveMembershipYear, membershipYearCycle, membershipYearCycleForLabel } from "@/lib/membership/renewal";
 
 export const dynamic = 'force-dynamic';
 
@@ -228,7 +228,12 @@ export const GET = withAuth(
             // The leader pickers show why someone can't be named, through the server's own rule.
             // Ops is denied check standing, so it never sees the reason.
             if (adultsOnly && !opsOnly) {
-                const reasons = await leaderIneligibilities(prisma, formatted.map((p) => ({ id: p.id, isMember: p.isMember, lastBackgroundCheck: p.lastBackgroundCheck ?? null })));
+                // Measured for the program's membership year when the picker names one, else the live year.
+                const statedYear = Number(url.searchParams.get('year'));
+                const year = Number.isInteger(statedYear) && statedYear > 0
+                    ? statedYear
+                    : liveMembershipYear((await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } }))?.orgMembershipYearBoundary, new Date());
+                const reasons = await leaderIneligibilities(prisma, formatted.map((p) => ({ id: p.id, isMember: p.isMember, lastBackgroundCheck: p.lastBackgroundCheck ?? null })), year);
                 return NextResponse.json({ people: formatted.map((p) => ({ ...p, leaderIneligibility: reasons.get(p.id) ?? null })) });
             }
             return NextResponse.json({ people: formatted });

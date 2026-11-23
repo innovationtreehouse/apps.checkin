@@ -15,7 +15,8 @@ export type MergeChainStep = { id: number; person: Person | null };
 /**
  * Follows an id to the live Person it names. A merged-away id has no Person row; the PersonMerge
  * archive holds `fromId -> toId`, and `toId` is a foreign key that a later merge repoints, so the
- * archive is one hop. A survivor missing when it is read means a merge or delete raced this one.
+ * archive is one hop. A survivor missing when it is read is re-read through the archive, since a
+ * merge of that survivor may have just repointed it; still missing means a delete raced this one.
  * `chain` lists every id looked up, in order, starting with `id`.
  */
 export async function walkMergeChain(id: number): Promise<{ resolution: MergeResolution; chain: MergeChainStep[] }> {
@@ -24,10 +25,16 @@ export async function walkMergeChain(id: number): Promise<{ resolution: MergeRes
     if (person) return { resolution: { kind: "live", person, hops: 0 }, chain };
     const archived = await prisma.personMerge.findUnique({ where: { fromId: id }, select: { toId: true } });
     if (!archived) return { resolution: { kind: "unknown" }, chain };
-    const survivor = await prisma.person.findUnique({ where: { id: archived.toId } });
-    chain.push({ id: archived.toId, person: survivor });
-    if (!survivor) return { resolution: { kind: "broken", lastId: archived.toId }, chain };
-    return { resolution: { kind: "live", person: survivor, hops: 1 }, chain };
+    let toId = archived.toId;
+    for (;;) {
+        const survivor = await prisma.person.findUnique({ where: { id: toId } });
+        chain.push({ id: toId, person: survivor });
+        if (survivor) return { resolution: { kind: "live", person: survivor, hops: 1 }, chain };
+        // A merge of the survivor committing between the two reads repoints the archive row.
+        const reread = await prisma.personMerge.findUnique({ where: { fromId: id }, select: { toId: true } });
+        if (!reread || reread.toId === toId) return { resolution: { kind: "broken", lastId: toId }, chain };
+        toId = reread.toId;
+    }
 }
 
 /** The ids merged into this person; a merge repoints older archive rows, so each names its final survivor. */

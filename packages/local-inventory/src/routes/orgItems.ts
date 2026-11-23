@@ -121,15 +121,15 @@ function refuseCatalogSettings(err: unknown): void {
 }
 
 /**
- * Why a new write may not name this part, or null for an active catalog item or a pending
- * provisional part of this org. A resolved provisional's GTIN is dead: its stock lives on the real part.
+ * Why a new write may not name this part, or null for an active catalog item or one of this
+ * org's provisional parts that is pending or catalog-rejected (a local-only part). An approved or
+ * mapped provisional's GTIN is dead: its stock lives on the real part.
  */
 async function partRefusal(orgId: string, gtin13: string): Promise<string | null> {
   const provisional = await db.inventoryProvisionalItem.findFirst({ where: { orgId, provisionalGtin13: gtin13 }, select: { status: true, resolvedToGtin13: true } });
+  if (provisional?.resolvedToGtin13) return `${formatGtinDisplay(gtin13)} is now ${formatGtinDisplay(provisional.resolvedToGtin13)}; pick that part instead`;
+  if (provisional) return null;
   const id = formatGtinDisplay(gtin13);
-  if (provisional?.status === "pending") return null;
-  if (provisional?.resolvedToGtin13) return `${id} is now ${formatGtinDisplay(provisional.resolvedToGtin13)}; pick that part instead`;
-  if (provisional) return `${id} was rejected by the catalog`;
   const active = await catalogHasActiveItem(gtin13).catch((err: unknown) => {
     refuseCatalogSettings(err);
     console.error("[local-inventory] catalog check failed", err);

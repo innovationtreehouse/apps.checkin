@@ -1,5 +1,6 @@
 export type ReceiptState =
   | "uploaded"
+  | "ocr_queued"
   | "auto_upload"
   | "ocr_failed"
   | "duplicate_flagged"

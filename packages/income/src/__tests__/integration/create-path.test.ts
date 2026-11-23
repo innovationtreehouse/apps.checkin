@@ -533,6 +533,17 @@ describeDb("postPayout — claim, lookup and settle", () => {
     expect(qbo.posts).toHaveLength(1);
   });
 
+  it("a retry that fails again saves its error on the payout and audits it", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.mode = "reject";
+    await drain();
+    await db.payoutReconciliation.update({ where: { id: (await rowFor(p)).id }, data: { reason: null } });
+
+    await resolve(p, { action: "retry" });
+    expect(await rowFor(p)).toMatchObject({ kind: "POST_FAILED", reason: "QuickBooks refused: code 6000 (request tid)" });
+    expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.post_failed" } })).toBe(2);
+  });
+
   it("a warning about another stray app entry survives a failed retry and a later post", async () => {
     const p = payout(2, "2026-06-28", 500);
     qbo.mode = "reject";
@@ -810,7 +821,7 @@ describeDb("drainIncomeOutbox — every findOrCreate outcome", () => {
     const p = payout(2, "2026-06-28", 500);
     qbo.mode = "reject";
     expect(await drain()).toMatchObject({ post: { failed: 1 } });
-    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "POST_FAILED", depositId: null });
+    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "POST_FAILED", depositId: null, reason: "QuickBooks refused: code 6000 (request tid)" });
     const failed = await db.incomeAuditLog.findFirstOrThrow({ where: { action: "reconciliation.post_failed" } });
     expect(failed.reason).toContain("400");
 
@@ -1706,6 +1717,11 @@ describeDb("income settings", () => {
     });
   });
 
+  it("answers a save with the per-run count as read, a stored one above 100 as 100", async () => {
+    await db.incomeOrgSettings.upsert({ where: { orgId: ORG_A }, create: { orgId: ORG_A, maxCreatesPerRun: 1_000 }, update: { maxCreatesPerRun: 1_000 } });
+    await expect(updateIncomeSettings(ORG_A, { benevityMatchWindowDays: 3 }, finance)).resolves.toMatchObject({ maxCreatesPerRun: 100, benevityMatchWindowDays: 3 });
+  });
+
   it("finance may lower a cap; raising one takes the board; each change is audited", async () => {
     await updateIncomeSettings(ORG_A, { maxCreatesPerRun: 10 }, finance);
     await expect(updateIncomeSettings(ORG_A, { maxCreatesPerRun: 20 }, finance)).rejects.toMatchObject({ status: 403 });
@@ -1990,8 +2006,11 @@ describeDb("drainIncomeOutbox — a QuickBooks throttle", () => {
     const p = payout(2, "2026-06-28", 500);
     const q = payout(3, "2026-06-29", 700);
     throttleCreates();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     expect(await drain()).toMatchObject({ post: { throttled: 2, failed: 0, posted: 0 } });
+    expect(warn).toHaveBeenCalledWith("[income] qb_drain_throttled", { remaining: 2 });
+    warn.mockRestore();
     for (const g of [p, q]) expect(await rowFor(g)).toMatchObject({ status: "WAITING", postClaimedAt: null });
     expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.post_failed" } })).toBe(0);
     expect(reports).toEqual([]);
@@ -2011,5 +2030,22 @@ describeDb("drainIncomeOutbox — a QuickBooks throttle", () => {
       status: 503, message: expect.stringContaining("slow down"),
     });
     expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "POST_FAILED", postClaimedAt: null });
+  });
+});
+
+describeDb("drainIncomeOutbox — a post that throws", () => {
+  beforeEach(switchOn);
+
+  it("reports the payout whose post throws and posts the next one", async () => {
+    const reports: FailureReport[] = [];
+    const p = payout(2, "2026-06-28", 500);
+    const q = payout(3, "2026-06-29", 700);
+    bind({ onFailure: (r) => void reports.push(r), mirror: { ...mirror, payout: async (g) => (g === p ? Promise.reject(new Error("mirror read failed")) : mirror.payout(g)) } });
+
+    expect(await drain()).toMatchObject({ post: { failed: 1, posted: 1 } });
+    expect(await rowFor(p)).toMatchObject({ status: "WAITING", depositId: null });
+    expect(await rowFor(q)).toMatchObject({ status: "POSTED" });
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({ detail: `payout reconciliation ${(await rowFor(p)).id}` });
   });
 });

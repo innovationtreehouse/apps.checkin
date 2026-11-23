@@ -50,6 +50,7 @@ describe("inert ports", () => {
   it.each([
     ["CatalogReader.checkReferences", inertCatalogReader.checkReferences],
     ["CatalogReader.getActiveItem", inertCatalogReader.getActiveItem],
+    ["CatalogReader.getOrgProvisionalItem", inertCatalogReader.getOrgProvisionalItem],
     ["CatalogSubmissions.proposeItemReference", inertCatalogSubmissions.proposeItemReference],
     ["CatalogSubmissions.reportConflict", inertCatalogSubmissions.reportConflict],
     ["CatalogSubmissions.allocateProvisionalGtin", inertCatalogSubmissions.allocateProvisionalGtin],

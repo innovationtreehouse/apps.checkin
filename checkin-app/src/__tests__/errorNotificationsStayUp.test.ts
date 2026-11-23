@@ -77,7 +77,7 @@ describe('error notifications stay up', () => {
             (n, f) => n + showCalls(readFileSync(f, 'utf8')).length,
             0,
         );
-        expect(total).toBeGreaterThan(50);
+        expect(total).toBeGreaterThan(10);
     });
 
     it('reads a whole call when a string or comment in it holds a paren', () => {

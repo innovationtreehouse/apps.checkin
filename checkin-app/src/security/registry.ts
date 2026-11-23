@@ -113,6 +113,18 @@ defineRoute({
     ],
 });
 
+// Restore a removed visit: clears the tombstone that DELETE /api/facility/visits
+// or DELETE /api/attendance/manual/[id] set, so the visit counts again, and
+// audits who restored it. The visit id comes from the request body, so the role
+// gate is the whole boundary: sysadmin and board, the same set as the sibling
+// DELETE. No bag: the response is `{}`, so the entry is an admission gate only.
+defineRoute({
+    endpoint: 'POST /api/facility/visits/restore',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: null,
+    orderedView: [],
+});
+
 // Board/sysadmin review of recent attendance-correction activity.
 // The handler does not query Visit directly — it reads AuditLog rows
 // where tableName === 'Visit' and SYNTHESIZES a Visit view per row from the
@@ -938,6 +950,20 @@ defineRoute({
     orderedView: [
         ['isSysadmin',    ['everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:internal', 'member', 'public']],
+    ],
+});
+
+// QuickBooks fault codes seen: code, kind, count, dates, last lane. No finance
+// content, so sysadmins read it too, and it is not an audited read.
+defineRoute({
+    endpoint: 'GET /api/quickbooks/fault-codes',
+    authorize: { anyRole: ['isFinance', 'isBoardMember', 'isSysadmin'] },
+    envelope: 'codes',
+    returns: ['QboFaultCodeSeen'],
+    orderedView: [
+        ['isFinance',     ['everyones:internal', 'public']],
+        ['isBoardMember', ['everyones:internal', 'public']],
+        ['isSysadmin',    ['everyones:internal', 'public']],
     ],
 });
 

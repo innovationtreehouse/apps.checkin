@@ -3,7 +3,7 @@ import type { OrgMembershipProcess } from "@/generated/prisma/client";
 import { ServiceError } from "@checkin/component-kit";
 import { EXTERNAL_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { config } from "@/lib/config";
-import { logBackendError, logger } from "@/lib/logger";
+import { logger } from "@/lib/logger";
 import { backgroundCheckProvider } from "@/lib/membership/background-check/manual-adapter";
 import { applyVolunteerFamilyStatus } from "@/lib/membership/review";
 import { householdCheckStarted } from "@/lib/membership/checkStanding";
@@ -170,12 +170,8 @@ async function advanceExternal(processId: number, retryOnLoss: boolean): Promise
     const householdId = advanced?.householdId ?? null;
     if (paid && householdId !== null) {
         // Lazy: settleHouseholdBg imports this module.
-        const { settleHouseholdBg } = await import("@/lib/membership/settleHouseholdBg");
-        try {
-            await settleHouseholdBg(householdId);
-        } catch (error) {
-            await logBackendError(error, "household background-check settle after a paid application's advance", { householdId, processId });
-        }
+        const { settleAfterEvent } = await import("@/lib/membership/settleHouseholdBg");
+        await settleAfterEvent(householdId, "a paid application's advance", {}, { processId });
     }
     // Reviewers are pinged when the household's check review opens, not here.
     return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -250,7 +246,8 @@ export async function pickUpMissedSignature(process: Pick<OrgMembershipProcess, 
  * Associate a Zoho signing request id with a process so its webhook can match.
  * Clears zohoActionId: re-pointing the envelope would otherwise leave the old
  * action id paired with the new request, an unsignable mismatch that
- * claimAndCreateRequest's null-claim repair can't fix (both ids non-null).
+ * the null-claim repair in claimAndCreateRequest, inside signingUrlForProcess,
+ * can't fix (both ids non-null).
  * Nulling the action id restores the claimable envelope-without-action state its
  * claim already handles — the same recovery clearDeadSigningRequest relies on.
  */

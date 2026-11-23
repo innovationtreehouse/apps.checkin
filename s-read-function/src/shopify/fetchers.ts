@@ -5,7 +5,7 @@
  * (which are not bulk-exportable because they hang off a singleton account).
  */
 import type { ShopifyClient } from "./client.js";
-import { ORDERS_QUERY, PAYOUTS_QUERY, BALANCE_TRANSACTIONS_QUERY } from "./queries.js";
+import { ORDERS_QUERY, ORDER_LINES_QUERY, PAYOUTS_QUERY, BALANCE_TRANSACTIONS_QUERY } from "./queries.js";
 
 interface Connection<T> {
   edges: { node: T }[];
@@ -34,8 +34,38 @@ async function* paginate<T>(
   }
 }
 
-export function fetchOrders(client: ShopifyClient, queryFilter: string): AsyncGenerator<unknown> {
-  return paginate(client, ORDERS_QUERY, (d) => (d as { orders?: Connection<unknown> }).orders, ORDERS_PAGE, queryFilter);
+interface LineItemsPage {
+  nodes: unknown[];
+  pageInfo?: { hasNextPage?: boolean | null; endCursor?: string | null } | null;
+}
+
+/**
+ * Fetch the rest of an order's line items so the node carries every line. If the order
+ * disappears mid-walk, the node keeps hasNextPage true and is projected as incomplete.
+ */
+async function withAllLines(client: ShopifyClient, order: unknown): Promise<unknown> {
+  const node = order as { id?: string; lineItems?: LineItemsPage | null };
+  const first = node.lineItems;
+  if (!node.id || !first?.pageInfo?.hasNextPage) return order;
+
+  const nodes = [...first.nodes];
+  let pageInfo: LineItemsPage["pageInfo"] = first.pageInfo;
+  while (pageInfo?.hasNextPage && pageInfo.endCursor) {
+    const data: { order?: { lineItems?: LineItemsPage | null } | null } = await client.request(ORDER_LINES_QUERY, {
+      id: node.id,
+      after: pageInfo.endCursor,
+    });
+    const page: LineItemsPage | null | undefined = data.order?.lineItems;
+    if (!page) break;
+    nodes.push(...page.nodes);
+    pageInfo = page.pageInfo;
+  }
+  return { ...node, lineItems: { nodes, pageInfo } };
+}
+
+export async function* fetchOrders(client: ShopifyClient, queryFilter: string): AsyncGenerator<unknown> {
+  const orders = paginate(client, ORDERS_QUERY, (d) => (d as { orders?: Connection<unknown> }).orders, ORDERS_PAGE, queryFilter);
+  for await (const order of orders) yield await withAllLines(client, order);
 }
 
 export function fetchPayouts(client: ShopifyClient, queryFilter: string): AsyncGenerator<unknown> {

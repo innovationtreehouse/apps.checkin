@@ -117,6 +117,12 @@ export const REGISTRY = {
         defaultSubject: "Your background check is on file — you can now pay your membership fee",
         defaultBody: "Good news — your household already holds a current background check, so no new one is needed. The last step is paying your membership fee: {{actionLink}}",
     },
+    "membership.positionNeedsCheck": {
+        allowedTokens: { name: text, positions: text, actionLink: link("Start your background check") },
+        sampleCtx: { name: "Jordan Rivera", positions: "Board member, Finance", actionLink: SAMPLE_URL },
+        defaultSubject: "Your new position needs a current background check",
+        defaultBody: "Hi {{name}},\n\nYou've been given a position at the Innovation Treehouse that needs a current background check: {{positions}}. Yours isn't current.\n\nYou can start one yourself from your membership page: {{actionLink}}",
+    },
     "membership.welcome": {
         allowedTokens: { actionLink: link("Visit your dashboard") },
         sampleCtx: { actionLink: SAMPLE_URL },
@@ -136,6 +142,12 @@ export const REGISTRY = {
         sampleCtx: { processId: "318", actionLink: SAMPLE_URL },
         defaultSubject: "Membership: a paid application was blocked at background check",
         defaultBody: "A household that already paid did not pass background-check review (application #{{processId}}). The membership has not been activated and a refund may be needed — please review and contact the household. {{actionLink}}",
+    },
+    "board.bgSettleStuck": {
+        allowedTokens: { processId: text, actionLink: link("Open System Status") },
+        sampleCtx: { processId: "318", actionLink: SAMPLE_URL },
+        defaultSubject: "Membership: an application is stuck at its background-check step",
+        defaultBody: "The background-check step for application #{{processId}} failed after the household's last change, so the application is waiting where it was. It is on the System Status Problems list; a sysadmin or Board member can press Retry there. {{actionLink}}",
     },
     "board.checkRejected": {
         allowedTokens: { personName: text, householdName: text, reviewId: text, actionLink: link("Open applications") },

@@ -33,7 +33,7 @@ describe('stripper — GET /api/facility/corrections', () => {
 
     it('drops a bare survivor id on a Person entry', () => {
         const [[, tokens]] = route!.orderedView;
-        expect(stripBag({ Person: [{ id: 4, name: 'Merged away', mergedIntoId: 3 }] }, tokens, ctx))
+        expect(stripBag({ Person: [{ id: 4, name: 'Merged away', survivorId: 3 }] }, tokens, ctx))
             .toEqual({ Person: [{ id: 4, name: 'Merged away' }] });
     });
 });

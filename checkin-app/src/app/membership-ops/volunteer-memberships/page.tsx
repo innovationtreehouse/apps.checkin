@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import { Badge, Button, Card, Chip, Group, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
 import { AlertBanner } from "@/components/admin/AlertBanner";
-import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { errorMessage, LoadError, NETWORK_FAILURE_TEXT, showError, showSuccess } from "@checkin/component-ui";
 import { api, useLoad } from "@/lib/api";
 import { DataTable, type DataTableColumn } from "@/components/admin/DataTable";
 import { useRequireRole } from "@/hooks/useRequireRole";
@@ -23,9 +23,6 @@ const STATUS_CHIPS: { value: VolunteerRowStatus; label: string; color: string }[
   { value: "REVOKED", label: "Revoked", color: "red" },
   { value: "INACTIVE", label: "No live application", color: "gray" },
 ];
-
-// The add stays on fetch because its refusal carries `matches`, which the kit's HttpError drops.
-const NETWORK_ERROR = "Couldn't reach the server. Check your connection and try again.";
 
 const chipFor = (status: VolunteerRowStatus) => STATUS_CHIPS.find((c) => c.value === status);
 
@@ -87,6 +84,7 @@ export default function VolunteerMembershipsPage() {
     setSaving(true);
     setWarning(undefined);
     try {
+      // The add stays on fetch because its refusal carries `matches`, which the kit's HttpError drops.
       const res = await fetch("/api/settings/membership/volunteer-designations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -103,7 +101,7 @@ export default function VolunteerMembershipsPage() {
         else { showSuccess(confirmHouseholdId === undefined ? "Designation added." : "Household set as a volunteer household."); }
         await reload();
       } else { setMatch(null); showError(typeof data.error === "string" ? data.error : errorMessage(data)); }
-    } catch { showError(NETWORK_ERROR); }
+    } catch { showError(NETWORK_FAILURE_TEXT); }
     finally { setSaving(false); }
   };
 

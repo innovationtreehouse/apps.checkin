@@ -2,8 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useViewer } from "@checkin/component-ui";
-import { notifications } from "@mantine/notifications";
+import { showError, showSuccess, showWarning, useViewer } from "@checkin/component-ui";
 import { Alert, Anchor, Badge, Button, Group, Mark, Modal, Paper, Stack, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
 import DonationFields, { donorInput, NO_DONATION } from "../components/DonationFields";
 import DuplicateCompare, { type CompareReceipt } from "../components/DuplicateCompare";
@@ -22,6 +21,7 @@ import { missingDetails } from "../lib/missingDetails";
 import { OCR_OFF_NOTE } from "../lib/ocrOff";
 import { DAILY_LIMIT_REACHED } from "../lib/ocrAllowance";
 import AllowanceReset from "../components/AllowanceReset";
+import ReadingNotice, { READING_STATES } from "../components/ReadingNotice";
 import { describeCorrection, editsSinceReading, submitterCorrections, type SubmitterCorrection } from "../lib/submitterCorrections";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
@@ -188,11 +188,11 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
     return () => window.removeEventListener("focus", refresh);
   }, [open, reloadReceipt, reloadGroup, reloadCompared]);
   useEffect(() => {
-    if (group.error) notifications.show({ title: "Couldn't load the possible copies", message: group.error, color: "red", autoClose: false });
+    if (group.error) showError(group.error, { title: "Couldn't load the possible copies" });
   }, [group.error]);
   const loadErrors = [...compared.errors.values()].join("; ");
   useEffect(() => {
-    if (loadErrors) notifications.show({ title: "Couldn't load a possible copy", message: loadErrors, color: "red", autoClose: false });
+    if (loadErrors) showError(loadErrors, { title: "Couldn't load a possible copy" });
   }, [loadErrors]);
   const [note, setNote] = useState("");
   const [rejectReason, setRejectReason] = useState("");
@@ -276,7 +276,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const allowanceUsedUp = unread && lastFailure?.action === "ocr_failed" && lastFailure.valueAfter === DAILY_LIMIT_REACHED;
   // Details saved before a failed resubmit still need a way out of Couldn't read.
   const savedTyped = unread && missingDetails(r).length === 0;
-  const failed = (message: string) => notifications.show({ title: "Receipt not saved", message, color: "red", autoClose: false });
+  const failed = (message: string) => showError(message, { title: "Receipt not saved" });
 
   const readAgain = () => act("/retry-ocr", "POST", {}, "Read again", "Couldn't read the receipt again", true);
 
@@ -318,9 +318,9 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   };
   const save = () =>
     exclusive(async () => {
-      if (await saveDraft()) notifications.show({ message: "Saved", color: "green" });
+      if (await saveDraft()) showSuccess("Saved");
     });
-  const stillOff = (message: string) => notifications.show({ message, color: "yellow", autoClose: false });
+  const stillOff = (message: string) => showWarning(message);
   /** Sends the saved receipt back through the flow and reports where it landed. */
   const resubmit = async (saved: boolean) => {
     let after: Receipt;
@@ -329,14 +329,14 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
     } catch (err) {
       receipt.reload();
       audit.reload();
-      notifications.show({ title: saved ? "Saved, but couldn't resubmit" : "Couldn't resubmit this receipt", message: errorMessage(err), color: "red", autoClose: false });
+      showError(errorMessage(err), { title: saved ? "Saved, but couldn't resubmit" : "Couldn't resubmit this receipt" });
       return;
     }
     window.dispatchEvent(new Event("nav-counts-mutated"));
     if (after.state === "validation_failed") {
       stillOff(`${saved ? "Saved. " : ""}The totals still don't add up; stays in Totals off.`);
     } else {
-      notifications.show({ message: `${saved ? "Saved and resubmitted" : "Resubmitted"}: ${STATE_LABELS[after.state] ?? after.state}`, color: "green" });
+      showSuccess(`${saved ? "Saved and resubmitted" : "Resubmitted"}: ${STATE_LABELS[after.state] ?? after.state}`);
       if (fromReview) {
         router.push(back.href);
         return;
@@ -386,6 +386,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
       ) : (
         r.validationNotes && <Alert color="yellow">{r.validationNotes}</Alert>
       )}
+      {READING_STATES.has(r.state) && <ReadingNotice state={r.state} reload={reloadReceipt} />}
       <PurchaseOutcomePanel receipt={r} />
       {r.financialReviewReasons.length > 0 && (
         <Alert color="blue">Finance review: {r.financialReviewReasons.map(reasonLabel).join("; ")}</Alert>

@@ -165,3 +165,11 @@ describe("tab badge sources", () => {
   });
 });
 
+
+describe("System Status sidebar link", () => {
+  it("opens finance on QuickBooks codes, its only tab, and everyone else it admits on Health", () => {
+    expect(SYSTEM_STATUS.hrefFor?.(PERSONAS.finance, null)).toBe("/system-status/qbo-codes");
+    expect(SYSTEM_STATUS.hrefFor?.(PERSONAS.board, null)).toBe("/system-status/health");
+    expect(SYSTEM_STATUS.hrefFor?.(PERSONAS.sysadmin, null)).toBe("/system-status/health");
+  });
+});

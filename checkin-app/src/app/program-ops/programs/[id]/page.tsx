@@ -168,13 +168,11 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
     setSeededShopify(form);
   });
 
-  // Lead-mentor picker searches adult members.
-  const searchAdults = useCallback(async (query: string): Promise<ParticipantOption[]> => {
-    const res = await fetch(`/api/people/search?q=${encodeURIComponent(query)}&filter=adults`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.people || [];
-  }, []);
+  // Lead-mentor picker searches adult members, judged for this program's membership year.
+  const programYear = program?.appliesToYear;
+  const searchAdults = useCallback((query: string): Promise<ParticipantOption[]> =>
+    api<{ people?: ParticipantOption[] }>(`/api/people/search?q=${encodeURIComponent(query)}&filter=adults${programYear ? `&year=${programYear}` : ''}`)
+      .then((data) => data.people ?? [], () => []), [programYear]);
 
   const canStateYear = !!sessionUser?.isBoardMember;
   const yearBoundary = useMembershipYearBoundary(!!(sessionUser?.isSysadmin || sessionUser?.isBoardMember));

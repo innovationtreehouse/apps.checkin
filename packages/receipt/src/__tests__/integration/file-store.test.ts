@@ -6,7 +6,7 @@ import type { ReceiptLimits } from "../../lib/limits";
 import { mailQueueService } from "../../services/mailQueueService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { actAs, actions, ALICE, clearAll, configure, FINANCE, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
+import { actAs, actions, ALICE, clearAll, configure, FINANCE, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile, uploadRead } from "../helpers/setup";
 
 let store: ReturnType<typeof createMemoryFileStore>;
 let seq = 0;
@@ -39,7 +39,7 @@ beforeEach(async () => {
 describeDb("receipt file store", () => {
   it("the object is stored, the row has no bytes, and the file route reads it back", async () => {
     const file = textFile();
-    const r = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const r = await uploadRead(file, "text/plain", { details: manualDetails() });
     const row = await db.receipt.findUniqueOrThrow({ where: { id: r.id } });
     expect(row).toMatchObject({ fileBlob: null, fileKey: `receipts/${r.id}`, fileSize: file.length });
     expect(r).not.toHaveProperty("fileKey");
@@ -51,14 +51,14 @@ describeDb("receipt file store", () => {
   it("a row with no key answers 404 and logs, whatever its file_blob holds", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const file = textFile();
-    const r = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const r = await uploadRead(file, "text/plain", { details: manualDetails() });
     await db.receipt.update({ where: { id: r.id }, data: { fileKey: null, fileBlob: new Uint8Array(file) } });
     await expect(receiptService.getFile(r.id, "submitter")).rejects.toMatchObject({ status: 404 });
     expect(error).toHaveBeenCalledWith(expect.stringContaining("no file key"));
   });
 
   it("a missing object answers 404 on the file route", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     store.objects.clear();
     await expect(receiptService.getFile(r.id, "submitter")).rejects.toMatchObject({ status: 404 });
   });
@@ -69,12 +69,12 @@ describeDb("receipt file store", () => {
     const spy = { extract: (f: Buffer, m: string) => (extracted.push(f.toString()), ocr.extract(f, m)) };
     configure({ ocr: spy, fileStore: store });
     const file = textFile();
-    await receiptService.upload(file, "text/plain", {});
+    await uploadRead(file, "text/plain", {});
     expect(extracted).toEqual([file.toString()]);
 
     const failing = createMemoryFileStore();
     configure({ ocr, fileStore: { ...failing, put: async () => {}, get: async () => null } });
-    const r = await receiptService.upload(textFile(), "text/plain", {});
+    const r = await uploadRead(textFile(), "text/plain", {});
     expect(await stateOf(r.id)).toBe("ocr_failed");
     expect(await actions(r.id)).toContain("ocr_failed:data");
   });
@@ -86,7 +86,7 @@ describeDb("receipt file store", () => {
       throw new Error("store unreachable");
     };
     configure({ ocr: okOcr(), fileStore: { ...failing, put: async () => {}, get: down } });
-    const r = await receiptService.upload(textFile(), "text/plain", {});
+    const r = await uploadRead(textFile(), "text/plain", {});
     expect(await stateOf(r.id)).toBe("ocr_failed");
     expect(await actions(r.id)).toContain("ocr_failed:system");
   });
@@ -114,8 +114,8 @@ describeDb("receipt file store", () => {
   it("a refused upload stores nothing, and the byte limit counts file_size", async () => {
     const file = textFile();
     configureStore({ uploadBytesPerPersonPerDay: file.length + 5 });
-    await receiptService.upload(file, "text/plain", { details: manualDetails() });
-    await expect(receiptService.upload(textFile("x".repeat(20)), "text/plain", { details: manualDetails() })).rejects.toMatchObject({ status: 429 });
+    await uploadRead(file, "text/plain", { details: manualDetails() });
+    await expect(uploadRead(textFile("x".repeat(20)), "text/plain", { details: manualDetails() })).rejects.toMatchObject({ status: 429 });
     expect(store.objects.size).toBe(1);
   });
 

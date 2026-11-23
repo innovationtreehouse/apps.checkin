@@ -24,8 +24,7 @@ The page reads live rows, so a code seen this morning is on it this morning.
 - **Recorded** by the host's binding of each library's "on failure" port, which
   already receives every kinded failure with its fault codes. No lane's behaviour
   changes, and a failed write never fails the lane.
-- **Unchanged:** how a code is sorted, the run-level rule (three refusals with one
-  code in a run stop it as a setting), and what finance is told about a held item.
+- **Unchanged:** how a code is sorted, and what finance is told about a held item.
 - **Cost:** one new table, one route, one page, and a registry entry that
   ships alone first.
 
@@ -52,8 +51,7 @@ A new host table, `QboFaultCodeSeen`, one row per code and kind:
 | `lastSeenAt` | timestamp | internal | Latest report |
 | `lastLane` | text | internal | Library and lane of the latest report ("expense posting") |
 
-Primary key `(code, kind)`. A report carrying two codes counts toward each, the same
-way the run-level rule counts them.
+Primary key `(code, kind)`. A report carrying two codes counts toward each.
 
 A row per kind, not per code, because one code can arrive under different statuses:
 a 401 with a code is connection, a 400 with the same code is data. The page shows
@@ -146,24 +144,24 @@ System Status is sysadmin and board today, so finance is admitted to this tab on
   keyholders on Unsynced Scans.
 
 A line at the top: "Every fault code QuickBooks has sent us, and how the app sorted
-it. A code marked unclassified is treated as the item's data, unless three items in
-one run are refused with it."
+it."
 
 Then a table, one row per code:
 
-| Code | Classified as | Sorted as | Seen | First seen | Last seen | Last lane |
-|---|---|---|---|---|---|---|
-| 6000 | `unclassified` | `data 14` `connection 1` | 15 | 3 Nov | today 09:12 | expense posting |
-| 6190 | `unclassified` | `data 2` | 2 | 5 Nov | 6 Nov | gift posting |
+| Code | Sorted as | Seen | First seen | Last seen | Last lane |
+|---|---|---|---|---|---|
+| 6000 | `data 14` `connection 1` | 15 | 3 Nov 2026 | 20 Nov 09:12 | expense posting |
+| 6190 | `data 2` | 2 | 5 Nov 2026 | 6 Nov 14:30 | bulk-donation in-kind-posting |
 
-- **Classified as** comes from the code table in `packages/quickbooks`, the plain
-  constant that maps a fault code to settings or data, beside the status rule
-  (`statusKind` in `packages/quickbooks/src/client.ts`) it overrides. A code not in
-  the table reads `unclassified`. The table has no entries yet, so every code reads
-  unclassified until one lands by PR (FC3). The panel imports the table, so the
-  response carries only stored rows.
-- **Sorted as** has one pill per kind with its count, in the kind colours the rest
-  of the app uses.
+- **Classified as** is not on the page yet. It needs the code table in
+  `packages/quickbooks` that maps a fault code to settings or data, beside the
+  status rule (`statusKind` in `packages/quickbooks/src/client.ts`) it would
+  override. That table does not exist yet. The column, and the intro's line on
+  unclassified codes, arrive with the PR that adds it. The panel will import the
+  table, so the response still carries only stored rows.
+- **Last lane** shows the lane name as the binding stores it.
+- **Sorted as** has one pill per kind with its count, in colours the panel
+  defines: system gray, connection orange, settings yellow, data blue, bug red.
 - The panel refreshes on focus and every minute. Empty, it says "QuickBooks hasn't
   refused anything yet."
 

@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { Badge, Button, Card, Group, Text, Title } from "@mantine/core";
 import { modals } from "@mantine/modals";
-import { LoadError, showError, showSuccess } from "@checkin/component-ui";
-import { useLoad } from "@/lib/api";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
 
 /**
  * Board-only: the Key Volunteer Agreement's current version, whether its
@@ -23,16 +23,15 @@ export function KeyVolunteerAgreementCard({ initialVersion }: { initialVersion: 
   const bump = async () => {
     setBumping(true);
     try {
-      const res = await fetch("/api/settings/membership/key-volunteer-version", { method: "POST" });
-      const data = (await res.json().catch(() => ({}))) as { agreementVersion?: number; agreementsOpened?: number; error?: string };
-      if (!res.ok || data.agreementVersion === undefined) {
-        showError(data.error ?? "Failed to start a new agreement version");
+      const data = await api<{ agreementVersion?: number; agreementsOpened?: number }>("/api/settings/membership/key-volunteer-version", { method: "POST" });
+      if (data?.agreementVersion === undefined) {
+        showError("Failed to start a new agreement version");
         return;
       }
       setVersion(data.agreementVersion);
       showSuccess(`Version ${data.agreementVersion} is current. ${data.agreementsOpened ?? 0} Key Volunteer(s) asked to sign it.`);
-    } catch {
-      showError("Network error starting a new agreement version");
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setBumping(false);
     }

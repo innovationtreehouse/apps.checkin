@@ -1,9 +1,8 @@
 "use client";
 import { useState } from "react";
 import { Button, Code, Group, Table, Text, TextInput, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { api, errorMessage, notifyNavCounts, useIsFinance, useLoad } from "../components/api";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, showError, showSuccess } from "@checkin/component-ui";
 
 interface ExclusionRow {
   id: number;
@@ -27,13 +26,13 @@ export default function ExclusionsPage() {
     setBusy(true);
     try {
       await api("/qb-exclusions", { method: "POST", body: JSON.stringify({ qbTxnId, reason }) });
-      notifications.show({ message: "Deposit excluded for good", color: "green" });
+      showSuccess("Deposit excluded for good");
       setQbTxnId("");
       setReason("");
       rows.reload();
       notifyNavCounts();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
+      showError(errorMessage(err));
     } finally {
       setBusy(false);
     }

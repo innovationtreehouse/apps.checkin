@@ -26,8 +26,10 @@ const SELECT = { qbMatchWindowDays: true, qbMaxCreatesPerRun: true } as const;
 
 export async function readDonationSettings(client: DbOrTx, orgId: string): Promise<DonationSettings> {
   const row = await client.donationOrgSettings.findUnique({ where: { orgId }, select: SELECT });
-  return row ? { ...row, qbMaxCreatesPerRun: Math.min(row.qbMaxCreatesPerRun, MAX_CREATES_PER_RUN_CEILING) } : DEFAULT_DONATION_SETTINGS;
+  return row ? capped(row) : DEFAULT_DONATION_SETTINGS;
 }
+
+const capped = (row: DonationSettings): DonationSettings => ({ ...row, qbMaxCreatesPerRun: Math.min(row.qbMaxCreatesPerRun, MAX_CREATES_PER_RUN_CEILING) });
 
 /** The validated changes in `patch` against `current`; throws a 400 or 403 the route returns as is. */
 export function settingsChanges(current: DonationSettings, patch: unknown, roles: DonationSettingsRoles): Partial<DonationSettings> {
@@ -63,6 +65,6 @@ export async function updateDonationSettings(orgId: string, patch: unknown, role
       ...actor,
       payload: { before: Object.fromEntries(keys.map((k) => [k, current[k]])), after: changes },
     });
-    return next;
+    return capped(next);
   });
 }

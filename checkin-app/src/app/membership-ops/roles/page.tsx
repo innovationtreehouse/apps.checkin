@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Card, Group, Stack, Text, UnstyledButton } from "@mantine/core";
 import { LoadError } from "@checkin/component-ui";
-import { useLoad } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
 import { EntityPicker } from "@/components/admin/EntityPicker";
 import { RoleBadge, roleLabel } from "@/components/ui/RoleBadge";
 import { RolesEditModal, type RolesEditTarget } from "@/components/roles/RolesEditModal";
@@ -49,12 +49,8 @@ export default function RolesPage() {
           label="Add or edit a person's roles"
           placeholder="Search people by name, email, or ID..."
           selectedId={null}
-          search={async (q) => {
-            const res = await fetch(`/api/people/search?q=${encodeURIComponent(q)}`);
-            if (!res.ok) return [];
-            const data = await res.json();
-            return (data.people || []) as PersonRow[];
-          }}
+          search={(q) => api<{ people?: PersonRow[] }>(`/api/people/search?q=${encodeURIComponent(q)}`)
+            .then((data) => data.people ?? [], () => [])}
           getOptionLabel={(p) => p.name || p.email || `Person #${p.id}`}
           getOptionDescription={(p) => p.email}
           onSelect={(p) => setTarget(people.find((row) => row.id === p.id) ?? p)}

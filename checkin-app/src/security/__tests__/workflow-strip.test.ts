@@ -12,9 +12,12 @@
  *      drops the blob and any submitter/reimbursement key a projection grows,
  *      and keeps the nested line items.
  *   4. Admission: INVENTORY_MANAGER, FINANCE and BOARD read; only
- *      INVENTORY_MANAGER writes, except close-out, which BOARD may also call; an
- *      id-less session is 401 on every route through the real authenticateRequest (only next-auth is mocked) and is denied the
- *      reads at the resolveAccess layer too; no route view-selects a sysadmin.
+ *      INVENTORY_MANAGER writes, except close-out, which BOARD may also call.
+ *      Provisional parts is a manager-only read, its roles covered by
+ *      workflow-provisional-parts-route.test.ts. An id-less session is 401 on
+ *      every route through the real authenticateRequest (only next-auth is
+ *      mocked) and is denied the shared reads at the resolveAccess layer too;
+ *      no route view-selects a sysadmin.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
@@ -125,8 +128,9 @@ describe('workflow-mapping stripper under the read view', () => {
 
 describe('workflow-mapping admission', () => {
     const PREFIX = 'GET /api/workflow-mapping/';
+    const PROVISIONAL_PARTS = 'GET /api/workflow-mapping/provisional-parts';
     const routes = [...allRoutes()].filter(([e]) => e.includes(' /api/workflow-mapping/'));
-    const reads = routes.filter(([e]) => e.startsWith(PREFIX)).map(([e]) => e);
+    const reads = routes.filter(([e]) => e.startsWith(PREFIX) && e !== PROVISIONAL_PARTS).map(([e]) => e);
     const CLOSE_OUT = 'POST /api/workflow-mapping/receipts/[id]/close-out';
     const writes = routes.filter(([e]) => !e.startsWith(PREFIX) && e !== CLOSE_OUT).map(([e]) => e);
 
@@ -195,13 +199,13 @@ describe('workflow-mapping admission', () => {
         expect(views.get('isInventoryManager')).toEqual(getRoute('POST /api/workflow-mapping/receipts/[id]/retry-apply')!.orderedView[0][1]);
     });
 
-    it.each([...reads, ...writes, CLOSE_OUT])('%s 401s anonymous and id-less sessions without running the body', async (endpoint) => {
+    it.each([...reads, ...writes, CLOSE_OUT, PROVISIONAL_PARTS])('%s 401s anonymous and id-less sessions without running the body', async (endpoint) => {
         expect(await call(endpoint, null)).toEqual({ status: 401, ran: false });
         expect(await call(endpoint, idless)).toEqual({ status: 401, ran: false });
     });
 
-    // Reads and close-out (anyRole): the writes' inventory-manager resolver checks
-    // the role flag, so authenticateRequest's 401 above is what denies them an id-less session.
+    // Shared reads and close-out (anyRole): the inventory-manager resolver on the writes and
+    // provisional parts checks the role flag, so authenticateRequest's 401 above is what denies them an id-less session.
     it.each([...reads, CLOSE_OUT])('%s denies an id-less session at the resolveAccess layer', async (endpoint) => {
         const { allowed } = await resolveAccess(getRoute(endpoint)!.authorize, {
             auth: { type: 'session', user: idless },

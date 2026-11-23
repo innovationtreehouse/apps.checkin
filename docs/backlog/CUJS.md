@@ -27,7 +27,7 @@ Status: **ALL 7 chips folded (V1–V7).** Every step tagged vs live code at base
 5. ✅ BG review (2-of-N, anti-collusion gates, board override w/ COI gate)
 6. ✅ Reviewer volunteer bit (does NOT gate payment — review runs in parallel)
 7. ✅ Payment via Shopify (member vs volunteer price + discount code)
-8. ✅ Webhook validates payment→activation (HMAC + variant-id check; H2 no-item → stays PENDING + board alert). NOTE: volunteer discount-code entitlement still NOT validated (`CO2`/#278)
+8. ✅ Webhook validates payment→activation (HMAC + variant-id check; H2 no-item → stays PENDING + board alert). NOTE: the webhook does not check volunteer discount-code entitlement; by register rule anyone holding the code can redeem it, and the daily reconcile flags unentitled use (`DISCOUNT_UNAUTHORIZED`)
 9. 🟡 Post-activation fan-out: welcome/congrats ✅ · **mailing-list `CM1` ❌ + badge-print `AT11` ❌ NOT wired to activation**
 10. ✅ 18+ student BG trigger on activation (`SA1` Trigger C)
 11. ✅ Scholarship/payment-plan request — the **ask** is now modeled distinctly (`scholarshipRequestKind`: SCHOLARSHIP / PAYMENT_PLAN / UNSURE, stated by the family, shown on the queue); the **grant** still rides the board payment-plan-certify override, and granted terms stay out of the app by decision
@@ -92,7 +92,7 @@ _Extraction adds (2026-07-22):_
 4. ✅ Insert own past visit — `attendance/manual` forces `personId=self` (never from body), backdate allowed by design, audit-logged CREATE
 5. 🟡 Edit an inserted visit (`AT3` — **now fully mapped**): **user self-edit ⛔ none** (manual route INSERT-only) · **staff edit ✅** board/sysadmin PATCH/DELETE `facility/visits` (⚠️ UI page gates sysadmin-only but API allows board too — role discrepancy) · **lead/ops add-for-others ✅ scoped** (per-session correction via `PATCH events/[id]` `manualEditAttendance`, or live `scan`) — but **no arbitrary-past-time insert for others** exists
 6. ❌ Waiver-gated enrollment where the program requires one — camps (`P28`)
-7. ❌ Age-out → alumni pipeline (`M21`; SA1 BG trigger already covers the mentor return)
+7. ❌ Age-out → alumni pipeline (`M21`; the compliance page lists a returning mentor who needs a check)
 
 ### A7. Keyholder / front-desk (kiosk)  [bucket AT]  — validated V3
 1. ✅ Open facility — open means a keyholder is present (`safety.facilityOpen`); a kiosk badge with no keyholder in still checks in, marked "no keyholder" (cleared by a keyholder IN within 10 min); web/manual check-in still blocked when `activeKeyholders===0`
@@ -236,7 +236,7 @@ _For each loop: does the whole thing close, and can staff SEE/FIX it? These over
 - Oversight/breakage:
   - ✅ **compliance dashboard** (board-only): `peopleNeedingBgCheck`, `peopleMissingDob`, household `STALE_BG`/`REVOKED`/`DENIED`/`STUCK_BG_CLEARANCE` — the "can staff SEE it" surface for warn-only
   - 🟡 BLOCKED surface = static red banner + override route; **no proactive escalation/re-notify** beyond one-time reviewer email on entry
-  - ❌ **composition sweeps (`SA3`)** — no `NO_CHECKED_ADULT` / "household lost its only checked adult → youth uncovered" flag anywhere. Aged-up youth caught only at NEXT annual run (not at birthday, only if program-attached); SA3-a composition-loss has zero coverage
+  - ❌ **composition sweeps (`SA3`)** — no `NO_CHECKED_ADULT` / "household lost its only checked adult → youth uncovered" flag anywhere. Aged-up youth are listed on the compliance page only (no PERSON_BG opens at birthday; only program-attached); SA3-a composition-loss has zero coverage
   - ❌ **BG-alert cascade/escalation (`SA4`)** — no passive-drift escalation, no program-lead alerting, no re-notify
   - ✅/🟡 barred-persons gate (`GC-BARRED`) — modeled as `OrgMembership.status=DENIED` → single denied-login admission gate + BG BLOCKED never activates; caveat: no *per-person* barred registry independent of household status
   - 🟡 two-deep flagging (`AT6`) — detection→board warning email (debounced 5min); **no hard block / 60s delay**. ⚠️ `AT10`/#300 fail-open: unknown-DOB counted as adult (BG verdict path, by contrast, fails SAFE — DOB_MISSING never treated as cleared)

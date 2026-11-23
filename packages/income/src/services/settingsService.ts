@@ -33,8 +33,10 @@ const MAX_INT = 2_147_483_647;
 
 export async function readIncomeSettings(client: TxClient | typeof db, orgId: string): Promise<IncomeSettings> {
   const row = await client.incomeOrgSettings.findUnique({ where: { orgId }, select: SELECT });
-  return row ? { ...row, maxCreatesPerRun: Math.min(row.maxCreatesPerRun, MAX_CREATES_PER_RUN_CEILING) } : DEFAULT_INCOME_SETTINGS;
+  return row ? capped(row) : DEFAULT_INCOME_SETTINGS;
 }
+
+const capped = (row: IncomeSettings): IncomeSettings => ({ ...row, maxCreatesPerRun: Math.min(row.maxCreatesPerRun, MAX_CREATES_PER_RUN_CEILING) });
 
 /** The validated changes in `patch` against `current`; throws a 400 or 403 the route returns as is. */
 export function settingsChanges(current: IncomeSettings, patch: unknown, actor: SettingsActor): Partial<IncomeSettings> {
@@ -83,6 +85,6 @@ export async function updateIncomeSettings(orgId: string, patch: unknown, actor:
       after: changes,
       correlationId: actor.correlationId,
     });
-    return next;
+    return capped(next);
   });
 }
