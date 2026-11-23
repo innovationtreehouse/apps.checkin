@@ -560,7 +560,7 @@ function LineForm({ start, busy, onSubmit, onCancel, onNonInventory }: {
           />
           {gtin13 && !chosen && !chosenPart && <Text size="xs" c="dimmed">Keeps {formatGtinDisplay(gtin13)} unless you choose another item</Text>}
           {catalogSearchTerm(search) === null && <Text size="xs" c="dimmed">Type at least {MIN_CATALOG_SEARCH_LENGTH} characters</Text>}
-          {found.answered && !found.error && results.length === 0 && <Text size="xs" c="dimmed">No matching catalog items</Text>}
+          {found.answered && !found.error && results.length + parts.length === 0 && <Text size="xs" c="dimmed">No matching catalog items</Text>}
           {results.length + parts.length > 0 && (
             <ScrollArea.Autosize mah={220}>
               <Radio.Group

@@ -59,6 +59,9 @@ describeDb("readService (X3/X10)", () => {
       { gtin13: "0200002700018", name: "Shelf pin", status: "pending" },
     ]);
     expect(await searchOrgProvisionalItems("org-a", "0200002700018")).toEqual([{ gtin13: "0200002700018", name: "Shelf pin", status: "pending" }]);
+    expect(await searchOrgProvisionalItems("org-a", "P000000")).toEqual([{ gtin13: "0200002700001", name: "Shelf bracket", status: "rejected" }]);
+    expect(await searchOrgProvisionalItems("org-a", " p000001 ")).toEqual([{ gtin13: "0200002700018", name: "Shelf pin", status: "pending" }]);
+    expect(await searchOrgProvisionalItems("org-a", "P000002")).toEqual([]);
     expect(await searchOrgProvisionalItems("org-b", "0200002700018")).toEqual([]);
     expect(await searchOrgProvisionalItems("org-a", "  ")).toEqual([]);
   });

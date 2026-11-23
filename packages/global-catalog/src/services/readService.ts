@@ -38,7 +38,7 @@ export async function getOrgProvisionalItem(orgId: string, gtin13: string) {
   return row ? { status: row.status, proposedName: row.proposedName, resolvedToGtin13: row.resultGtin13 } : null;
 }
 
-/** Up to 20 of this org's pending or local-only (rejected) provisional parts named like the query in any case, or with that GTIN; a blank query matches nothing. */
+/** Up to 20 of this org's pending or local-only (rejected) provisional parts named like the query in any case, or with that GTIN or short Part ID; a blank query matches nothing. */
 export async function searchOrgProvisionalItems(orgId: string, query: string) {
   const q = query.trim();
   if (!q) return [];

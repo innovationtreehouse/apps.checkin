@@ -1,3 +1,4 @@
+import { parseGtinInput } from "@checkin/gtin";
 import type { PrismaClient, Prisma } from "../generated/prisma/client";
 
 type Tx = Prisma.TransactionClient;
@@ -54,13 +55,13 @@ export function createProposalRepository(db: PrismaClient) {
         select: { status: true, proposedName: true, resultGtin13: true },
       }),
 
-    /** Up to `take` of the org's pending or rejected provisional parts named like `q` in any case, or with GTIN `q`. */
+    /** Up to `take` of the org's pending or rejected provisional parts named like `q` in any case, or with the GTIN `q` is or whose short Part ID it is. */
     searchOrgOpenProvisionalItems: (orgId: string, q: string, take: number) =>
       db.provisionalItem.findMany({
         where: {
           orgId,
           status: { in: ["pending", "rejected"] },
-          OR: [{ proposedName: { contains: q, mode: "insensitive" } }, { provisionalGtin13: q }],
+          OR: [{ proposedName: { contains: q, mode: "insensitive" } }, { provisionalGtin13: parseGtinInput(q) ?? q }],
         },
         select: { provisionalGtin13: true, proposedName: true, status: true },
         orderBy: [{ proposedName: "asc" }, { provisionalGtin13: "asc" }],

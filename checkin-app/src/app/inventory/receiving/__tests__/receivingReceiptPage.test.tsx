@@ -367,13 +367,13 @@ describe("the receiving page for one receipt", () => {
     const realFetch = global.fetch;
     afterEach(() => { global.fetch = realFetch; });
 
-    function search(term: string, parts: unknown) {
+    function search(term: string, parts: unknown, catalog: unknown[] = [hub]) {
       mockApi.mockImplementation(async (path: string) => {
         if (!path.startsWith("/provisional-parts")) return null;
         if (parts instanceof Error) throw parts;
         return parts;
       });
-      global.fetch = jest.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify([hub]) })) as unknown as typeof fetch;
+      global.fetch = jest.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify(catalog) })) as unknown as typeof fetch;
       fireEvent.click(within(screen.getByRole("row", { name: /Wood glue/ })).getByRole("button", { name: "Associate" }));
       fireEvent.change(screen.getByPlaceholderText(SEARCH), { target: { value: term } });
     }
@@ -387,6 +387,15 @@ describe("the receiving page for one receipt", () => {
       expect(catalog.compareDocumentPosition(strip)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
       expect(strip.compareDocumentPosition(bar)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
       expect(mockApi).toHaveBeenCalledWith("/provisional-parts?q=power");
+    });
+
+    it("shows no empty-state copy when only the org's parts match", async () => {
+      wrap();
+      search("power", [localOnly], []);
+      expect(await screen.findByRole("radio", { name: "Power strip (Local only) · P000123" })).toBeInTheDocument();
+      await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+      await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+      expect(screen.queryByText("No matching catalog items")).not.toBeInTheDocument();
     });
 
     it("associates a chosen local-only part through the associate route", async () => {
