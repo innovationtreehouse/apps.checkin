@@ -37,6 +37,7 @@ function afterMerge(over: Partial<ReceiptConfig> = {}): void {
     households,
     submitterConfirmations: {
       awaiting: async () => awaiting,
+      awaitingFor: async (ids) => awaiting.filter((a) => ids.includes(a.reimburseePersonId)),
       confirm: async (_id, reimburseeId) => {
         confirmedFor.push(reimburseeId);
         return true;

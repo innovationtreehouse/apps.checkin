@@ -52,6 +52,7 @@ export const inertPurchaseOutcomes: PurchaseOutcomes = {
 /** Knows no expense: nothing waits on a submitter there, and a confirmation is not delivered. */
 export const inertSubmitterConfirmations: SubmitterConfirmations = {
   awaiting: async () => [],
+  awaitingFor: async () => [],
   confirm: async () => {
     throw new NotWiredError("SubmitterConfirmations.confirm");
   },
