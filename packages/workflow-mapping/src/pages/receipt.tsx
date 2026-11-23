@@ -5,8 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Radio, ScrollArea, Select, SimpleGrid, Stack, Table, Text, TextInput, Textarea, Title } from "@mantine/core";
 import { formatGtinDisplay } from "@checkin/gtin";
 import {
-  CatalogNamesUnavailable, HttpError, MIN_CATALOG_SEARCH_LENGTH, NO_CATALOG_NAMES, catalogItemLabel, catalogSearchTerm, useCatalogSearch, withLookup, withProvisionalNames, provisionalLabel, type ProvisionalName,
-  showError, showSuccess, showWarning, type CatalogItem, type CatalogNames,
+  CATALOG_SEARCH_DEBOUNCE_MS, CatalogNamesUnavailable, HttpError, MIN_CATALOG_SEARCH_LENGTH, NO_CATALOG_NAMES, catalogItemLabel, catalogSearchTerm, useCatalogSearch, withLookup, withProvisionalNames, provisionalLabel, type ProvisionalName,
+  clearError, showError, showSuccess, showWarning, type CatalogItem, type CatalogNames,
 } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
 import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, api, stateColor, stateLabel, errorMessage, notifyNavCounts, useCanCloseOut, useCanManage, useLoad } from "../components/api";
@@ -482,6 +482,39 @@ function LineDetails({ item, currency }: { item: LineItem | undefined; currency:
   );
 }
 
+/** GET /api/workflow-mapping/provisional-parts rows: the org's pending and local-only parts. */
+interface ProvisionalPart { gtin13: string; name: string; status: string }
+
+const PROVISIONAL_PARTS_ERROR_KEY = "workflow-provisional-parts";
+
+const provisionalPartLabel = (part: ProvisionalPart) =>
+  `${provisionalLabel({ provisionalGtin13: part.gtin13, name: part.name, status: part.status })} · ${formatGtinDisplay(part.gtin13)}`;
+
+/** The org's pending and local-only parts matching the typed text, for the current text only; a failed search raises a standing red chip. */
+function useProvisionalParts(q: string): ProvisionalPart[] {
+  const [result, setResult] = useState<{ term: string; parts: ProvisionalPart[] } | null>(null);
+  const term = catalogSearchTerm(q);
+  useEffect(() => {
+    if (term === null) return;
+    let live = true;
+    const timer = setTimeout(() => {
+      api<ProvisionalPart[]>(`/provisional-parts?q=${encodeURIComponent(term)}`)
+        .then((parts) => {
+          if (!live) return;
+          clearError(PROVISIONAL_PARTS_ERROR_KEY);
+          setResult({ term, parts });
+        })
+        .catch((e: unknown) => {
+          if (!live) return;
+          showError(`Couldn't load your local and pending parts: ${errorMessage(e)}`, { key: PROVISIONAL_PARTS_ERROR_KEY, title: "Search failed" });
+          setResult({ term, parts: [] });
+        });
+    }, CATALOG_SEARCH_DEBOUNCE_MS);
+    return () => { live = false; clearTimeout(timer); };
+  }, [term]);
+  return result && result.term === term ? result.parts : [];
+}
+
 function LineForm({ start, busy, onSubmit, onCancel, onNonInventory }: {
   start: LineFormFields;
   busy: boolean;
@@ -491,9 +524,12 @@ function LineForm({ start, busy, onSubmit, onCancel, onNonInventory }: {
 }) {
   const [form, setForm] = useState<LineFormKind>("associate");
   const [chosen, setChosen] = useState<CatalogItem | null>(null);
+  const [chosenPart, setChosenPart] = useState<ProvisionalPart | null>(null);
   const [search, setSearch] = useState("");
   const found = useCatalogSearch(search);
   const results = [...(chosen ? [chosen] : []), ...found.items.filter((item) => item.gtin13 !== chosen?.gtin13)];
+  const foundParts = useProvisionalParts(search);
+  const parts = [...(chosenPart ? [chosenPart] : []), ...foundParts.filter((part) => part.gtin13 !== chosenPart?.gtin13)];
   const [gtin13, setGtin13] = useState(start.gtin13);
   const [name, setName] = useState(start.name);
   const [categoryId, setCategoryId] = useState(start.categoryId);
@@ -522,18 +558,24 @@ function LineForm({ start, busy, onSubmit, onCancel, onNonInventory }: {
             error={found.error && `Couldn't search the catalog: ${found.error}`}
             miw={320}
           />
-          {gtin13 && !chosen && <Text size="xs" c="dimmed">Keeps {formatGtinDisplay(gtin13)} unless you choose another item</Text>}
+          {gtin13 && !chosen && !chosenPart && <Text size="xs" c="dimmed">Keeps {formatGtinDisplay(gtin13)} unless you choose another item</Text>}
           {catalogSearchTerm(search) === null && <Text size="xs" c="dimmed">Type at least {MIN_CATALOG_SEARCH_LENGTH} characters</Text>}
-          {found.answered && !found.error && results.length === 0 && <Text size="xs" c="dimmed">No matching catalog items</Text>}
-          {results.length > 0 && (
+          {found.answered && !found.error && results.length + parts.length === 0 && <Text size="xs" c="dimmed">No matching catalog items</Text>}
+          {results.length + parts.length > 0 && (
             <ScrollArea.Autosize mah={220}>
               <Radio.Group
                 aria-label="Catalog items"
                 value={gtin13}
-                onChange={(v) => { setChosen(results.find((item) => item.gtin13 === v) ?? null); setGtin13(v); }}
+                onChange={(v) => {
+                  setChosen(results.find((item) => item.gtin13 === v) ?? null);
+                  setChosenPart(parts.find((part) => part.gtin13 === v) ?? null);
+                  setGtin13(v);
+                }}
               >
                 <Stack gap={6} py={4}>
                   {results.map((item) => <Radio key={item.gtin13} size="xs" value={item.gtin13} label={catalogItemLabel(item)} />)}
+                  {parts.length > 0 && <Text size="xs" fw={500}>Your local and pending parts</Text>}
+                  {parts.map((part) => <Radio key={part.gtin13} size="xs" value={part.gtin13} label={provisionalPartLabel(part)} />)}
                 </Stack>
               </Radio.Group>
             </ScrollArea.Autosize>

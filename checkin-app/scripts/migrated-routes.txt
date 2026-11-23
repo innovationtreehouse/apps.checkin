@@ -159,6 +159,7 @@ POST /api/workflow-mapping/receipts/[id]/lines/[lineStatusId]/associate
 POST /api/workflow-mapping/receipts/[id]/lines/[lineStatusId]/propose
 POST /api/workflow-mapping/receipts/[id]/lines/[lineStatusId]/non-inventory
 GET /api/workflow-mapping/audit-log
+GET /api/workflow-mapping/provisional-parts
 
 # Income: library route factories via handler().
 GET /api/income/payouts

@@ -14,6 +14,7 @@ const recognizeAll = {
     throw new Error("unused");
   },
   getOrgProvisionalItem: async () => null,
+  searchOrgProvisionalItems: async () => [],
   getActiveItem: async () => {
     throw new Error("unused");
   },
@@ -110,6 +111,7 @@ describeDb("S1 — recognition and push", () => {
         },
         checkReferences: recognizeAll.checkReferences,
         getOrgProvisionalItem: async () => null,
+        searchOrgProvisionalItems: async () => [],
         getActiveItem: recognizeAll.getActiveItem,
       },
     });
@@ -135,6 +137,7 @@ describeDb("S1 — recognition and push", () => {
         },
         checkReferences: recognizeAll.checkReferences,
         getOrgProvisionalItem: async () => null,
+        searchOrgProvisionalItems: async () => [],
         getActiveItem: recognizeAll.getActiveItem,
       },
     });
@@ -152,6 +155,7 @@ describeDb("S1 — recognition and push", () => {
         },
         checkReferences: recognizeAll.checkReferences,
         getOrgProvisionalItem: async () => null,
+        searchOrgProvisionalItems: async () => [],
         getActiveItem: recognizeAll.getActiveItem,
       },
     });
