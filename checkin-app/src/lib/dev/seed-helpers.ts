@@ -390,13 +390,15 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         data: { orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) },
     });
 
-    // Placeholder group addresses for local and dev, each unless one is set. Prod's are
-    // set by a person.
+    // Placeholder group and contact addresses for local and dev, each unless one is set.
+    // Prod's are set by a person.
     const placeholderAddresses = {
         alertEmailAddress: "alerts@example.com",
         financeAlertEmailAddress: "alerts@example.com",
+        boardEmailAddress: "board@example.com",
         sysadminEmailAddress: "sysadmins@example.com",
         bgReviewerEmailAddress: "bg-reviewers@example.com",
+        financeContactEmail: "finance@example.com",
     } as const;
     for (const [field, address] of Object.entries(placeholderAddresses)) {
         await prisma.boardSettings.updateMany({ where: { id: 1, [field]: null }, data: { [field]: address } });

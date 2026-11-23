@@ -16,7 +16,7 @@ describe("seed email addresses", () => {
         expect(addresses.filter((a) => !RESERVED.test(a))).toEqual([]);
     });
 
-    it.each(["alertEmailAddress", "financeAlertEmailAddress", "sysadminEmailAddress", "bgReviewerEmailAddress"])(
+    it.each(["alertEmailAddress", "financeAlertEmailAddress", "boardEmailAddress", "sysadminEmailAddress", "bgReviewerEmailAddress", "financeContactEmail"])(
         "seeds a placeholder %s",
         (field) => {
             const source = readFileSync(path.join(ROOT, "src/lib/dev/seed-helpers.ts"), "utf8");
