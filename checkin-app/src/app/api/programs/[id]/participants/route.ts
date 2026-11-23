@@ -18,27 +18,12 @@ import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { isSaleEnded } from "@/lib/programs/saleState";
 import { PROGRAM_ENDED_PAYMENT } from "@/lib/programs/checkoutSignature";
 import { apiError } from "@/lib/api-response";
-import { httpError, isComponentHttpError, parseId, readJson, ServiceError } from "@checkin/component-kit";
+import { isComponentHttpError, parseId, ServiceError } from "@checkin/component-kit";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { householdMayEnrol, NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergencyContacts/service";
 import { personActor, recordAudit } from "@/lib/auditActor";
 import { enrollByHandIn, isEnrollmentBasis, readMatchedOrder, type MatchedOrder } from "@/lib/programs/enrollByHand";
-
-function parseParticipantId(raw: unknown): number {
-    if (raw === undefined || raw === null) throw httpError(400, "participantId is required");
-    if (typeof raw !== "number") throw httpError(400, "Invalid participantId");
-    return parseId(String(raw), "participantId");
-}
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-async function readObjectBody(req: Request): Promise<Record<string, unknown>> {
-    const body = await readJson(req);
-    if (!isJsonObject(body)) throw httpError(400, "Invalid JSON body");
-    return body;
-}
+import { parseParticipantId, readObjectBody } from "@/app/api/programs/[id]/requestBody";
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
