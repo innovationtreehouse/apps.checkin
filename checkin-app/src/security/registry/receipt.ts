@@ -113,6 +113,9 @@ defineRoute({ endpoint: 'POST /api/receipts/mail-items/catch-up', authorize: 'fi
 // Replay of one captured email from the stored copy, for the catch-up button's
 // people: FINANCE only. The answer is the outcome, never the email, its key or headers.
 defineRoute({ endpoint: 'POST /api/receipts/mail-messages/[id]/replay', authorize: 'finance', envelope: null, returns: ['ReceiptMailReplay'], orderedView: FINANCE_VIEW });
+// The captured emails a replay can act on, for the mail page: FINANCE only. Each
+// row is its id, times and whether its copy expired, never the key or the error.
+defineRoute({ endpoint: 'GET /api/receipts/mail-messages', authorize: 'finance', envelope: null, returns: ['ReceiptMailMessageView'], orderedView: FINANCE_VIEW });
 
 // Mail aliases: the extra addresses a person's
 // receipt mail may come from. FINANCE and the BOARD list, add, remove and
