@@ -19,8 +19,10 @@ interface Settings {
   emailFromAddress: string | null;
   emailReplyToAddress: string | null;
   scholarshipNotifyEmail: string | null;
-  alertEmailAddress: string | null;
+  financeAlertEmailAddress: string | null;
   boardEmailAddress: string | null;
+  sysadminEmailAddress: string | null;
+  bgReviewerEmailAddress: string | null;
   financeContactEmail: string | null;
   scholarshipAckSubject: string | null;
   scholarshipAckMembershipBody: string | null;
@@ -31,7 +33,9 @@ const HEADER_ERROR = 'Enter an email address or "Name <addr@domain>".';
 const ADDRESS_ERROR = "Enter one email address.";
 const REPLY_TO_ERROR = 'Enter one or more comma-separated addresses, each an email address or "Name <addr@domain>".';
 
-type FieldErrors = { from?: string; replyTo?: string; scholarshipNotify?: string; alertAddress?: string; boardAddress?: string; financeContact?: string };
+type FieldErrors = { from?: string; replyTo?: string; scholarshipNotify?: string; financeAlert?: string; boardAddress?: string; sysadminList?: string; bgReviewerList?: string; financeContact?: string };
+
+const MUST_BE_SET = "Must be set.";
 
 /** A label with a "Not set" pill while the saved value is empty. */
 function labelWithPill(text: string, saved: string | undefined) {
@@ -52,8 +56,10 @@ export default function EmailSettingsPage() {
   const [emailFrom, setEmailFrom] = useState("");
   const [emailReplyTo, setEmailReplyTo] = useState("");
   const [scholarshipNotify, setScholarshipNotify] = useState("");
-  const [alertAddress, setAlertAddress] = useState("");
+  const [financeAlert, setFinanceAlert] = useState("");
   const [boardAddress, setBoardAddress] = useState("");
+  const [sysadminList, setSysadminList] = useState("");
+  const [bgReviewerList, setBgReviewerList] = useState("");
   const [financeContact, setFinanceContact] = useState("");
   const [ackSubject, setAckSubject] = useState("");
   const [ackMembershipBody, setAckMembershipBody] = useState("");
@@ -81,15 +87,19 @@ export default function EmailSettingsPage() {
     const from = emailFrom.trim();
     const replyTo = emailReplyTo.trim();
     const notify = scholarshipNotify.trim();
-    const alert = alertAddress.trim();
+    const finance = financeAlert.trim();
     const board = boardAddress.trim();
+    const sysadmins = sysadminList.trim();
+    const reviewers = bgReviewerList.trim();
     const contact = financeContact.trim();
     const fe: FieldErrors = {};
     if (!locked && from && !isValidEmailHeader(from)) fe.from = HEADER_ERROR;
     if (!locked && replyTo && !parseEmailHeaderList(replyTo)) fe.replyTo = REPLY_TO_ERROR;
     if (notify && !parseEmailHeaderList(notify)) fe.scholarshipNotify = REPLY_TO_ERROR;
-    if (alert && !isValidEmail(alert)) fe.alertAddress = ADDRESS_ERROR;
+    if (finance && !isValidEmail(finance)) fe.financeAlert = ADDRESS_ERROR;
     if (board && !isValidEmail(board)) fe.boardAddress = ADDRESS_ERROR;
+    if (sysadmins && !isValidEmail(sysadmins)) fe.sysadminList = ADDRESS_ERROR;
+    if (reviewers && !isValidEmail(reviewers)) fe.bgReviewerList = ADDRESS_ERROR;
     if (contact && !isValidEmail(contact)) fe.financeContact = ADDRESS_ERROR;
     if (Object.keys(fe).length > 0) { setFieldErrors(fe); return; }
     setFieldErrors({});
@@ -103,8 +113,10 @@ export default function EmailSettingsPage() {
         body: JSON.stringify({
           ...sender,
           scholarshipNotifyEmail: notify || null,
-          alertEmailAddress: alert || null,
+          financeAlertEmailAddress: finance || null,
           boardEmailAddress: board || null,
+          sysadminEmailAddress: sysadmins || null,
+          bgReviewerEmailAddress: reviewers || null,
           financeContactEmail: contact || null,
           scholarshipAckSubject: ackSubject.trim() || null,
           scholarshipAckMembershipBody: ackMembershipBody.trim() || null,
@@ -120,7 +132,7 @@ export default function EmailSettingsPage() {
     finally { setSaving(false); }
   };
 
-  const current = { emailFrom, emailReplyTo, scholarshipNotify, alertAddress, boardAddress, financeContact, ackSubject, ackMembershipBody, ackProgramBody };
+  const current = { emailFrom, emailReplyTo, scholarshipNotify, financeAlert, boardAddress, sysadminList, bgReviewerList, financeContact, ackSubject, ackMembershipBody, ackProgramBody };
   const isDirty = !!initial && !shallowEqual(initial, current);
   useUnsavedGuard(isDirty);
   useSeedForm(data, isDirty, ({ settings }) => {
@@ -128,8 +140,10 @@ export default function EmailSettingsPage() {
       emailFrom: settings.emailFromAddress ?? "",
       emailReplyTo: settings.emailReplyToAddress ?? "",
       scholarshipNotify: settings.scholarshipNotifyEmail ?? "",
-      alertAddress: settings.alertEmailAddress ?? "",
+      financeAlert: settings.financeAlertEmailAddress ?? "",
       boardAddress: settings.boardEmailAddress ?? "",
+      sysadminList: settings.sysadminEmailAddress ?? "",
+      bgReviewerList: settings.bgReviewerEmailAddress ?? "",
       financeContact: settings.financeContactEmail ?? "",
       ackSubject: settings.scholarshipAckSubject ?? "",
       ackMembershipBody: settings.scholarshipAckMembershipBody ?? "",
@@ -138,8 +152,10 @@ export default function EmailSettingsPage() {
     setEmailFrom(snap.emailFrom);
     setEmailReplyTo(snap.emailReplyTo);
     setScholarshipNotify(snap.scholarshipNotify);
-    setAlertAddress(snap.alertAddress);
+    setFinanceAlert(snap.financeAlert);
     setBoardAddress(snap.boardAddress);
+    setSysadminList(snap.sysadminList);
+    setBgReviewerList(snap.bgReviewerList);
     setFinanceContact(snap.financeContact);
     setAckSubject(snap.ackSubject);
     setAckMembershipBody(snap.ackMembershipBody);
@@ -224,17 +240,17 @@ export default function EmailSettingsPage() {
               onChange={(e) => { setScholarshipNotify(e.currentTarget.value); setFieldErrors((f) => ({ ...f, scholarshipNotify: undefined })); }}
             />
             <TextInput
-              label={labelWithPill("Alert address", initial?.alertAddress)}
-              description="A group address for finance and QuickBooks alerts."
-              placeholder="alerts@example.com"
+              label={labelWithPill("Finance alert address", initial?.financeAlert)}
+              description={`Finance's group address, for finance and QuickBooks alerts. ${MUST_BE_SET}`}
+              placeholder="finance-alerts@example.com"
               w={440}
-              value={alertAddress}
-              error={fieldErrors.alertAddress}
-              onChange={(e) => { setAlertAddress(e.currentTarget.value); setFieldErrors((f) => ({ ...f, alertAddress: undefined })); }}
+              value={financeAlert}
+              error={fieldErrors.financeAlert}
+              onChange={(e) => { setFinanceAlert(e.currentTarget.value); setFieldErrors((f) => ({ ...f, financeAlert: undefined })); }}
             />
             <TextInput
               label={labelWithPill("Board address", initial?.boardAddress)}
-              description="The Board's group address."
+              description={`The Board's group address. ${MUST_BE_SET}`}
               placeholder="board@example.com"
               w={440}
               value={boardAddress}
@@ -242,8 +258,26 @@ export default function EmailSettingsPage() {
               onChange={(e) => { setBoardAddress(e.currentTarget.value); setFieldErrors((f) => ({ ...f, boardAddress: undefined })); }}
             />
             <TextInput
+              label={labelWithPill("Sysadmin list", initial?.sysadminList)}
+              description={`The sysadmins' group address. ${MUST_BE_SET}`}
+              placeholder="sysadmins@example.com"
+              w={440}
+              value={sysadminList}
+              error={fieldErrors.sysadminList}
+              onChange={(e) => { setSysadminList(e.currentTarget.value); setFieldErrors((f) => ({ ...f, sysadminList: undefined })); }}
+            />
+            <TextInput
+              label={labelWithPill("Background-check reviewer list", initial?.bgReviewerList)}
+              description={`The background-check reviewers' group address. ${MUST_BE_SET}`}
+              placeholder="bg-reviewers@example.com"
+              w={440}
+              value={bgReviewerList}
+              error={fieldErrors.bgReviewerList}
+              onChange={(e) => { setBgReviewerList(e.currentTarget.value); setFieldErrors((f) => ({ ...f, bgReviewerList: undefined })); }}
+            />
+            <TextInput
               label={labelWithPill("Finance contact address", initial?.financeContact)}
-              description="The address members see for finance questions."
+              description={`The address members see for finance questions. ${MUST_BE_SET}`}
               placeholder="finance@example.com"
               w={440}
               value={financeContact}

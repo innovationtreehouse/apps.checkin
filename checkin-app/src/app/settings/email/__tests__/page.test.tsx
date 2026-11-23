@@ -32,8 +32,10 @@ describe("EmailSettingsPage", () => {
       emailFromAddress: "Org <no-reply@org.test>",
       emailReplyToAddress: "board@org.test",
       scholarshipNotifyEmail: null,
-      alertEmailAddress: null,
+      financeAlertEmailAddress: null,
       boardEmailAddress: null,
+      sysadminEmailAddress: null,
+      bgReviewerEmailAddress: null,
       financeContactEmail: null,
       scholarshipAckSubject: null,
       scholarshipAckMembershipBody: null,
@@ -50,7 +52,7 @@ describe("EmailSettingsPage", () => {
     const replyTo = screen.getByLabelText(/Reply-To address/i);
     expect(from).toBeDisabled();
     expect(replyTo).toBeDisabled();
-    expect(screen.getByLabelText(/Alert address/i)).not.toBeDisabled();
+    expect(screen.getByLabelText(/Finance alert address/i)).not.toBeDisabled();
     expect(screen.getByLabelText(/Scholarship ACK subject/i)).not.toBeDisabled();
     expect(screen.getByRole("button", { name: "Save settings" })).not.toBeDisabled();
 
@@ -59,19 +61,19 @@ describe("EmailSettingsPage", () => {
     expect(replyTo).not.toBeDisabled();
   });
 
-  it("already set: saves an alert address without unlocking, sending no sender fields", async () => {
+  it("already set: saves a finance alert address without unlocking, sending no sender fields", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: "Org <no-reply@org.test>", emailReplyToAddress: null } } });
     renderWithProviders(<EmailSettingsPage />);
 
     await screen.findByLabelText(/From address/i);
-    fireEvent.change(screen.getByLabelText(/Alert address/i), { target: { value: "alerts@org.test" } });
+    fireEvent.change(screen.getByLabelText(/Finance alert address/i), { target: { value: "alerts@org.test" } });
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/email", expect.objectContaining({ method: "PUT" })));
     const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
     const body = JSON.parse(putOpts!.body as string);
-    expect(body).toMatchObject({ alertEmailAddress: "alerts@org.test" });
+    expect(body).toMatchObject({ financeAlertEmailAddress: "alerts@org.test" });
     expect(body).not.toHaveProperty("emailFromAddress");
     expect(body).not.toHaveProperty("emailReplyToAddress");
   });
@@ -86,13 +88,13 @@ describe("EmailSettingsPage", () => {
     fireEvent.click(unlock);
     fireEvent.change(from, { target: { value: "half-edited" } });
     fireEvent.click(unlock);
-    fireEvent.change(screen.getByLabelText(/Alert address/i), { target: { value: "alerts@org.test" } });
+    fireEvent.change(screen.getByLabelText(/Finance alert address/i), { target: { value: "alerts@org.test" } });
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/email", expect.objectContaining({ method: "PUT" })));
     const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
     const body = JSON.parse(putOpts!.body as string);
-    expect(body).toMatchObject({ alertEmailAddress: "alerts@org.test" });
+    expect(body).toMatchObject({ financeAlertEmailAddress: "alerts@org.test" });
     expect(body).not.toHaveProperty("emailFromAddress");
     expect(body).not.toHaveProperty("emailReplyToAddress");
     await waitFor(() => expect(from).toHaveValue("Org <no-reply@org.test>"));
@@ -114,8 +116,10 @@ describe("EmailSettingsPage", () => {
       emailFromAddress: null,
       emailReplyToAddress: "info@org.test, ops@org.test",
       scholarshipNotifyEmail: null,
-      alertEmailAddress: null,
+      financeAlertEmailAddress: null,
       boardEmailAddress: null,
+      sysadminEmailAddress: null,
+      bgReviewerEmailAddress: null,
       financeContactEmail: null,
       scholarshipAckSubject: null,
       scholarshipAckMembershipBody: null,
@@ -156,8 +160,10 @@ describe("EmailSettingsPage", () => {
       emailFromAddress: null,
       emailReplyToAddress: null,
       scholarshipNotifyEmail: "board@org.test, ops@org.test",
-      alertEmailAddress: null,
+      financeAlertEmailAddress: null,
       boardEmailAddress: null,
+      sysadminEmailAddress: null,
+      bgReviewerEmailAddress: null,
       financeContactEmail: null,
       scholarshipAckSubject: null,
       scholarshipAckMembershipBody: null,
@@ -194,8 +200,10 @@ describe("EmailSettingsPage", () => {
       emailFromAddress: null,
       emailReplyToAddress: null,
       scholarshipNotifyEmail: null,
-      alertEmailAddress: null,
+      financeAlertEmailAddress: null,
       boardEmailAddress: null,
+      sysadminEmailAddress: null,
+      bgReviewerEmailAddress: null,
       financeContactEmail: null,
       scholarshipAckSubject: "Custom subject",
       scholarshipAckMembershipBody: null,
@@ -216,12 +224,12 @@ describe("EmailSettingsPage", () => {
     expect(fetchMock.mock.calls.some(([, opts]) => opts?.method === "PUT")).toBe(false);
   });
 
-  it("Alert address: saves one address, and a malformed one shows an inline error and blocks save", async () => {
+  it("Finance alert address: saves one address, and a malformed one shows an inline error and blocks save", async () => {
     setSession({ id: 1, isSysadmin: true });
-    const fetchMock = mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: null, emailReplyToAddress: null, alertEmailAddress: null } } });
+    const fetchMock = mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: null, emailReplyToAddress: null, financeAlertEmailAddress: null } } });
     renderWithProviders(<EmailSettingsPage />);
 
-    const alert = await screen.findByLabelText(/^Alert address/i);
+    const alert = await screen.findByLabelText(/^Finance alert address/i);
     fireEvent.change(alert, { target: { value: "a@org.test, b@org.test" } });
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
     expect(await screen.findByText("Enter one email address.")).toBeInTheDocument();
@@ -231,20 +239,22 @@ describe("EmailSettingsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/email", expect.objectContaining({ method: "PUT" })));
     const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
-    expect(JSON.parse(putOpts!.body as string)).toMatchObject({ alertEmailAddress: "finance@org.test", boardEmailAddress: null });
+    expect(JSON.parse(putOpts!.body as string)).toMatchObject({ financeAlertEmailAddress: "finance@org.test", boardEmailAddress: null });
   });
 
   it("shows a Not set pill beside each empty address, and none beside a saved one", async () => {
     setSession({ id: 1, isSysadmin: true });
-    mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: null, emailReplyToAddress: null, alertEmailAddress: "alerts@org.test", boardEmailAddress: null, financeContactEmail: null } } });
+    mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: null, emailReplyToAddress: null, financeAlertEmailAddress: "alerts@org.test", boardEmailAddress: null, financeContactEmail: null } } });
     renderWithProviders(<EmailSettingsPage />);
 
     expect(await screen.findByLabelText(/^Board address/i)).toBeInTheDocument();
-    expect(screen.getAllByText("Not set")).toHaveLength(2);
+    expect(screen.getAllByText("Not set")).toHaveLength(4);
     const labelOf = (name: RegExp) => document.querySelector(`label[for="${screen.getByLabelText(name).id}"]`);
     expect(labelOf(/^Board address/i)).toHaveTextContent("Not set");
+    expect(labelOf(/^Sysadmin list/i)).toHaveTextContent("Not set");
+    expect(labelOf(/^Background-check reviewer list/i)).toHaveTextContent("Not set");
     expect(labelOf(/^Finance contact address/i)).toHaveTextContent("Not set");
-    expect(labelOf(/^Alert address/i)).not.toHaveTextContent("Not set");
+    expect(labelOf(/^Finance alert address/i)).not.toHaveTextContent("Not set");
   });
 
   it("Finance contact address: a malformed value blocks save, a valid one is sent", async () => {
@@ -310,5 +320,39 @@ describe("EmailSettingsPage", () => {
 
       expect(await screen.findByDisplayValue("second@example.com")).toBeInTheDocument();
     });
+  });
+
+  it.each([
+    [/^Sysadmin list/i, "sysadminEmailAddress"],
+    [/^Background-check reviewer list/i, "bgReviewerEmailAddress"],
+  ])("%s: a malformed value blocks save, a valid one is sent as %s", async (label, field) => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: null, emailReplyToAddress: null } } });
+    renderWithProviders(<EmailSettingsPage />);
+
+    const input = await screen.findByLabelText(label);
+    fireEvent.change(input, { target: { value: "List <list@org.test>" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(await screen.findByText("Enter one email address.")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([, opts]) => opts?.method === "PUT")).toBe(false);
+
+    fireEvent.change(input, { target: { value: " list@org.test " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/email", expect.objectContaining({ method: "PUT" })));
+    const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
+    expect(JSON.parse(putOpts!.body as string)).toMatchObject({ [field]: "list@org.test" });
+  });
+
+  it("says each required address must be set, shows no separate alert address field, and leaves the scholarship list optional", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: null, emailReplyToAddress: null } } });
+    renderWithProviders(<EmailSettingsPage />);
+
+    await screen.findByLabelText(/^Finance alert address/i);
+    for (const label of [/^Finance alert address/i, /^Board address/i, /^Sysadmin list/i, /^Background-check reviewer list/i, /^Finance contact address/i]) {
+      expect(screen.getByLabelText(label)).toHaveAccessibleDescription(/Must be set\./);
+    }
+    expect(screen.getByLabelText(/Scholarship review notifications/i)).not.toHaveAccessibleDescription(/Must be set/);
+    expect(screen.queryByLabelText(/^Alert address/i)).not.toBeInTheDocument();
   });
 });

@@ -4,11 +4,12 @@ import { receiptMailboxConfig } from "@/lib/receipt/mailboxConfig";
 /**
  * One config-health check: an integration/env that must be wired for a feature to
  * work. `ok` is a boolean derived from presence checks (never a secret value);
- * `detail` is static English naming which env var to set. Server-only — surfaced
+ * `detail` is static English naming which env var or setting to set, and `href`
+ * the page that sets it. Server-only — surfaced
  * to admins + board via /api/system-status/config-health (full list) and the nav
  * badge count in /api/nav/todo-counts.
  */
-export type ConfigCheck = { id: string; label: string; ok: boolean; detail: string };
+export type ConfigCheck = { id: string; label: string; ok: boolean; detail: string; href?: string };
 
 /**
  * The config-health checks, in display order. Each entry's `ok` encodes the
@@ -163,16 +164,34 @@ export function message(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
 }
 
-/** The alert address row: unset until a person enters it on Settings → Email. */
-export function alertAddressCheck(address: string | null | undefined): ConfigCheck {
-    return {
-        id: "alert-address",
-        label: "Alert address",
-        ok: !!address,
-        detail: address
-            ? "Set."
-            : "NOT set — set the alert address on Settings → Email.",
-    };
+/** The Settings → Email addresses that must be set, in display order. */
+export const REQUIRED_EMAIL_ADDRESSES = [
+    { id: "finance-alert-address", field: "financeAlertEmailAddress", label: "Finance alert address" },
+    { id: "board-address", field: "boardEmailAddress", label: "Board address" },
+    { id: "sysadmin-address", field: "sysadminEmailAddress", label: "Sysadmin list" },
+    { id: "bg-reviewer-address", field: "bgReviewerEmailAddress", label: "Background-check reviewer list" },
+    { id: "finance-contact-address", field: "financeContactEmail", label: "Finance contact address" },
+] as const;
+
+export type RequiredEmailField = (typeof REQUIRED_EMAIL_ADDRESSES)[number]["field"];
+
+/** Selects the required addresses from BoardSettings. */
+export const REQUIRED_EMAIL_SELECT = Object.fromEntries(
+    REQUIRED_EMAIL_ADDRESSES.map(({ field }) => [field, true]),
+) as Record<RequiredEmailField, true>;
+
+/** One row per required address: a gap until a person enters it on Settings → Email. */
+export function emailAddressChecks(settings: Partial<Record<RequiredEmailField, string | null>> | null | undefined): ConfigCheck[] {
+    return REQUIRED_EMAIL_ADDRESSES.map(({ id, field, label }) => {
+        const ok = !!settings?.[field];
+        return {
+            id,
+            label,
+            ok,
+            detail: ok ? "Set." : `NOT set — set the ${label} on Settings → Email.`,
+            href: "/settings/email",
+        };
+    });
 }
 
 /** Count of failing checks — the red nav-badge number. */
