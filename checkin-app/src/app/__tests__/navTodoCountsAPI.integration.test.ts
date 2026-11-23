@@ -357,6 +357,46 @@ describe('Nav todo-counts API', () => {
         await prisma.orgMembership.delete({ where: { id: reviewerMembership.id } });
     });
 
+    describe('unset Settings → Email addresses', () => {
+        const ADDRESSES = {
+            financeAlertEmailAddress: `finance-${TAG}@example.com`,
+            boardEmailAddress: `board-${TAG}@example.com`,
+            sysadminEmailAddress: `sysadmins-${TAG}@example.com`,
+            bgReviewerEmailAddress: `reviewers-${TAG}@example.com`,
+            financeContactEmail: `contact-${TAG}@example.com`,
+        };
+        const UNSET = Object.fromEntries(Object.keys(ADDRESSES).map((field) => [field, null]));
+        let saved: Record<string, string | null> = {};
+
+        const openIssues = async () => {
+            const res = await callAs({ id: boardId, householdId: householdBId, isBoardMember: true });
+            const data = await res.json();
+            return data.configHealth?.openIssues as number;
+        };
+
+        beforeAll(async () => {
+            saved = await prisma.boardSettings.upsert({
+                where: { id: 1 }, create: { id: 1 }, update: {},
+                select: { financeAlertEmailAddress: true, boardEmailAddress: true, sysadminEmailAddress: true, bgReviewerEmailAddress: true, financeContactEmail: true },
+            });
+        });
+
+        afterAll(async () => {
+            await prisma.boardSettings.update({ where: { id: 1 }, data: saved });
+        });
+
+        it('each unset address adds one to the red System Status count', async () => {
+            await prisma.boardSettings.update({ where: { id: 1 }, data: ADDRESSES });
+            const allSet = await openIssues();
+
+            await prisma.boardSettings.update({ where: { id: 1 }, data: { sysadminEmailAddress: null } });
+            expect(await openIssues()).toBe(allSet + 1);
+
+            await prisma.boardSettings.update({ where: { id: 1 }, data: UNSET });
+            expect(await openIssues()).toBe(allSet + 5);
+        });
+    });
+
     // Nothing in this repo schedules the crons, so a sweep that stops firing is
     // invisible until the ledger goes cold. That has to reach the board's red System
     // Status pill — and only the board's — as does a sweep that runs but cannot

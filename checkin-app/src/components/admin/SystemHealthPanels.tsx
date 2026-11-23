@@ -88,7 +88,7 @@ function SvgLineChart({ data }: { data: DailyStat[] }) {
   );
 }
 
-type ConfigCheck = { id: string; label: string; ok: boolean; detail: string };
+type ConfigCheck = { id: string; label: string; ok: boolean; detail: string; href?: string };
 
 /**
  * System-config health — one row per check (Zoho e-sign, agreement PDF, webhook
@@ -130,7 +130,9 @@ export function ConfigHealthBox() {
                   ● {c.ok ? 'Configured' : 'NOT configured'}
                 </Text>
               </Group>
-              <Text size="xs" c="dimmed">{c.detail}</Text>
+              {c.href && !c.ok
+                ? <Anchor href={c.href} size="xs">{c.detail}</Anchor>
+                : <Text size="xs" c="dimmed">{c.detail}</Text>}
             </List.Item>
           ))}
         </List>

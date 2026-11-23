@@ -14,8 +14,10 @@ const SELECT = {
     emailFromAddress: true,
     emailReplyToAddress: true,
     scholarshipNotifyEmail: true,
-    alertEmailAddress: true,
+    financeAlertEmailAddress: true,
     boardEmailAddress: true,
+    sysadminEmailAddress: true,
+    bgReviewerEmailAddress: true,
     financeContactEmail: true,
     scholarshipAckSubject: true,
     scholarshipAckMembershipBody: true,
@@ -23,6 +25,8 @@ const SELECT = {
 } as const;
 
 const ACK_BODY_MAX_LEN = 5000;
+
+const ADDRESS_FIELDS = ["financeAlertEmailAddress", "boardEmailAddress", "sysadminEmailAddress", "bgReviewerEmailAddress", "financeContactEmail"] as const;
 
 type AckField = "scholarshipAckSubject" | "scholarshipAckMembershipBody" | "scholarshipAckProgramBody";
 const ACK_TARGETS: FieldTargets<AckField> = {
@@ -50,16 +54,18 @@ export const GET = handler('GET /api/settings/email', async () => {
 
 /**
  * PUT /api/settings/email — set the Resend From override, Reply-To, the
- * Scholarship Review Team notify address, the alert and Board group addresses, the
- * finance contact address, and the scholarship ACK subject/bodies (saved to their
+ * Scholarship Review Team notify address, the finance alert, Board, sysadmin and
+ * background-check reviewer group addresses, the finance contact address, and the scholarship ACK subject/bodies (saved to their
  * `EmailTemplate` rows and their BoardSettings columns; the subject is all three ACK rows').
  * Body may include emailFromAddress, emailReplyToAddress, scholarshipNotifyEmail,
- * alertEmailAddress, boardEmailAddress, financeContactEmail (string|null), scholarshipAckSubject, scholarshipAckMembershipBody, and
+ * financeAlertEmailAddress, boardEmailAddress, sysadminEmailAddress, bgReviewerEmailAddress,
+ * financeContactEmail (string|null), scholarshipAckSubject, scholarshipAckMembershipBody, and
  * scholarshipAckProgramBody. emailFromAddress is a single address shape (bare or
  * `Name <addr@domain>`). scholarshipNotifyEmail/emailReplyToAddress may be a
  * comma-separated list of one or more addresses, each in that same shape (e.g.
  * "info@x.org, ops@x.org") — replies can fan out to more than one inbox.
- * alertEmailAddress, boardEmailAddress and financeContactEmail are each one bare address. The ACK
+ * The five group and contact addresses are each one bare address. financeAlertEmailAddress
+ * also writes alertEmailAddress, the column the senders read. The ACK
  * subject/bodies are plain text (HTML-escaped when sent, not interpreted as markup) capped at
  * ACK_BODY_MAX_LEN chars. A malformed value rejects the whole update (400) so the
  * previous value survives. Blank/empty clears back to null (env default From; no
@@ -72,8 +78,10 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         emailFromAddress?: string | null;
         emailReplyToAddress?: string | null;
         scholarshipNotifyEmail?: string | null;
-        alertEmailAddress?: string | null;
+        financeAlertEmailAddress?: string | null;
         boardEmailAddress?: string | null;
+        sysadminEmailAddress?: string | null;
+        bgReviewerEmailAddress?: string | null;
         financeContactEmail?: string | null;
         scholarshipAckSubject?: string | null;
         scholarshipAckMembershipBody?: string | null;
@@ -105,12 +113,13 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         }
         data.scholarshipNotifyEmail = v || null; // blank clears to null
     }
-    for (const field of ["alertEmailAddress", "boardEmailAddress", "financeContactEmail"] as const) {
+    for (const field of ADDRESS_FIELDS) {
         if (body[field] === undefined) continue;
         const v = body[field]?.trim();
         if (v && !isValidEmail(v)) return apiError(`${field} must be an email address`, 400);
         data[field] = v || null;
     }
+    if (data.financeAlertEmailAddress !== undefined) data.alertEmailAddress = data.financeAlertEmailAddress;
     if (body.scholarshipAckSubject !== undefined) {
         const v = body.scholarshipAckSubject?.trim();
         if (v && v.length > ACK_BODY_MAX_LEN) return apiError(`scholarshipAckSubject must be ${ACK_BODY_MAX_LEN} characters or fewer`, 400);

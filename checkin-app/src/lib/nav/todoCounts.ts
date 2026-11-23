@@ -7,7 +7,7 @@ import { canReviewBackgroundChecks, reviewQueueCounts } from "@/lib/membership/r
 import { awaitingBgReview, openProcess, refundableApplication, SETTLES_ON_SIGNATURE } from "@/lib/membership/lifecycle";
 import { getLeadConflicts } from "@/lib/attendanceConflicts";
 import { pickAddress, validateAddress } from "@/lib/address";
-import { alertAddressCheck, getConfigHealth, openConfigIssues } from "@/lib/configHealth";
+import { emailAddressChecks, getConfigHealth, openConfigIssues, REQUIRED_EMAIL_SELECT } from "@/lib/configHealth";
 import { countUnhealthyCronJobs } from "@/lib/cronRuns";
 import { programCheckoutBrokenWhere } from "@/lib/programCheckout";
 import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
@@ -542,7 +542,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         // a null orgMembershipYearBoundary means the renewal cycle has no anchor date.
         prisma.boardSettings.findUnique({
             where: { id: 1 },
-            select: { volunteerFamilyDiscountCode: true, bgRecheckMonths: true, orgMembershipYearBoundary: true, alertEmailAddress: true },
+            select: { volunteerFamilyDiscountCode: true, bgRecheckMonths: true, orgMembershipYearBoundary: true, ...REQUIRED_EMAIL_SELECT },
         }),
         // Cron sweeps that stopped running, plus ones running but failing rows. The
         // schedule lives in a separate infra repo, so this is the app's only way to
@@ -556,9 +556,9 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         (boardSettings?.orgMembershipYearBoundary ? 0 : 1);
     return {
         admin: { membership, applicationsTotal, applicationsIncomplete, applicationsAwaitingRefund, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, settingsMisconfig, programsMisconfig, openPaymentExceptions },
-        // Env-var/deploy gaps and the alert address (presence checks), cron sweeps that
+        // Env-var/deploy gaps and unset Settings → Email addresses (presence checks), cron sweeps that
         // stopped running or stopped working all fold into the single red
         // System Status pill.
-        configHealth: { openIssues: openConfigIssues([...getConfigHealth(), alertAddressCheck(boardSettings?.alertEmailAddress)]), unhealthyCronJobs },
+        configHealth: { openIssues: openConfigIssues([...getConfigHealth(), ...emailAddressChecks(boardSettings)]), unhealthyCronJobs },
     };
 }

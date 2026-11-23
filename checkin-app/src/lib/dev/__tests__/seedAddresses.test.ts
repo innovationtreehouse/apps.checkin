@@ -16,8 +16,11 @@ describe("seed email addresses", () => {
         expect(addresses.filter((a) => !RESERVED.test(a))).toEqual([]);
     });
 
-    it("seeds a placeholder alert address", () => {
-        const source = readFileSync(path.join(ROOT, "src/lib/dev/seed-helpers.ts"), "utf8");
-        expect(source).toMatch(/alertEmailAddress: "[^"]+@example\.com"/);
-    });
+    it.each(["alertEmailAddress", "financeAlertEmailAddress", "sysadminEmailAddress", "bgReviewerEmailAddress"])(
+        "seeds a placeholder %s",
+        (field) => {
+            const source = readFileSync(path.join(ROOT, "src/lib/dev/seed-helpers.ts"), "utf8");
+            expect(source).toMatch(new RegExp(`${field}: "[^"]+@example\\.com"`));
+        },
+    );
 });

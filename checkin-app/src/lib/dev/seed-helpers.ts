@@ -390,11 +390,17 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         data: { orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) },
     });
 
-    // A placeholder alert address for local and dev, unless one is set. Prod's is set by a person.
-    await prisma.boardSettings.updateMany({
-        where: { id: 1, alertEmailAddress: null },
-        data: { alertEmailAddress: "alerts@example.com" },
-    });
+    // Placeholder group addresses for local and dev, each unless one is set. Prod's are
+    // set by a person.
+    const placeholderAddresses = {
+        alertEmailAddress: "alerts@example.com",
+        financeAlertEmailAddress: "alerts@example.com",
+        sysadminEmailAddress: "sysadmins@example.com",
+        bgReviewerEmailAddress: "bg-reviewers@example.com",
+    } as const;
+    for (const [field, address] of Object.entries(placeholderAddresses)) {
+        await prisma.boardSettings.updateMany({ where: { id: 1, [field]: null }, data: { [field]: address } });
+    }
 
     // 6. Sample programs: Woodworking 101, which the flow tests use, then one per sale state.
     const program = await prisma.program.findFirst({ where: { name: "Woodworking 101" } });
