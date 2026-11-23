@@ -180,6 +180,16 @@ describe("correcting a receipt whose totals don't add up", () => {
     expect(shown()).toContainEqual(expect.objectContaining({ message: "Resubmitted: Finance review", color: "green" }));
   });
 
+  it("raises a red chip that stays when the resubmit saved but its flow failed", async () => {
+    mockReceipt = { ...receipt, receiptTotalCents: 2650 };
+    mockLandsIn = "flow_error";
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(resubmitted()).toBe(true));
+    await waitFor(() => expect(shown()).toContainEqual(expect.objectContaining({ title: "Resubmitted, but the next step failed", color: "red", autoClose: false })));
+    expect(shown()).not.toContainEqual(expect.objectContaining({ color: "green" }));
+  });
+
   it("keeps a failed resubmit on screen, naming what was saved", async () => {
     mockApi.mockImplementation(async (path) => {
       if (String(path).endsWith("/resubmit")) throw new HttpError("Receipt is not in validation_failed", 409);
@@ -288,7 +298,7 @@ describe("reviewing an OCR-read receipt", () => {
     wrap();
     type("Retailer", "Acme Hardware");
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
-    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt"));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt", { runsFlow: true }));
     expect(mockApi).toHaveBeenCalledWith("/r1", { method: "PATCH", body: JSON.stringify({ retailer: "Acme Hardware" }) });
   });
 
@@ -413,7 +423,7 @@ describe("the submitter's confirmation of a reimbursement", () => {
     wrap();
     expect(screen.queryByRole("button", { name: "Confirm" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "These lines and amounts are right" }));
-    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt"));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt", { runsFlow: true }));
   });
 
   it("for someone else's reimbursement, leaves the confirmation to the person reimbursed", () => {
