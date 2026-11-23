@@ -15,7 +15,6 @@ import {
   logger,
   withSyncRun,
   SyncKind,
-  PROD_STORE_DOMAIN,
 } from "@checkin/s-ingest-core";
 import { handler, armSyncDeadline } from "./handler.js";
 import { createShopifyClient } from "./shopify/client.js";
@@ -209,7 +208,7 @@ async function main(): Promise<void> {
     }
     case "inject": {
       // Injected rows land in the same live tables checkin reconciles memberships and
-      // payments from, so every inject is deliberate, attributed, and never test data in prod.
+      // payments from, so every inject is deliberate and attributed; injectFile refuses prod.
       const test = rest.includes("--test");
       const reason = parseFlag(rest, "reason")?.trim();
       const file = rest.find((a, i) => !a.startsWith("--") && rest[i - 1] !== "--reason");
@@ -217,12 +216,6 @@ async function main(): Promise<void> {
       if (process.env.INJECT_ALLOW !== "1") throw new Error("inject refused: set INJECT_ALLOW=1 to write to the mirror");
       if (!reason) throw new Error("inject refused: --reason is required (recorded on the ADMIN sync_run)");
       const { storeId } = loadDbConfig();
-      if (test) {
-        const prodHere = await prisma.store.findUnique({ where: { myshopifyDomain: PROD_STORE_DOMAIN } });
-        if (storeId === PROD_STORE_DOMAIN || prodHere) {
-          throw new Error(`inject refused: --test fixtures may not be loaded into the ${PROD_STORE_DOMAIN} mirror`);
-        }
-      }
       const source = test ? "TEST_LOADED" : "HAND_LOADED";
       const actor = `cli:${os.userInfo().username}`;
       const summary = await withSyncRun(

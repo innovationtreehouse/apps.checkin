@@ -128,7 +128,7 @@ All run locally with no AWS dependency (they read `.env`):
 ```bash
 npm run sync:incremental     # delta pull (orders + payouts) since the last watermark
 npm run sync:backfill        # Bulk Operation backfill from CUTOVER_DATE forward
-INJECT_ALLOW=1 npm run inject -- <fixture.json> --reason "<why>" [--test]   # load a hand-authored/fixture node
+INJECT_ALLOW=1 npm run inject -- <fixture.json> --reason "<why>" [--test]   # load a hand-authored/fixture node (dev/staging only)
 ```
 
 `inject` validates the node with the same Zod schema the API path uses, appends it
@@ -142,9 +142,13 @@ overwrite real data. This is also how batch/test infrastructure seeds matching r
 Guard rails: inject refuses to run without `INJECT_ALLOW=1` and a non-empty
 `--reason`, and records the operator (`cli:<os user>`) and reason on an `ADMIN`
 `sync_run` that the injected raw events link to. `--test` also forces each order's
-`test` flag on (every checkin reader filters `test = false`) and is refused against
-the production store, by `STORE_ID` or by the mirror's `store` registry. A fixture
-file looks like:
+`test` flag on (every checkin reader filters `test = false`).
+
+Inject is a dev and staging tool only. In either mode it refuses the production
+store's copy, when `STORE_ID` names the production store or when the database's
+`store` registry holds it, and writes nothing. The refusal lives in
+`@checkin/s-ingest-core`'s inject library, so every caller gets it, not just this
+CLI. A fixture file looks like:
 
 ```json
 { "objectType": "PAYOUT", "node": { "id": "gid://shopify/ShopifyPaymentsPayout/1", "...": "..." } }

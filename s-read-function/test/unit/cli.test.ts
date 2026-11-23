@@ -15,19 +15,17 @@ const m = vi.hoisted(() => ({
   loadDbConfig: vi.fn(),
   loadShopifyConfig: vi.fn(),
   disconnect: vi.fn(),
-  findStore: vi.fn(),
   withSyncRun: vi.fn(),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 vi.mock("@checkin/s-ingest-core", () => ({
-  prisma: { $disconnect: m.disconnect, store: { findUnique: m.findStore } },
+  prisma: { $disconnect: m.disconnect },
   loadDbConfig: m.loadDbConfig,
   loadShopifyConfig: m.loadShopifyConfig,
   injectFile: m.injectFile,
   withSyncRun: m.withSyncRun,
   SyncKind: { ADMIN: "ADMIN" },
-  PROD_STORE_DOMAIN: "prod.myshopify.com",
   logger: m.logger,
 }));
 vi.mock("../../src/handler.js", () => ({ handler: m.handler, armSyncDeadline: vi.fn() }));
@@ -42,7 +40,6 @@ beforeEach(() => {
   m.loadShopifyConfig.mockReturnValue({ endpoint: "https://shop/graphql.json", apiVersion: "2026-04", adminToken: "t" });
   m.loadDbConfig.mockReturnValue({ storeId: "s1" });
   m.disconnect.mockResolvedValue(undefined);
-  m.findStore.mockResolvedValue(null);
   m.withSyncRun.mockImplementation((_p, _s, _k, _scope, fn) => fn(77n));
   process.env.INJECT_ALLOW = "1";
   process.exitCode = undefined;
@@ -230,30 +227,12 @@ describe("cli — inject & guard rails", () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it("inject --test refuses when the target store is prod", async () => {
-    m.loadDbConfig.mockReturnValue({ storeId: "prod.myshopify.com" });
-    await runCli(["inject", "f.json", "--test", "--reason", "x"]);
+  it("inject surfaces the library's production refusal and exits 1", async () => {
+    m.injectFile.mockRejectedValue(new Error("inject refused: hand-loading is not allowed into the production copy"));
+    await runCli(["inject", "f.json", "--reason", "x"]);
 
-    expect(cliError().message).toMatch(/prod\.myshopify\.com/);
-    expect(m.injectFile).not.toHaveBeenCalled();
-  });
-
-  it("inject --test refuses when the mirror DB holds the prod store, whatever STORE_ID says", async () => {
-    m.findStore.mockResolvedValue({ myshopifyDomain: "prod.myshopify.com" });
-    await runCli(["inject", "f.json", "--test", "--reason", "x"]);
-
-    expect(cliError().message).toMatch(/may not be loaded/);
-    expect(m.injectFile).not.toHaveBeenCalled();
-  });
-
-  it("a HAND_LOADED inject into the prod mirror is allowed", async () => {
-    m.findStore.mockResolvedValue({ myshopifyDomain: "prod.myshopify.com" });
-    m.loadDbConfig.mockReturnValue({ storeId: "prod.myshopify.com" });
-    m.injectFile.mockResolvedValue([]);
-    await runCli(["inject", "f.json", "--reason", "historical CSV load"]);
-
-    expect(m.injectFile).toHaveBeenCalled();
-    expect(process.exitCode).toBeUndefined();
+    expect(cliError().message).toMatch(/production copy/);
+    expect(process.exitCode).toBe(1);
   });
 
   it("an unknown command fails with exitCode 1 and still disconnects", async () => {

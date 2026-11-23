@@ -11,7 +11,7 @@
  */
 import { z } from "zod";
 
-/** The production Shopify store. Test fixtures must never be injected against it. */
+/** The production Shopify store. Inject refuses its copy in either mode. */
 export const PROD_STORE_DOMAIN = "9jhydb-ka.myshopify.com";
 
 const dbSchema = z.object({

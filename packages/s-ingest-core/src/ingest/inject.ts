@@ -3,7 +3,8 @@
  * Zod schemas the API path uses, logs it tagged HAND_LOADED (or TEST_LOADED), then
  * projects it into the live tables — identical to a real API ingest, but auditable
  * via the raw log's `source` column. Used by the `inject` CLI command and by test
- * / batch infrastructure to seed matching raw events without calling Shopify.
+ * / batch infrastructure to seed matching raw events without calling Shopify, in dev
+ * and staging only.
  */
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
@@ -11,6 +12,7 @@ import type { PrismaClient } from "../db/client.js";
 import { EventSource, ObjectType } from "../generated/prisma/client.js";
 import { ingestNode, type IngestNodeResult } from "./ingestNode.js";
 import { rawMetaForNode } from "../shopify/schemas.js";
+import { PROD_STORE_DOMAIN } from "../config.js";
 
 // Prisma enum values are exactly these strings (ObjectType.ORDER === "ORDER"),
 // so validate the literal and cast — version-independent across Zod releases.
@@ -32,6 +34,20 @@ export interface InjectOptions {
 function asTestNode(objectType: ObjectType, node: unknown): unknown {
   if (objectType !== ObjectType.ORDER || typeof node !== "object" || node === null) return node;
   return { ...node, test: true };
+}
+
+/**
+ * Inject is a dev and staging tool: it refuses the production store, by the target store
+ * or by the production store's registry row in this database, in either mode.
+ */
+async function assertNotProductionCopy(prisma: PrismaClient, storeId: string): Promise<void> {
+  const prodHere = await prisma.store.findUnique({
+    where: { myshopifyDomain: PROD_STORE_DOMAIN },
+    select: { myshopifyDomain: true },
+  });
+  if (storeId === PROD_STORE_DOMAIN || prodHere) {
+    throw new Error("inject refused: hand-loading is not allowed into the production copy");
+  }
 }
 
 /** An API-synced row (or one written before `source` existed) is Shopify's truth. */
@@ -89,14 +105,15 @@ export function futureStampedGids(fixtures: Array<{ objectType: ObjectType; node
 
 /**
  * Inject one or many fixtures already parsed into objects. Refuses the whole batch,
- * before writing anything, if any fixture reuses the GID of an API-owned row or is
- * stamped in the future.
+ * before writing anything, against the production copy, or if any fixture reuses the
+ * GID of an API-owned row or is stamped in the future.
  */
 export async function injectFixtures(
   prisma: PrismaClient,
   fixtures: Array<{ objectType: ObjectType; node: unknown }>,
   opts: InjectOptions,
 ): Promise<IngestNodeResult[]> {
+  await assertNotProductionCopy(prisma, opts.storeId);
   const taken = await apiOwnedGids(prisma, opts.storeId, fixtures);
   if (taken.length > 0) {
     throw new Error(`inject refused: ${taken.length} GID(s) already hold API-synced rows: ${taken.join(", ")}`);
