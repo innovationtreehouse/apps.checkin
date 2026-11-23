@@ -118,6 +118,29 @@ async function emailFailureNotices(now: Date): Promise<Notice[]> {
     return failed > 0 ? [{ text: `Emails failed to send: ${failed} in the last day`, href: "/system-status/links" }] : [];
 }
 
+/** How long the Shopify store copy may go without a completed scheduled read before it is listed. */
+export const SHOPIFY_READ_STALE_AFTER_MS = 26 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
+/** The Shopify reader's line: its latest scheduled read failed, or none has completed recently or ever. */
+async function shopifyReaderNotices(now: Date): Promise<Notice[]> {
+    const { scheduledReadState } = await import("@/lib/shopifyRead/client");
+    const state = await scheduledReadState();
+    if (!state) return [];
+    const line = (text: string): Notice[] => [{ text, href: "/finance-ops/payments" }];
+    const { latestStatus, lastCompletedAt } = state;
+    if (latestStatus === "FAILED" || latestStatus === "ABANDONED") return line(`Shopify read failed: ${latestStatus.toLowerCase()}`);
+    if (!lastCompletedAt) return line("Shopify store copy has never been read");
+    const age = now.getTime() - lastCompletedAt.getTime();
+    return age > SHOPIFY_READ_STALE_AFTER_MS ? line(`Shopify store copy is ${Math.floor(age / HOUR_MS)} hours old`) : [];
+}
+
+/** The count lines read outside the libraries, each named by `library` in `unread` when its read fails. */
+const COUNT_SOURCES: { library: string; notices: (now: Date) => Promise<Notice[]> }[] = [
+    { library: "email", notices: emailFailureNotices },
+    { library: "Shopify reader", notices: shopifyReaderNotices },
+];
+
 /**
  * Runs one listed item's step once, through the library the Problems list names it by. A library
  * that is not listed or has no database answers 404; the library's own retry answers the rest.
@@ -174,7 +197,7 @@ export async function withoutDismissed<T extends DismissalKey>(items: T[]): Prom
 
 /**
  * Every stuck item across the receipt flow and membership that no person has dismissed, oldest first, and the
- * count lines (`notices`): the libraries' own and failed email sends. A source whose read fails is named in `unread`.
+ * count lines (`notices`): the libraries' own, failed email sends, and the Shopify reader's. A source whose read fails is named in `unread`.
  */
 export async function getProblems(now = new Date()): Promise<{ items: Problem[]; unread: string[]; notices: Notice[] }> {
     const sources = SOURCES.filter(isWired);
@@ -183,18 +206,18 @@ export async function getProblems(now = new Date()): Promise<{ items: Problem[];
             items: await s.read(),
             notices: s.notices ? await s.notices() : [],
         })),
-        emailFailureNotices(now).then((notices) => ({ items: [], notices })),
+        ...COUNT_SOURCES.map(async (c) => ({ items: [], notices: await c.notices(now) })),
     ]);
     const items: Problem[] = [];
     const unread: string[] = [];
     const notices: Notice[] = [];
     results.forEach((result, i) => {
-        const library = sources[i]?.library ?? "email";
+        const library = i < sources.length ? sources[i].library : COUNT_SOURCES[i - sources.length].library;
         if (result.status === "fulfilled") {
             items.push(...result.value.items.map((item) => ({ ...item, library })));
             notices.push(...result.value.notices);
         } else {
-            logger.error(library === "email" ? "[problems] could not count failed email sends:" : `[problems] could not read the stuck items in ${library}:`, result.reason);
+            logger.error(i < sources.length ? `[problems] could not read the stuck items in ${library}:` : `[problems] could not read the ${library} line:`, result.reason);
             unread.push(library);
         }
     });

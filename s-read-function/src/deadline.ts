@@ -1,4 +1,6 @@
-/** The sync run's hard lifetime in minutes: SYNC_DEADLINE_MINUTES, default 55, at least 1. */
+import { syncDeadlineMs } from "@checkin/s-ingest-core/deadline";
+
+/** The sync run's hard lifetime in minutes, from the same deadline the stale-run reaper reads. */
 export function syncDeadlineMinutes(): number {
-  return Math.max(1, Number(process.env.SYNC_DEADLINE_MINUTES) || 55);
+  return syncDeadlineMs() / 60_000;
 }

@@ -182,7 +182,7 @@ order status transitions (cancellation/refund), and watermark advancement.
   benign skip), so it holds under any runtime — ECS has no Lambda `reserved_concurrency`
   knob to lean on.
 - **Stale-run reaper (built in).** On startup the handler relabels `sync_run` rows
-  stuck in `RUNNING` past a staleness threshold to `ABANDONED` (a process killed by
+  stuck in `RUNNING` past the run deadline plus 5 minutes to `ABANDONED` (a process killed by
   timeout/OOM) and pushes a failure heartbeat for it. It touches no watermark or data;
   the next scheduled run self-heals via the watermark. Nothing is auto-reprojected.
 - **Primary health signal: a freshness heartbeat,** not watermark lag. Alarm on

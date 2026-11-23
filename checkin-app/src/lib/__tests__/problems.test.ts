@@ -6,7 +6,7 @@ import { getCronJobStatuses } from "@/lib/cronRuns";
 import type { TemplateCtx } from "@/lib/email-templates/registry";
 import { sendTemplated } from "@/lib/email-templates/send";
 import prisma from "@/lib/prisma";
-import { dismissProblem, getProblems, LIBRARY_DB_VARS, retryProblem, sendProblemsDigest } from "../problems";
+import { dismissProblem, getProblems, LIBRARY_DB_VARS, retryProblem, sendProblemsDigest, SHOPIFY_READ_STALE_AFTER_MS } from "../problems";
 
 // Model objects made on first use and open to assignment, $transaction included, which the shared mock does not take.
 jest.mock("@/lib/prisma", () => ({
@@ -28,6 +28,7 @@ jest.mock("@checkin/workflow-mapping", () => ({ stuckItems: jest.fn(), problemNo
 jest.mock("@checkin/local-inventory", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
 jest.mock("@/lib/finance/postingRuns", () => ({ currentPostingWarnings: jest.fn() }));
 jest.mock("@/lib/membership/positionCheck", () => ({ checkEmailStuckItems: jest.fn(), retryCheckEmail: jest.fn() }));
+jest.mock("@/lib/shopifyRead/client", () => ({ scheduledReadState: jest.fn() }));
 
 const receipt = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/receipt");
 const expense = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/expense");
@@ -36,6 +37,7 @@ const mapping = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.M
 const inventory = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/local-inventory");
 const { currentPostingWarnings } = jest.requireMock<{ currentPostingWarnings: jest.Mock }>("@/lib/finance/postingRuns");
 const positionCheck = jest.requireMock<{ checkEmailStuckItems: jest.Mock; retryCheckEmail: jest.Mock }>("@/lib/membership/positionCheck");
+const { scheduledReadState } = jest.requireMock<{ scheduledReadState: jest.Mock }>("@/lib/shopifyRead/client");
 
 const NOW = new Date("2026-11-08T08:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3600_000);
@@ -76,6 +78,7 @@ beforeEach(() => {
     jest.mocked(sendTemplated).mockResolvedValue(true);
     currentPostingWarnings.mockResolvedValue([]);
     positionCheck.checkEmailStuckItems.mockResolvedValue([]);
+    scheduledReadState.mockResolvedValue(null);
 });
 
 afterAll(() => {
@@ -307,6 +310,55 @@ describe("getProblems", () => {
         delete process.env.LOCAL_INVENTORY_DATABASE_URL;
         await getProblems();
         expect(inventory.stuckItems).not.toHaveBeenCalled();
+    });
+});
+
+describe("the Shopify reader's line", () => {
+    const PAYMENTS = "/finance-ops/payments";
+    const readerLines = async () => (await getProblems(NOW)).notices.filter((n) => n.href === PAYMENTS);
+
+    it("has no line while the mirror is not configured", async () => {
+        scheduledReadState.mockResolvedValue(null);
+        expect(await readerLines()).toEqual([]);
+    });
+
+    it("has no line after a fresh completed scheduled read", async () => {
+        scheduledReadState.mockResolvedValue({ latestStatus: "COMPLETED", lastCompletedAt: hoursAgo(3) });
+        expect(await readerLines()).toEqual([]);
+    });
+
+    it("has no line at exactly the staleness threshold", async () => {
+        scheduledReadState.mockResolvedValue({ latestStatus: "COMPLETED", lastCompletedAt: new Date(NOW.getTime() - SHOPIFY_READ_STALE_AFTER_MS) });
+        expect(await readerLines()).toEqual([]);
+    });
+
+    it("lists the store copy's age once the last completed read is past the threshold", async () => {
+        scheduledReadState.mockResolvedValue({ latestStatus: "COMPLETED", lastCompletedAt: hoursAgo(30.5) });
+        expect(await readerLines()).toEqual([{ text: "Shopify store copy is 30 hours old", href: PAYMENTS }]);
+    });
+
+    it.each([["FAILED", "failed"], ["ABANDONED", "abandoned"]])("lists a latest scheduled read that ended %s, with no error text", async (status, word) => {
+        scheduledReadState.mockResolvedValue({ latestStatus: status, lastCompletedAt: hoursAgo(3) });
+        expect(await readerLines()).toEqual([{ text: `Shopify read failed: ${word}`, href: PAYMENTS }]);
+    });
+
+    it("lists a reader that has never completed a scheduled read", async () => {
+        scheduledReadState.mockResolvedValue({ latestStatus: null, lastCompletedAt: null });
+        expect(await readerLines()).toEqual([{ text: "Shopify store copy has never been read", href: PAYMENTS }]);
+    });
+
+    it("names the reader as unread when its runs cannot be read", async () => {
+        jest.spyOn(console, "error").mockImplementation(() => undefined);
+        scheduledReadState.mockRejectedValue(new Error("db down"));
+        expect(await getProblems(NOW)).toMatchObject({ unread: ["Shopify reader"], notices: [] });
+    });
+
+    it("reaches the daily email", async () => {
+        scheduledReadState.mockResolvedValue({ latestStatus: "FAILED", lastCompletedAt: hoursAgo(3) });
+
+        await sendProblemsDigest(NOW);
+
+        expect(digestCtx().items).toContain("Shopify read failed: failed");
     });
 });
 
