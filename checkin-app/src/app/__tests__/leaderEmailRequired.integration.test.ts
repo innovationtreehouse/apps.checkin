@@ -136,6 +136,15 @@ describe('the Board clearing an email', () => {
         expect((await put(leader.id, { email: '', emailChangeReason: 'Asked' })).status).toBe(200);
     });
 
+    it('saves a leader who has no email when the form resends the blank email', async () => {
+        const leader = await person(await household(), { email: null });
+        await program(leader.id);
+        asBoard();
+        const res = await put(leader.id, { name: 'Fixed Name', email: '', phone: '' });
+        expect(res.status).toBe(200);
+        expect((await prisma.person.findUniqueOrThrow({ where: { id: leader.id } })).name).toBe('Fixed Name');
+    });
+
     it('still saves a leader\'s other fields when the email is left alone', async () => {
         const leader = await person(await household());
         await program(leader.id);

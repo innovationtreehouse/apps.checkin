@@ -82,7 +82,7 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
         if (isBadEmailChange(body.email, prior.email)) {
             return apiError("Invalid email format", 400);
         }
-        const leaderKeepsEmail = await leaderEmailClearRefusal(prisma, id, body.email);
+        const leaderKeepsEmail = await leaderEmailClearRefusal(prisma, id, body.email, prior.email);
         if (leaderKeepsEmail) return apiError(leaderKeepsEmail, 409);
 
         // A date of birth on file supersedes the over-25 declaration (normalizeAdultDob):

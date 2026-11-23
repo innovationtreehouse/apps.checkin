@@ -44,11 +44,11 @@ export async function leadsUnfinishedProgram(db: DbClient, personIds: readonly n
 }
 
 /**
- * Why a save that writes `email` (undefined when the save leaves it alone) onto this
- * person must be refused, or null: a sitting leader of an unfinished program keeps an address.
+ * Why a save that writes `email` (undefined when the save leaves it alone) over `stored`
+ * must be refused, or null: a sitting leader of an unfinished program keeps the address they have.
  */
-export async function leaderEmailClearRefusal(db: DbClient, personId: number, email: unknown): Promise<string | null> {
-    if (email === undefined || !isBlankEmail(email)) return null;
+export async function leaderEmailClearRefusal(db: DbClient, personId: number, email: unknown, stored: string | null): Promise<string | null> {
+    if (email === undefined || !isBlankEmail(email) || isBlankEmail(stored)) return null;
     return await leadsUnfinishedProgram(db, [personId]) ? LEADER_EMAIL_REQUIRED : null;
 }
 

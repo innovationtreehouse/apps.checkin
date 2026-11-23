@@ -77,19 +77,25 @@ describe('leaderEmailClearRefusal', () => {
     it('refuses blanking the email of a leader of an unfinished program', async () => {
         count.mockResolvedValue(1);
         for (const email of [null, '', '   ']) {
-            expect(await leaderEmailClearRefusal(programs, 7, email)).toBe(LEADER_EMAIL_REQUIRED);
+            expect(await leaderEmailClearRefusal(programs, 7, email, 'lead@example.com')).toBe(LEADER_EMAIL_REQUIRED);
         }
         expect(count).toHaveBeenCalledWith({ where: { leadMentorId: { in: [7] }, phase: { not: 'FINISHED' } } });
     });
 
     it('allows blanking it once no unfinished program has them as leader', async () => {
         count.mockResolvedValue(0);
-        expect(await leaderEmailClearRefusal(programs, 7, '')).toBeNull();
+        expect(await leaderEmailClearRefusal(programs, 7, '', 'lead@example.com')).toBeNull();
+    });
+
+    it('lets a leader with no email on file save their record unchanged', async () => {
+        count.mockResolvedValue(1);
+        expect(await leaderEmailClearRefusal(programs, 7, '', null)).toBeNull();
+        expect(count).not.toHaveBeenCalled();
     });
 
     it('never looks when the save keeps or changes the address', async () => {
-        expect(await leaderEmailClearRefusal(programs, 7, undefined)).toBeNull();
-        expect(await leaderEmailClearRefusal(programs, 7, 'new@example.com')).toBeNull();
+        expect(await leaderEmailClearRefusal(programs, 7, undefined, 'lead@example.com')).toBeNull();
+        expect(await leaderEmailClearRefusal(programs, 7, 'new@example.com', 'lead@example.com')).toBeNull();
         expect(count).not.toHaveBeenCalled();
     });
 
