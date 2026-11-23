@@ -93,6 +93,8 @@ afterAll(async () => {
     await prisma.programVolunteer.deleteMany({ where: { personId: { in: personIds } } });
     await prisma.program.deleteMany({ where: { name: `Program ${TAG}` } });
     await prisma.personRole.deleteMany({ where: { personId: { in: personIds } } });
+    await prisma.budgetOwnerTreasurer.deleteMany({ where: { budgetOwner: { name: `Bucket ${TAG}` } } });
+    await prisma.budgetOwner.deleteMany({ where: { name: `Bucket ${TAG}` } });
     await prisma.orgMembership.deleteMany({ where: { householdId: { in: householdIds } } });
     await prisma.person.deleteMany({ where: { id: { in: personIds } } });
     await withArchivedHouseholds((tx) => tx.household.deleteMany({ where: { id: { in: householdIds } } }));
@@ -139,6 +141,12 @@ describe('archive refusals', () => {
         const { householdId, personId } = await household();
         await prisma.programVolunteer.create({ data: { programId: (await program()).id, personId } });
         await expectRefused(householdId, 'volunteers on or leads');
+    });
+
+    it('refuses a household whose member owns a bucket', async () => {
+        const { householdId, personId } = await household();
+        await prisma.budgetOwner.create({ data: { name: `Bucket ${TAG}`, ownerId: personId } });
+        await expectRefused(householdId, 'owns a bucket');
     });
 
     it('refuses a denied household', async () => {
