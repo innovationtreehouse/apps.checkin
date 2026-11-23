@@ -146,15 +146,19 @@ async function stuckEmails(): Promise<Map<number, { ackIds: number[]; failedAt: 
     return failed;
 }
 
-/** Each email that failed and has not since gone out, timed by its first failure, linked to the program or the roles page it came from. */
+/** The page a position is assigned on: its program, the budgets page for a bucket position, otherwise the roles page. */
+export function positionPageHref({ position, programId }: AckData): string {
+    if (programId !== undefined) return `/program-ops/programs/${programId}`;
+    if (position === "BUDGET_OWNER" || position === "BUDGET_TREASURER") return "/budgets";
+    return "/membership-ops/roles";
+}
+
+/** Each email that failed and has not since gone out, timed by its first failure, linked to the page its position is assigned on. */
 export async function checkEmailStuckItems(): Promise<StuckItem[]> {
     const stuck = await stuckEmails();
     const acks = stuck.size ? await prisma.auditLog.findMany({ where: { id: { in: [...stuck.keys()] }, tableName: ACK_TABLE }, select: { id: true, newData: true } }) : [];
-    const programOf = new Map(acks.map((a) => [a.id, ((a.newData ?? {}) as AckData).programId]));
-    return [...stuck].map(([id, { failedAt }]) => {
-        const programId = programOf.get(id);
-        return { id: String(id), step: CHECK_EMAIL_STEP, href: programId === undefined ? "/membership-ops/roles" : `/program-ops/programs/${programId}`, failedAt };
-    });
+    const ackOf = new Map(acks.map((a) => [a.id, (a.newData ?? {}) as AckData]));
+    return [...stuck].map(([id, { failedAt }]) => ({ id: String(id), step: CHECK_EMAIL_STEP, href: positionPageHref(ackOf.get(id) ?? {}), failedAt }));
 }
 
 /** Retry for a stuck check email: 404 when it isn't stuck, 409 when it fails again. */

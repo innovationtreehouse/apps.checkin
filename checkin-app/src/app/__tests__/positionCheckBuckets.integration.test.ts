@@ -179,7 +179,7 @@ describe('a failed email', () => {
         expect(await ownerOf(b.id)).toBe(owner.id);
         const [ack] = await acks(owner.id);
         const item = { library: 'background check', step: 'check email', id: String(ack.id) };
-        expect(await checkEmailStuckItems()).toContainEqual(expect.objectContaining({ id: item.id }));
+        expect(await checkEmailStuckItems()).toContainEqual(expect.objectContaining({ id: item.id, href: '/budgets' }));
         expect(sendEmail).toHaveBeenCalledTimes(1);
 
         jest.mocked(sendEmail).mockResolvedValue(true);
