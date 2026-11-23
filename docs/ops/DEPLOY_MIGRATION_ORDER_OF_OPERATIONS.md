@@ -94,7 +94,11 @@ that packaging through its **whole-entity decommission exception**
    the migration and **the route files of the registry entries this PR
    removes** — no other deletion. "It is a deletion" is not evidence a file
    belongs to the drop: a file nothing imports can still be a security
-   control, and removing one breaks neither tsc nor the build.
+   control, and removing one breaks neither tsc nor the build. The one app-file
+   edit it admits is deleting whole `FINANCE_VIEW_MODELS` elements in
+   `src/lib/finance/financeViewKinds.ts`, each naming a model that a
+   financeView record of a removed registry entry names and that no registry
+   file quotes at head.
 
 The exception fails closed: a partial edit inside a surviving binding (which
 can *widen* a grant — deleting one element of an `all:` match weakens it), an

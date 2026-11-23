@@ -616,4 +616,140 @@ describe('certifyDecommission', () => {
             expect(r.reasons.join()).toContain('non-declarative boundary file');
         });
     });
+
+    describe('FINANCE_VIEW_MODELS element deletions', () => {
+        const LIBRARY = 'checkin-app/src/security/registry/capital.ts';
+        const OTHER_LIBRARY = 'checkin-app/src/security/registry/receipts.ts';
+        const KINDS = 'checkin-app/src/lib/finance/financeViewKinds.ts';
+        const CAPITAL_ROUTE = 'checkin-app/src/app/api/capital/route.ts';
+        const CAPITAL_LIBRARY = `import { defineRoute } from '../core';
+
+defineRoute({ endpoint: 'GET /api/capital', authorize: 'finance', envelope: null, returns: ['CapitalLineView'], orderedView: VIEW, financeView: { records: [{ key: 'CapitalLineView', id: 'id', model: 'CapitalLine' }] } });
+defineRoute({ endpoint: 'GET /api/capital/summary', authorize: 'finance', envelope: null, returns: ['CapitalSummary'], orderedView: VIEW });
+`;
+        const OTHER_LIBRARY_SRC = `import { defineRoute } from '../core';
+
+defineRoute({ endpoint: 'GET /api/receipts', authorize: 'finance', envelope: null, returns: ['ReceiptView'], orderedView: VIEW, financeView: { records: [{ key: 'ReceiptView', id: 'id', model: 'Receipt' }] } });
+`;
+        const KINDS_BASE = `/** Every model a log row can name, for the record type filter. */
+export const FINANCE_VIEW_MODELS = [
+  "CapitalLine",
+  "Expense",
+  "Receipt",
+] as const;
+
+export type FinanceViewModelName = (typeof FINANCE_VIEW_MODELS)[number];
+`;
+        const libraryWithoutCapital = dropLines(CAPITAL_LIBRARY, [lineOf(CAPITAL_LIBRARY, "'GET /api/capital'"), lineOf(CAPITAL_LIBRARY, "'GET /api/capital'")]);
+        const kindsWithoutCapital = KINDS_BASE.replace('  "CapitalLine",\n', '');
+
+        const attempt = ({
+            kindsHead = kindsWithoutCapital,
+            libraryHead = libraryWithoutCapital,
+            otherHead = OTHER_LIBRARY_SRC,
+            kindsStatus = 'M',
+            listHead = (dir: string) => [LIBRARY, OTHER_LIBRARY, KINDS].filter(p => p.startsWith(dir)),
+            noListing = false,
+        }: {
+            kindsHead?: string | null;
+            libraryHead?: string;
+            otherHead?: string;
+            kindsStatus?: string;
+            listHead?: (dir: string) => string[];
+            noListing?: boolean;
+        } = {}) =>
+            certifyDecommission({
+                changed: [
+                    { status: 'M', path: LIBRARY },
+                    { status: 'D', path: CAPITAL_ROUTE },
+                    { status: kindsStatus, path: KINDS },
+                ],
+                boundaryChanged: [LIBRARY],
+                violations: [CAPITAL_ROUTE, KINDS],
+                readBase: files({
+                    [LIBRARY]: CAPITAL_LIBRARY,
+                    [OTHER_LIBRARY]: OTHER_LIBRARY_SRC,
+                    [KINDS]: KINDS_BASE,
+                    [CAPITAL_ROUTE]: 'export async function GET() {}',
+                }),
+                readHead: files({ [LIBRARY]: libraryHead, [OTHER_LIBRARY]: otherHead, [KINDS]: kindsHead, [CAPITAL_ROUTE]: null }),
+                listHead: noListing ? undefined : listHead,
+            });
+
+        it('admits deleting the element of a model that leaves the registry with a removed entry', () => {
+            const r = attempt();
+            expect(r.reasons).toEqual([]);
+            expect(r.ok).toBe(true);
+            expect(r.removedFinanceViewModels).toEqual(['CapitalLine']);
+        });
+
+        it('refuses deleting an element whose model another registry entry still names', () => {
+            const r = attempt({
+                otherHead: OTHER_LIBRARY_SRC.replace("model: 'Receipt' }", "model: 'Receipt' }, { key: 'ReceiptView', id: 'lineId', model: 'CapitalLine' }"),
+            });
+            expect(r.ok).toBe(false);
+            expect(r.reasons.join()).toContain("'CapitalLine' removed, but the registry still names it at head");
+        });
+
+        it('refuses deleting an element no removed entry names', () => {
+            const r = attempt({ kindsHead: KINDS_BASE.replace('  "Expense",\n', '') });
+            expect(r.ok).toBe(false);
+            expect(r.reasons.join()).toContain("'Expense' removed, but no registry entry this PR removes names it");
+        });
+
+        it('refuses an added element', () => {
+            const r = attempt({ kindsHead: kindsWithoutCapital.replace('  "Receipt",\n', '  "Receipt",\n  "Visit",\n') });
+            expect(r.ok).toBe(false);
+            expect(r.reasons.join()).toContain('FINANCE_VIEW_MODELS element added: Visit');
+        });
+
+        it('refuses an edited element', () => {
+            const r = attempt({ kindsHead: kindsWithoutCapital.replace('"Expense"', '"Expenses"') });
+            expect(r.ok).toBe(false);
+            expect(r.reasons.join()).toContain(KINDS);
+        });
+
+        it('refuses reordered elements', () => {
+            const r = attempt({ kindsHead: kindsWithoutCapital.replace('  "Expense",\n  "Receipt",\n', '  "Receipt",\n  "Expense",\n') });
+            expect(r.ok).toBe(false);
+            expect(r.reasons.join()).toContain('FINANCE_VIEW_MODELS elements reordered');
+        });
+
+        it('refuses any other edit in the file', () => {
+            const r = attempt({ kindsHead: `${kindsWithoutCapital}export const EXTRA = 1;\n` });
+            expect(r.ok).toBe(false);
+            expect(r.reasons.join()).toContain('content outside the FINANCE_VIEW_MODELS elements changed');
+        });
+
+        it('refuses the file with no element deleted', () => {
+            const r = attempt({ kindsHead: KINDS_BASE.replace('/** Every', '/** All') });
+            expect(r.ok).toBe(false);
+            expect(r.reasons.join()).toContain(KINDS);
+        });
+
+        it('refuses the file added or deleted outright', () => {
+            const r = attempt({ kindsHead: null, kindsStatus: 'D' });
+            expect(r.ok).toBe(false);
+            expect(r.reasons.join()).toContain(`${KINDS}: added or deleted outright`);
+        });
+
+        it('refuses without a head file listing', () => {
+            const r = attempt({ noListing: true });
+            expect(r.ok).toBe(false);
+            expect(r.reasons.join()).toContain('no head file listing');
+        });
+
+        it('still refuses the file when no registry entry is removed', () => {
+            const r = certifyDecommission({
+                changed: [{ status: 'M', path: BINDINGS }, { status: 'M', path: SCHEMA }, { status: 'M', path: KINDS }],
+                boundaryChanged: [BINDINGS],
+                violations: [KINDS],
+                readBase: files({ [KINDS]: KINDS_BASE }),
+                readHead: files({ [BINDINGS]: bindingsWithoutFeePayment, [SCHEMA]: SCHEMA_DROPPED, [KINDS]: kindsWithoutCapital }),
+                listHead: () => [],
+            });
+            expect(r.ok).toBe(false);
+            expect(r.reasons.join()).toContain("'CapitalLine' removed, but no registry entry this PR removes names it");
+        });
+    });
 });
