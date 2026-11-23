@@ -29,7 +29,6 @@ const RACING_SUITES = [
     'finance/__tests__/financeViewLog',
     'finance/__tests__/reconcile',
     'receipt/__tests__/mailAliases',
-    'lib/__tests__/opsIncidents',
     'lib/__tests__/postEventEmailClaim',
 ]
 
