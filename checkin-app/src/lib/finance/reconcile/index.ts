@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
+import type { DbClient, TxClient } from "@/lib/db-client";
 import { logger } from "@/lib/logger";
 import * as mirror from "@/lib/shopifyRead/client";
 import { reconcileForwardMembership } from "./membership";
@@ -68,15 +69,30 @@ export interface ReconcileResult {
 /** How long one pass may hold the lease; a pass that crashed frees it when this runs out. */
 const RECONCILE_LEASE_MS = 15 * 60_000;
 
-/** Take the reconcile lease if it is free or expired. One short statement; no transaction stays open. */
-async function takeReconcileLease(): Promise<string | null> {
+/** Writes made with the lease claim, such as the audit row of the run it starts. */
+export type RecordStart = (tx: TxClient) => Promise<unknown>;
+
+/**
+ * Take the reconcile lease if it is free or expired. `recordStart` commits with the
+ * claim, so a pass that never got the lease records nothing. No transaction stays open
+ * during the pass.
+ */
+async function takeReconcileLease(recordStart?: RecordStart): Promise<string | null> {
     const token = crypto.randomUUID();
     const now = new Date();
-    const { count } = await prisma.boardSettings.updateMany({
-        where: { id: 1, OR: [{ shopifyReconcileLeaseUntil: null }, { shopifyReconcileLeaseUntil: { lt: now } }] },
-        data: { shopifyReconcileLeaseUntil: new Date(now.getTime() + RECONCILE_LEASE_MS), shopifyReconcileLeaseToken: token },
+    const claim = async (db: DbClient) => {
+        const { count } = await db.boardSettings.updateMany({
+            where: { id: 1, OR: [{ shopifyReconcileLeaseUntil: null }, { shopifyReconcileLeaseUntil: { lt: now } }] },
+            data: { shopifyReconcileLeaseUntil: new Date(now.getTime() + RECONCILE_LEASE_MS), shopifyReconcileLeaseToken: token },
+        });
+        return count === 1;
+    };
+    if (!recordStart) return (await claim(prisma)) ? token : null;
+    return prisma.$transaction(async (tx) => {
+        if (!(await claim(tx))) return null;
+        await recordStart(tx);
+        return token;
     });
-    return count === 1 ? token : null;
 }
 
 /**
@@ -97,13 +113,13 @@ async function releaseReconcileLease(token: string, advanceTo: Date | null): Pro
 
 /**
  * One reconciliation pass. No-op (configured:false) when the mirror isn't wired, and
- * `leaseHeld` when another pass is running. Advances BoardSettings.shopifyReconcileCursorAt
+ * `leaseHeld` when another pass is running. `recordStart` commits with the lease claim. Advances BoardSettings.shopifyReconcileCursorAt
  * to the newest order it processed so the next run only re-scans changed orders.
  */
-export async function runReconcile(): Promise<ReconcileResult> {
+export async function runReconcile(recordStart?: RecordStart): Promise<ReconcileResult> {
     if (!mirror.isConfigured()) return { configured: false, ordersScanned: 0, reversalsRaised: 0, failed: 0 };
 
-    const token = await takeReconcileLease();
+    const token = await takeReconcileLease(recordStart);
     if (!token) return { configured: true, ordersScanned: 0, reversalsRaised: 0, failed: 0, leaseHeld: true };
 
     let advanceTo: Date | null = null;

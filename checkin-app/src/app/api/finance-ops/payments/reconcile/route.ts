@@ -1,6 +1,5 @@
 import { logger } from "@/lib/logger";
 import { ApiResponseError, handler } from "@/security/handler";
-import prisma from "@/lib/prisma";
 import { personActor } from "@/lib/auditActor";
 import { runReconcile, type ReconcileResult } from "@/lib/finance/reconcile";
 import { isConfigured } from "@/lib/shopifyRead/client";
@@ -15,8 +14,9 @@ import { isConfigured } from "@/lib/shopifyRead/client";
  * webhooks, exactly as the daily run does; it is idempotent. Its lease keeps it from
  * overlapping the daily run: when that holds it, this answers 409.
  *
- * Audited before it runs, as a SHOPIFY_RECONCILE row with no entity (affectedEntityId 0).
- * The body is never read.
+ * Audited as a SHOPIFY_RECONCILE row with no entity (affectedEntityId 0), committed with
+ * the lease claim, so a run that gets the lease is always on record and a 409 writes
+ * nothing. The body is never read.
  */
 export const POST = handler(
     "POST /api/finance-ops/payments/reconcile",
@@ -28,7 +28,7 @@ export const POST = handler(
 
         let result: ReconcileResult;
         try {
-            await prisma.auditLog.create({
+            result = await runReconcile((tx) => tx.auditLog.create({
                 data: {
                     ...personActor(auth.user.id),
                     action: "CREATE",
@@ -36,8 +36,7 @@ export const POST = handler(
                     affectedEntityId: 0,
                     newData: { trigger: "payments page" },
                 },
-            });
-            result = await runReconcile();
+            }));
         } catch (error) {
             logger.error("Failed to run the Shopify payment check:", error);
             throw new ApiResponseError(500, "Failed to refresh the payment problems");

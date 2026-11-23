@@ -19,10 +19,12 @@ const isConfiguredMock = jest.fn(() => true);
 jest.mock('@/lib/shopifyRead/client', () => ({ isConfigured: () => isConfiguredMock() }));
 
 const auditCreateMock = jest.fn();
-jest.mock('@/lib/prisma', () => ({
-    __esModule: true,
-    default: { auditLog: { create: (...a: unknown[]) => auditCreateMock(...a) } },
-}));
+/** Run the audit write the route hands runReconcile, as the lease claim would. */
+const recordStartOf = async () => {
+    const recordStart = reconcile.mock.calls[0][0];
+    if (!recordStart) throw new Error('the route passed no audit write');
+    await recordStart({ auditLog: { create: auditCreateMock } } as unknown as Parameters<typeof recordStart>[0]);
+};
 
 const session = jest.mocked(getServerSession);
 const reconcile = jest.mocked(runReconcile);
@@ -65,6 +67,7 @@ describe('POST /api/finance-ops/payments/reconcile', () => {
         expect(await res.json()).toEqual(RESULT);
         expect(reconcile).toHaveBeenCalledTimes(1);
         expect(takeInMailbox).not.toHaveBeenCalled();
+        await recordStartOf();
         expect(auditCreateMock).toHaveBeenCalledWith({
             data: expect.objectContaining({ actorId: 5, actorSystem: null, tableName: 'SHOPIFY_RECONCILE' }),
         });
@@ -82,15 +85,6 @@ describe('POST /api/finance-ops/payments/reconcile', () => {
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
         expect((await POST(req())).status).toBe(500);
         expect(logged).toHaveBeenCalled();
-        logged.mockRestore();
-    });
-
-    it('500 without running the check when the audit row cannot be written', async () => {
-        asBoard();
-        auditCreateMock.mockRejectedValueOnce(new Error('db down'));
-        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
-        expect((await POST(req())).status).toBe(500);
-        expect(reconcile).not.toHaveBeenCalled();
         logged.mockRestore();
     });
 });

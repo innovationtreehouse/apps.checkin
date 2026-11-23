@@ -62,7 +62,7 @@ afterAll(() => {
 beforeEach(() => {
     jest.clearAllMocks();
     Object.assign(prisma, {
-        boardSettings: { findUnique: jest.fn().mockResolvedValue(null), update: jest.fn() },
+        boardSettings: { findUnique: jest.fn().mockResolvedValue(null), update: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
         orgMembershipProcess: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
         programParticipant: { findFirst: jest.fn().mockResolvedValue(null), count: jest.fn().mockResolvedValue(1), findMany: jest.fn().mockResolvedValue([]) },
         person: { findMany: childHouseholds },

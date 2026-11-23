@@ -10,15 +10,16 @@ const findUnique = jest.fn();
 const ordersChangedSince = jest.fn();
 const reconcileReversals = jest.fn();
 
-jest.mock("@/lib/prisma", () => ({
-    __esModule: true,
-    default: {
-        boardSettings: {
-            updateMany: (...a: unknown[]) => updateMany(...a),
-            findUnique: (...a: unknown[]) => findUnique(...a),
-        },
-    },
-}));
+jest.mock("@/lib/prisma", () => {
+    const boardSettings = {
+        updateMany: (...a: unknown[]) => updateMany(...a),
+        findUnique: (...a: unknown[]) => findUnique(...a),
+    };
+    return {
+        __esModule: true,
+        default: { boardSettings, $transaction: (fn: (tx: unknown) => Promise<unknown>) => fn({ boardSettings }) },
+    };
+});
 jest.mock("@/lib/shopifyRead/client", () => ({
     isConfigured: () => true,
     ordersChangedSince: (...a: unknown[]) => ordersChangedSince(...a),
@@ -70,5 +71,16 @@ describe("runReconcile lease", () => {
 
         await expect(runReconcile()).rejects.toThrow("mirror down");
         expect(released().data).toEqual({ shopifyReconcileLeaseUntil: null, shopifyReconcileLeaseToken: null });
+    });
+
+    it("writes the caller's start record only when it takes the lease", async () => {
+        const recordStart = jest.fn();
+        updateMany.mockResolvedValueOnce({ count: 0 });
+        await runReconcile(recordStart);
+        expect(recordStart).not.toHaveBeenCalled();
+
+        updateMany.mockResolvedValue({ count: 1 });
+        await runReconcile(recordStart);
+        expect(recordStart).toHaveBeenCalledTimes(1);
     });
 });
