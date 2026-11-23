@@ -274,13 +274,27 @@ describeDb("a captured email stuck on the Problems list", () => {
     expect(await stuckItems()).toEqual([{ id: String(id), step: "mail message", href: "/receipts/mail", failedAt: capturedAt }]);
   });
 
-  it("leaves out one captured within 25 hours, one processed, and one past its stored copy's retention", async () => {
+  it("leaves out one captured within 25 hours and one processed", async () => {
     const { id } = await stuckMessage(WAITING_NOTICE_MS - 60_000);
-    expect(await stuckItems()).toEqual([]);
-    await db.receiptMailMessage.update({ where: { id }, data: { capturedAt: new Date(Date.now() - 31 * DAY_MS) } });
     expect(await stuckItems()).toEqual([]);
     await db.receiptMailMessage.update({ where: { id }, data: { capturedAt: new Date(Date.now() - 2 * DAY_MS), processedAt: new Date() } });
     expect(await stuckItems()).toEqual([]);
+  });
+
+  it("keeps listing one whose stored copy has expired, marked expired", async () => {
+    const { id, capturedAt } = await stuckMessage(31 * DAY_MS);
+    expect(await stuckItems()).toEqual([{ id: String(id), step: "mail message", href: "/receipts/mail", failedAt: capturedAt, expired: true }]);
+  });
+
+  it("answers Retry on an expired one 409 with the expiry message, and keeps it listed", async () => {
+    const { id } = await stuckMessage(31 * DAY_MS);
+    bind();
+    await expect(retryStuckItem({ id: String(id), step: "mail message" }, BY)).rejects.toMatchObject({
+      status: 409,
+      message: "This email's stored copy expired 30 days after capture.",
+    });
+    expect(await db.receiptMailMessage.findUniqueOrThrow({ where: { id } })).toMatchObject({ processedAt: null });
+    expect(await stuckItems()).toEqual([expect.objectContaining({ id: String(id), expired: true })]);
   });
 
   it("Retry replays it from the stored copy, audited with who pressed it, and it leaves the list", async () => {

@@ -4,7 +4,7 @@ import { useCallback, useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { Anchor, Badge, Button, Card, Center, Code, Group, List, Loader, Stack, Text, Title } from "@mantine/core";
 import type { ConfigCheck } from "@/lib/configHealth";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, showError } from "@checkin/component-ui";
 import { useLoad } from "@/lib/api";
 import { unreadLine } from "@/lib/problemsLines";
 import { mayRetry } from "@/lib/problemsRetryRoles";
@@ -141,16 +141,17 @@ export function ConfigHealthBox() {
 }
 
 // Mirrors Problem in lib/problems.ts (failedAt arrives JSON-serialized).
-type StuckItem = { library: string; id: string; step: string; href: string | null; failedAt: string };
+type StuckItem = { library: string; id: string; step: string; href: string | null; failedAt: string; expired?: boolean };
 // Mirrors Notice in lib/problems.ts.
 type Notice = { text: string; href: string | null };
 type ProblemsPayload = { problems?: { items?: unknown; unread?: unknown; notices?: unknown }; cronJobs?: unknown };
 
 /**
  * The receipt flow's Problems list: the count lines (each library's own, failed email sends), every stuck item, oldest first,
- * with a link to its own page (which shows the error), when it failed and a Retry button, then every scheduled job that has not
- * run on time or whose latest run reported failures (without the run's error text). From GET /api/system-status/config-health;
- * Retry and Retry all POST /api/system-status/problems/retry.
+ * with a link to its own page (which shows the error), when it failed and its Retry and Dismiss buttons, then every scheduled job
+ * that has not run on time or whose latest run reported failures (without the run's error text). From GET
+ * /api/system-status/config-health; Retry and Retry all POST /api/system-status/problems/retry, Dismiss POST
+ * /api/system-status/problems/dismiss. An expired item offers Dismiss only.
  */
 export function ProblemsBox() {
   const [data, setData] = useState<{ items: StuckItem[]; unread: string[]; notices: Notice[]; staleJobs: CronJob[]; failingJobs: CronJob[] } | null>(null);
@@ -159,6 +160,7 @@ export function ProblemsBox() {
   const viewer = useSession().data?.user;
   const [retrying, setRetrying] = useState<{ done: number; total: number } | null>(null);
   const [retried, setRetried] = useState<string | null>(null);
+  const [dismissing, setDismissing] = useState<string | null>(null);
 
   const load = useCallback(() =>
     fetch('/api/system-status/config-health')
@@ -198,7 +200,23 @@ export function ProblemsBox() {
     await load();
   };
 
-  const retryable = data ? data.items.filter((i) => mayRetry(viewer, i)) : [];
+  const dismiss = async (i: StuckItem) => {
+    setDismissing(itemKey(i));
+    const res = await fetch('/api/system-status/problems/dismiss', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ library: i.library, step: i.step, id: i.id }),
+    }).catch(() => null);
+    const body: { results?: { ok?: unknown }[] } | null = res?.ok ? await res.json().catch(() => null) : null;
+    if (body?.results?.[0]?.ok !== true) {
+      showError(dismissFailure(res?.status ?? null), { key: `dismiss-${itemKey(i)}`, title: `Could not dismiss ${i.library}, ${i.step}: ${i.id}` });
+    }
+    setDismissing(null);
+    await load();
+  };
+
+  const busy = retrying !== null || dismissing !== null;
+  const retryable = data ? data.items.filter((i) => mayRetry(viewer, i) && !i.expired) : [];
   const total = data ? data.items.length + data.staleJobs.length + data.failingJobs.length + data.unread.length + data.notices.length : 0;
 
   return (
@@ -218,7 +236,7 @@ export function ProblemsBox() {
         <Stack gap="sm">
         {retryable.length > 0 && (
           <Group gap="sm">
-            <Button size="xs" variant="light" disabled={retrying !== null} onClick={() => retry(retryable)}>
+            <Button size="xs" variant="light" disabled={busy} onClick={() => retry(retryable)}>
               Retry all
             </Button>
             {retrying ? (
@@ -240,14 +258,20 @@ export function ProblemsBox() {
             </List.Item>
           ))}
           {data.items.map((i) => (
-            <List.Item key={`${i.library}-${i.step}-${i.id}`}>
+            <List.Item key={itemKey(i)}>
               <Group gap="xs">
                 <Badge variant="light">{i.library}</Badge>
                 <span>{i.step}</span>
                 {i.href ? <Anchor href={i.href}><Code>{i.id}</Code></Anchor> : <Code>{i.id}</Code>}
-                {mayRetry(viewer, i) && (
-                  <Button size="compact-xs" variant="subtle" disabled={retrying !== null} onClick={() => retry([i])}>
+                {i.expired && <Badge variant="light" color="gray">expired, can&apos;t be replayed</Badge>}
+                {mayRetry(viewer, i) && !i.expired && (
+                  <Button size="compact-xs" variant="subtle" disabled={busy} onClick={() => retry([i])}>
                     Retry
+                  </Button>
+                )}
+                {mayRetry(viewer, i) && (
+                  <Button size="compact-xs" variant="subtle" color="gray" disabled={busy} loading={dismissing === itemKey(i)} onClick={() => dismiss(i)}>
+                    Dismiss
                   </Button>
                 )}
               </Group>
@@ -277,6 +301,16 @@ export function ProblemsBox() {
       )}
     </Card>
   );
+}
+
+const itemKey = (i: StuckItem): string => `${i.library}-${i.step}-${i.id}`;
+
+/** Why a Dismiss press failed, by the route's status; null when the request never reached the server. */
+function dismissFailure(status: number | null): string {
+  if (status === null) return "The server could not be reached. The item is still listed.";
+  if (status === 404) return "It is no longer on the Problems list, so there was nothing to dismiss. The list has been refreshed.";
+  if (status === 403) return "You may not dismiss items in this step. Only the Board may dismiss it.";
+  return `The server answered ${status}. The item is still listed.`;
 }
 
 // Mirrors CronJobStatus in lib/cronRuns.ts (its dates arrive JSON-serialized).

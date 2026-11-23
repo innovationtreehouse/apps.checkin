@@ -2,11 +2,13 @@ type Rtl = typeof import("@/test-helpers/rtl");
 jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl").authMock());
 
 import { act, screen, fireEvent } from "@testing-library/react";
+import { notifications, notificationsStore } from "@mantine/notifications";
 import { invalidateLoads } from "@checkin/component-ui";
 import { renderWithProviders, mockFetchJson, resetRtl, setSession } from "@/test-helpers/rtl";
 import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox, CronRunsBox, KioskHeartbeatBox, ProblemsBox } from "../SystemHealthPanels";
 
 beforeEach(() => resetRtl());
+afterEach(() => act(() => notifications.clean()));
 
 describe("SystemVersionBox", () => {
   it("shows up to date when the running version matches the latest commit", async () => {
@@ -411,6 +413,74 @@ describe("ProblemsBox", () => {
     expect(retryBodies(fetchFn)).toEqual(stuck.map(({ library, step, id }) => ({ library, step, id })));
     expect(most).toBe(1);
     expect(fetchFn.mock.calls.filter(([url]) => String(url).includes("config-health"))).toHaveLength(2);
+  });
+
+  const dismissBodies = (fetchFn: jest.Mock) =>
+    fetchFn.mock.calls
+      .filter(([url]) => String(url).includes("/problems/dismiss"))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+  const expiredMail = { library: "receipt", id: "12", step: "mail message", href: "/receipts/mail", failedAt: "2026-10-01T12:00:00.000Z", expired: true };
+
+  it("Dismiss takes one item off the list, then refreshes it", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    const fetchFn = mockFetchJson({
+      "/api/system-status/config-health": { problems: { items: stuck, unread: [], notices: [] }, cronJobs: [] },
+      "/api/system-status/problems/dismiss": { results: [{ step: "flow", id: "r9", ok: true }] },
+    });
+    renderWithProviders(<ProblemsBox />);
+
+    fireEvent.click((await screen.findAllByRole("button", { name: "Dismiss" }))[2]);
+
+    await act(async () => {});
+    expect(dismissBodies(fetchFn)).toEqual([{ library: "receipt", step: "flow", id: "r9" }]);
+    expect(fetchFn.mock.calls.filter(([url]) => String(url).includes("config-health"))).toHaveLength(2);
+    expect(notificationsStore.getState().notifications).toEqual([]);
+  });
+
+  it("shows Dismiss only where the viewer may retry", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/system-status/config-health": { problems: { items: [...stuck, expiredMail], unread: [], notices: [] }, cronJobs: [] } });
+    renderWithProviders(<ProblemsBox />);
+
+    expect(await screen.findAllByRole("button", { name: "Dismiss" })).toHaveLength(1);
+    expect(screen.getByText("r9").closest("li")).toContainElement(screen.getByRole("button", { name: "Dismiss" }));
+  });
+
+  it("marks expired mail as unreplayable, with Dismiss and no Retry, and leaves it out of Retry all", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    const fetchFn = mockFetchJson({
+      "/api/system-status/config-health": { problems: { items: [expiredMail, stuck[2]], unread: [], notices: [] }, cronJobs: [] },
+      "/api/system-status/problems/retry": { results: [{ ok: true }] },
+    });
+    renderWithProviders(<ProblemsBox />);
+
+    const row = (await screen.findByText("12")).closest("li") as HTMLElement;
+    expect(row).toHaveTextContent("expired, can't be replayed");
+    expect(row.querySelectorAll("button")).toHaveLength(1);
+    expect(row).toContainElement(screen.getAllByRole("button", { name: "Dismiss" })[0]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry all" }));
+    expect(await screen.findByText("1 of 1 retried; 0 still stuck.")).toBeInTheDocument();
+    expect(retryBodies(fetchFn)).toEqual([{ library: "receipt", step: "flow", id: "r9" }]);
+  });
+
+  it("shows a failed Dismiss as a red chip that stays, naming the item and why", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    const fetchFn = mockFetchJson({ "/api/system-status/config-health": { problems: { items: [stuck[2]], unread: [], notices: [] }, cronJobs: [] } });
+    renderWithProviders(<ProblemsBox />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+
+    await act(async () => {});
+    expect(dismissBodies(fetchFn)).toHaveLength(1);
+    expect(notificationsStore.getState().notifications).toEqual([
+      expect.objectContaining({
+        color: "red",
+        autoClose: false,
+        title: "Could not dismiss receipt, flow: r9",
+        message: "It is no longer on the Problems list, so there was nothing to dismiss. The list has been refreshed.",
+      }),
+    ]);
   });
 
   it("says so when nothing is stuck", async () => {

@@ -2287,3 +2287,24 @@ model QuickBooksPostingQueue {
   @@unique([orgId, lane])
   @@map("quickbooks_posting_queue")
 }
+
+/// A stuck item a person dismissed from the Problems list, keyed by the item's failure time:
+/// the same item failing again later carries a new failedAt and is listed again.
+model ProblemDismissal {
+  /// @sensitivity:internal
+  id            Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  library       String
+  /// @sensitivity:internal
+  step          String
+  /// @sensitivity:internal
+  itemId        String
+  /// @sensitivity:internal
+  failedAt      DateTime
+  /// @sensitivity:internal
+  dismissedById Int
+  /// @sensitivity:internal
+  dismissedAt   DateTime @default(now())
+
+  @@unique([library, step, itemId, failedAt])
+}

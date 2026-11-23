@@ -449,8 +449,9 @@ model ReceiptMailLease {
   @@map("receipt_mail_lease")
 }
 
-// One captured email: its raw copy in the file store under rawKey, kept 90 days by the bucket's
-// lifecycle rule. The row outlives the copy, so a message is never captured twice.
+// One captured email: its raw copy in the file store under rawKey, kept by the bucket's lifecycle
+// rule for rawMailRetentionDays (90 in prod, 30 in dev and staging). The row outlives the copy, so a
+// message is never captured twice.
 model ReceiptMailMessage {
   /// @sensitivity:internal
   id             Int       @id @default(autoincrement())

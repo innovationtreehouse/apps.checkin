@@ -6,7 +6,7 @@ import { getCronJobStatuses } from "@/lib/cronRuns";
 import type { TemplateCtx } from "@/lib/email-templates/registry";
 import { sendTemplated } from "@/lib/email-templates/send";
 import prisma from "@/lib/prisma";
-import { getProblems, LIBRARY_DB_VARS, retryProblem, sendProblemsDigest } from "../problems";
+import { dismissProblem, getProblems, LIBRARY_DB_VARS, retryProblem, sendProblemsDigest } from "../problems";
 
 jest.mock("@/lib/cronRuns", () => ({ getCronJobStatuses: jest.fn() }));
 jest.mock("@/lib/email-templates/send", () => ({ sendTemplated: jest.fn() }));
@@ -30,6 +30,15 @@ const NOW = new Date("2026-11-08T08:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3600_000);
 const findSettings = jest.fn();
 const countEmailFailures = jest.fn();
+type Dismissal = { library: string; step: string; itemId: string; failedAt: Date; dismissedById: number };
+let dismissals: Dismissal[] = [];
+type Wanted = { library: string; step: string; itemId: string; failedAt: Date };
+const findDismissals = jest.fn().mockImplementation(async ({ where }: { where: { OR: Wanted[] } }) =>
+    dismissals.filter((d) => where.OR.some((w) => w.library === d.library && w.step === d.step && w.itemId === d.itemId && w.failedAt.getTime() === d.failedAt.getTime())));
+const createDismissals = jest.fn().mockImplementation(async ({ data }: { data: Dismissal[] }) => {
+    dismissals.push(...data);
+    return { count: data.length };
+});
 const digestCtx = () => jest.mocked(sendTemplated).mock.calls[0][2] as TemplateCtx<"ops.problemsDigest">;
 
 beforeEach(() => {
@@ -41,6 +50,9 @@ beforeEach(() => {
     mapping.problemNotices.mockResolvedValue([]);
     prisma.boardSettings.findUnique = findSettings;
     prisma.integrationErrorLog.count = countEmailFailures;
+    dismissals = [];
+    prisma.problemDismissal.findMany = findDismissals;
+    prisma.problemDismissal.createMany = createDismissals;
     prisma.orgMembershipProcess.findMany = jest.fn().mockResolvedValue([]);
     prisma.clearanceStepFailure.findMany = jest.fn().mockResolvedValue([]);
     countEmailFailures.mockResolvedValue(0);
@@ -155,6 +167,42 @@ describe("retryProblem", () => {
 
         await expect(retryProblem({ library, step: "intake", id: "e1" }, BY)).rejects.toMatchObject({ status: 404 });
         expect(expense.retryStuckItem).not.toHaveBeenCalled();
+    });
+});
+
+describe("dismissProblem", () => {
+    const BY = { userId: 5 };
+    const stuck = (failedAt: Date) => [{ id: "e1", step: "intake", href: null, failedAt }];
+
+    it("takes a listed item off the list, recording its failure time and who dismissed it", async () => {
+        expense.stuckItems.mockResolvedValue(stuck(hoursAgo(30)));
+        await dismissProblem({ library: "expense", step: "intake", id: "e1" }, BY);
+        expect(dismissals).toEqual([{ library: "expense", step: "intake", itemId: "e1", failedAt: hoursAgo(30), dismissedById: 5 }]);
+        expect((await getProblems()).items).toEqual([]);
+    });
+
+    it("lists the item again once it fails again later", async () => {
+        expense.stuckItems.mockResolvedValue(stuck(hoursAgo(30)));
+        await dismissProblem({ library: "expense", step: "intake", id: "e1" }, BY);
+        expense.stuckItems.mockResolvedValue(stuck(hoursAgo(2)));
+        expect((await getProblems()).items).toEqual([expect.objectContaining({ library: "expense", id: "e1", failedAt: hoursAgo(2) })]);
+    });
+
+    it("answers 404 for an item not listed, an already dismissed one, or a library not on the list", async () => {
+        expense.stuckItems.mockResolvedValue(stuck(hoursAgo(30)));
+        await expect(dismissProblem({ library: "expense", step: "intake", id: "e2" }, BY)).rejects.toMatchObject({ status: 404 });
+        await expect(dismissProblem({ library: "expense", step: "QuickBooks posting", id: "e1" }, BY)).rejects.toMatchObject({ status: 404 });
+        await dismissProblem({ library: "expense", step: "intake", id: "e1" }, BY);
+        await expect(dismissProblem({ library: "expense", step: "intake", id: "e1" }, BY)).rejects.toMatchObject({ status: 404 });
+        await expect(dismissProblem({ library: "nowhere", step: "intake", id: "e1" }, BY)).rejects.toMatchObject({ status: 404 });
+        expect(dismissals).toHaveLength(1);
+    });
+
+    it("keeps a dismissed item out of the daily email", async () => {
+        expense.stuckItems.mockResolvedValue(stuck(hoursAgo(30)));
+        await dismissProblem({ library: "expense", step: "intake", id: "e1" }, BY);
+        await sendProblemsDigest(NOW);
+        expect(sendTemplated).not.toHaveBeenCalled();
     });
 });
 
