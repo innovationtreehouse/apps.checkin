@@ -260,44 +260,44 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
     }
   };
 
-  const total = row.receiptTotalCents;
-  const missing = missingDetails(row);
-  if (total === null || missing.length > 0) {
-    const held = resolveNextState(row.state, { type: "RUN_PIPELINE" }, { ...NEUTRAL_CONTEXT, detailsMissing: true });
-    if (held !== "submitter_review") throw new Error(`Unexpected next state '${held}' from '${row.state}' for a receipt missing details`);
-    await transition({ state: "submitter_review", validationNotes: missingDetailsNote(missing) }, `submitter_review (missing ${missing.join(", ")})`);
-    return;
-  }
-
-  const lineItems = await receiptRepo.listLineItems(receiptId);
-  const dupId = await checkDuplicate(row);
-  const settings = await getOrgSettings(orgId);
-  // A receipt with no lines can balance, but delivery requires at least one line.
-  const noLines = lineItems.length === 0;
-  const math = receiptMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, total);
-  const valid = !noLines && math.balanced;
-  const disagreeing = math.disagreeing.map((i) => disagreementText(lineItems[i], i));
-  const { taxReview, ageReview, futureReview, corrected, corrections, ageLimitDays, diffDays } = await reviewFlags(row, settings);
-
-  // QB-linked backfill is already reconciled in QuickBooks: the submitter step is implied and the
-  // age gate is waived (historical by definition). Tax, future-dated, math and dedup still apply.
-  const isQbLinked = !!row.qbTxnId;
-
-  const context: ReceiptMachineContext = {
-    detailsMissing: false,
-    isDuplicate: !!dupId,
-    mathValid: valid,
-    needsReimbursement: row.needsReimbursement,
-    cameByEmail: row.intakeSource === "email",
-    readByOcr: row.ocrStartedAt !== null,
-    submitterReviewed: !!row.reviewedAt || isQbLinked,
-    financialApproved: !!row.approvedAt,
-    needsFinancialReview: taxReview || futureReview || (ageReview && !isQbLinked) || corrected,
-  };
-
-  const nextState = resolveNextState(row.state, { type: "RUN_PIPELINE" }, context);
-
   try {
+    const total = row.receiptTotalCents;
+    const missing = missingDetails(row);
+    if (total === null || missing.length > 0) {
+      const held = resolveNextState(row.state, { type: "RUN_PIPELINE" }, { ...NEUTRAL_CONTEXT, detailsMissing: true });
+      if (held !== "submitter_review") throw new Error(`Unexpected next state '${held}' from '${row.state}' for a receipt missing details`);
+      await transition({ state: "submitter_review", validationNotes: missingDetailsNote(missing) }, `submitter_review (missing ${missing.join(", ")})`);
+      return;
+    }
+
+    const lineItems = await receiptRepo.listLineItems(receiptId);
+    const dupId = await checkDuplicate(row);
+    const settings = await getOrgSettings(orgId);
+    // A receipt with no lines can balance, but delivery requires at least one line.
+    const noLines = lineItems.length === 0;
+    const math = receiptMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, total);
+    const valid = !noLines && math.balanced;
+    const disagreeing = math.disagreeing.map((i) => disagreementText(lineItems[i], i));
+    const { taxReview, ageReview, futureReview, corrected, corrections, ageLimitDays, diffDays } = await reviewFlags(row, settings);
+
+    // QB-linked backfill is already reconciled in QuickBooks: the submitter step is implied and the
+    // age gate is waived (historical by definition). Tax, future-dated, math and dedup still apply.
+    const isQbLinked = !!row.qbTxnId;
+
+    const context: ReceiptMachineContext = {
+      detailsMissing: false,
+      isDuplicate: !!dupId,
+      mathValid: valid,
+      needsReimbursement: row.needsReimbursement,
+      cameByEmail: row.intakeSource === "email",
+      readByOcr: row.ocrStartedAt !== null,
+      submitterReviewed: !!row.reviewedAt || isQbLinked,
+      financialApproved: !!row.approvedAt,
+      needsFinancialReview: taxReview || futureReview || (ageReview && !isQbLinked) || corrected,
+    };
+
+    const nextState = resolveNextState(row.state, { type: "RUN_PIPELINE" }, context);
+
     switch (nextState) {
       case "duplicate_flagged":
         await transition(

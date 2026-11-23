@@ -10,7 +10,7 @@ import ReceiptFile from "../components/ReceiptFile";
 import { useRotation } from "../components/useRotation";
 import ReceiptEditor from "../components/ReceiptEditor";
 import { CONFIRM_AS_READ, confirmedByReimbursee } from "../components/ConfirmationList";
-import { api, BASE, errorMessage, outcomeSteps, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
+import { api, BASE, errorMessage, outcomeSteps, receiptStateLabel, send, showFlowFailed, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
 import { formatCents } from "@checkin/money";
 import { draftBalance, draftMath, draftProblem, EMPTY_DRAFT, hasTypedDetails, isDirty, planSave, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
@@ -229,9 +229,10 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const own = viewer?.id === r.uploadedByUserId;
   const isAdult = viewer?.ageBand === "adult";
   const reimburseeConfirms = confirmedByReimbursee(r);
-  // `decides` marks an action that moves the receipt out of the queue it was opened from.
-  const act = async (path: string, method: string, body: unknown, success: string, failed: string, decides = false) => {
-    if (await send(`/${id}${path}`, method, body, success, failed)) {
+  // `decides` marks an action that moves the receipt out of the queue it was opened from; `runsFlow` one that runs the intake flow.
+  const act = async (path: string, method: string, body: unknown, success: string, failed: string, decides = false, runsFlow = false) => {
+    const sent = runsFlow ? send(`/${id}${path}`, method, body, success, failed, { runsFlow }) : send(`/${id}${path}`, method, body, success, failed);
+    if (await sent) {
       if (decides && fromReview) {
         router.push(back.href);
         return;
@@ -333,7 +334,9 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
       return;
     }
     window.dispatchEvent(new Event("nav-counts-mutated"));
-    if (after.state === "validation_failed") {
+    if (after.state === "flow_error") {
+      showFlowFailed(saved ? "Saved and resubmitted" : "Resubmitted");
+    } else if (after.state === "validation_failed") {
       stillOff(`${saved ? "Saved. " : ""}The totals still don't add up; stays in Totals off.`);
     } else {
       showSuccess(`${saved ? "Saved and resubmitted" : "Resubmitted"}: ${STATE_LABELS[after.state] ?? after.state}`);
@@ -472,7 +475,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
                 {reimburseeConfirms ? (
                   <Text size="sm" c="dimmed">The person reimbursed confirms the lines and amounts.</Text>
                 ) : (
-                  <Button size="xs" disabled={saving} onClick={() => void afterSave(() => act("/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt"))}>
+                  <Button size="xs" disabled={saving} onClick={() => void afterSave(() => act("/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt", false, true))}>
                     {r.needsReimbursement ? CONFIRM_AS_READ : "Confirm"}
                   </Button>
                 )}
@@ -516,7 +519,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
                   </Text>
                 )}
                 {r.state === "financial_review" && !own && (
-                  <Button size="xs" w="fit-content" color="green" onClick={() => void act("/approve", "POST", {}, "Approved", "Couldn't approve this receipt", true)}>Approve</Button>
+                  <Button size="xs" w="fit-content" color="green" onClick={() => void act("/approve", "POST", {}, "Approved", "Couldn't approve this receipt", true, true)}>Approve</Button>
                 )}
                 {!TERMINAL.has(r.state) && !r.pushedAt && !own && (
                   <Group align="end" gap="xs">

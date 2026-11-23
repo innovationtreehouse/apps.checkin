@@ -123,14 +123,14 @@ describe("the finance decision on a receipt in financial review", () => {
     wrap(<ReceiptDetailPage />);
     expect(screen.queryAllByRole("textbox", { name: /note/i })).toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/approve", "POST", {}, "Approved", "Couldn't approve this receipt"));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/approve", "POST", {}, "Approved", "Couldn't approve this receipt", { runsFlow: true }));
   });
 
   it("does not send the reject reason with an approval", async () => {
     wrap(<ReceiptDetailPage />);
     fireEvent.change(screen.getByRole("textbox", { name: "Reason to reject" }), { target: { value: "personal purchase" } });
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/approve", "POST", {}, "Approved", "Couldn't approve this receipt"));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/approve", "POST", {}, "Approved", "Couldn't approve this receipt", { runsFlow: true }));
   });
 
   it("rejects with the reason typed in its own field", async () => {

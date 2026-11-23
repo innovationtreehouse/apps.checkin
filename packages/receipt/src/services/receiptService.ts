@@ -431,7 +431,7 @@ async function applyOcr(id: string, actor: Actor, deadline = Infinity): Promise<
       return true;
     });
     if (!landed) throw new ServiceError(409, "Receipt left OCR while it was being read");
-    await runFullFlow(id, actor);
+    await runFlowLogged(id, actor);
   } else {
     await failOcr(id, actor, { notes: ocrFailureNote(result), action: `ocr_failed:${result.kind}`, reason: result.error });
   }
@@ -691,6 +691,7 @@ async function awaitingConfirmation(personId: number): Promise<{ inReview: Recei
   return { inReview, sent: new Map(awaited.filter((a) => a.reimburseePersonId === personId).map((a) => [a.receiptId, a.changedFields])) };
 }
 
+/** Runs the flow after a step that has committed. A failure is recorded on the receipt as `flow_error`, so the step still answers as done. */
 async function runFlowLogged(id: string, actor: Actor | null): Promise<void> {
   await runFullFlow(id, actor).catch((err: unknown) => {
     console.error(`[receipt] pipeline failed for ${id}:`, err);
@@ -1114,7 +1115,7 @@ export const receiptService = {
     const now = new Date();
     const set = { core: recordFinanceReview("approved", row, reasons, actor, null, now), detail: { approvedAt: now } };
     await step(row, { type: "FINANCIAL_APPROVED" }, "uploaded", set, actor, "financial_approved");
-    await runFullFlow(id, actor);
+    await runFlowLogged(id, actor);
     return load(id, "finance", actor);
   },
 
@@ -1245,7 +1246,7 @@ export const receiptService = {
     const row = await loadForChange(id, access, actor);
     await writeAccess(row, access, actor, "resubmit");
     await step(row, { type: "RESUBMIT" }, "uploaded", { detail: { validationNotes: null } }, actor, "resubmitted");
-    await runFullFlow(id, actor);
+    await runFlowLogged(id, actor);
     return load(id, access, actor);
   },
 
@@ -1260,7 +1261,7 @@ export const receiptService = {
     if (missing.length > 0) throw new ServiceError(400, `Fill in the ${listWords(missing)} before confirming this receipt`);
     if (reimburseeConfirms(row)) throw new ServiceError(403, "The person reimbursed confirms this receipt");
     await step(row, { type: "SUBMITTER_CONFIRMED" }, "uploaded", { detail: { reviewedAt: new Date(), reviewedByUserId: actor.id, validationNotes: null } }, actor, "submitter_review_confirmed");
-    await runFullFlow(id, actor);
+    await runFlowLogged(id, actor);
     return toSubmitterView(await load(id, "submitter", actor));
   },
 
@@ -1312,7 +1313,7 @@ export const receiptService = {
       if (missing.length > 0) throw new ServiceError(400, `Fill in the ${listWords(missing)} before confirming this receipt`);
       const detail = { reviewedAt: new Date(), reviewedByUserId: actor.id, reviewedOnBehalfReason: reason, validationNotes: null };
       await step(row, { type: "SUBMITTER_CONFIRMED" }, "uploaded", { detail }, actor, "submitter_review_confirmed", onBehalf);
-      await runFullFlow(id, actor);
+      await runFlowLogged(id, actor);
     }
     const after = (await receiptRepo.find(id, row.orgId))!;
     return confirmationView({ ...after, reimburseePersonId: reimbursee }, role === "on_behalf", []);

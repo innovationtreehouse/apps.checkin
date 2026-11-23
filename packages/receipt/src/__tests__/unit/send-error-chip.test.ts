@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const show = vi.hoisted(() => vi.fn());
 vi.mock("@mantine/notifications", () => ({ notifications: { show, update: vi.fn() } }));
 
-const { send } = await import("../../components/api");
+const { FLOW_FAILED_MESSAGE, send } = await import("../../components/api");
 
 const respond = (status: number, body: string) => vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { status })));
 
@@ -34,5 +34,29 @@ describe("send()", () => {
     respond(200, "{}");
     expect(await send("/settings", "PUT", {}, "Settings saved", "Couldn't save the settings")).toBe(true);
     expect(show).toHaveBeenCalledWith(expect.objectContaining({ message: "Settings saved", color: "green" }));
+  });
+
+  it("raises a red chip that stays when a saved step's flow left the receipt in flow_error", async () => {
+    respond(200, JSON.stringify({ id: "r1", state: "flow_error" }));
+    expect(await send("/r1/approve", "POST", {}, "Approved", "Couldn't approve this receipt", { runsFlow: true })).toBe(true);
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({
+      title: "Approved, but the next step failed",
+      message: FLOW_FAILED_MESSAGE,
+      color: "red",
+      autoClose: false,
+    }));
+  });
+
+  it("shows the green chip when the flow ran through", async () => {
+    respond(200, JSON.stringify({ id: "r1", state: "financial_review" }));
+    await send("/r1/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt", { runsFlow: true });
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ message: "Confirmed", color: "green" }));
+  });
+
+  it("reads no flow outcome from a write that runs no flow", async () => {
+    respond(200, JSON.stringify({ id: "r1", state: "flow_error" }));
+    await send("/r1/notes", "POST", {}, "Note added", "Couldn't add the note");
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ message: "Note added", color: "green" }));
   });
 });
