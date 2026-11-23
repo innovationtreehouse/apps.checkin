@@ -81,7 +81,7 @@ export interface CatalogReader {
   getActiveItem(gtin13: string): Promise<ActiveCatalogItem>;
   /** The injected org's provisional part with this GTIN, or null; another org's part is null. */
   getOrgProvisionalItem(gtin13: string): Promise<OrgProvisionalItem>;
-  /** Up to 20 of the injected org's pending or local-only parts whose name contains `q` in any case, or whose GTIN is `q`. */
+  /** Up to 20 of the injected org's pending or local-only parts whose name contains `q` in any case, or whose GTIN or short Part ID is `q`. */
   searchOrgProvisionalItems(q: string): Promise<OrgProvisionalPart[]>;
 }
 
