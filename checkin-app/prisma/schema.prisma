@@ -858,9 +858,6 @@ model BoardSettings {
   programStoreClosedAt       DateTime?
   /// @sensitivity:internal
   updatedAt                  DateTime  @updatedAt
-  /// Unused column awaiting its drop. Hidden from the client so no code reads or
-  /// writes it before the column goes. @sensitivity:internal
-  qboProductionRealmId       String?   @ignore
 }
 
 /// Board-edited override of one email's copy (docs/in-design/1333-EMAIL_TEMPLATES.md).
