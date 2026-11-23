@@ -21,6 +21,7 @@ import { collectLibraryCounts, type LibraryCounts } from "@/lib/navLibraryCounts
 import { variantSlotYears } from "@/lib/programYear";
 import { liveMembershipYear } from "@/lib/membership/renewal";
 import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
+import { householdLeadsWhere } from "@/lib/household/leads";
 
 /**
  * Aggregate "things to do" counts for the left-nav badges. Every count is scoped
@@ -201,7 +202,7 @@ async function memberCounts(user: AuthenticatedUser): Promise<TodoCounts["member
     // From the DB, not the session claim, so a lead change applies at once.
     const [isLead, seesPayments] = await Promise.all([
         prisma.person.findFirst({
-            where: { id: user.id, householdId, isHouseholdLead: true },
+            where: { id: user.id, ...householdLeadsWhere(householdId) },
             select: { id: true },
         }).then((p) => p !== null),
         seesHouseholdPaymentStatus(user.id),
@@ -233,7 +234,7 @@ async function memberCounts(user: AuthenticatedUser): Promise<TodoCounts["member
         // page highlights the member box; this drives the nav badge count.
         isLead
             ? prisma.person.findMany({
-                  where: { householdId, isHouseholdLead: true, OR: [{ phone: null }, { phone: "" }] },
+                  where: { ...householdLeadsWhere(householdId), OR: [{ phone: null }, { phone: "" }] },
                   select: { id: true, name: true },
               })
             : Promise.resolve([]),
