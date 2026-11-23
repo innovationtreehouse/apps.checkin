@@ -41,7 +41,6 @@ const fakePorts = {
     householdOf: vi.fn(async (ids: number[]) => HOUSEHOLDS.filter((h) => h.some((m) => ids.includes(m))).flat()),
   },
   reimbursees: {
-    hasAccount: vi.fn(async (id: number) => id !== NO_ACCOUNT && id !== GONE),
     withoutAccount: vi.fn(async (ids: number[]) => ids.filter((id) => id === NO_ACCOUNT || id === GONE)),
   },
   submitterConfirmations: {

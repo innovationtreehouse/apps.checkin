@@ -38,7 +38,7 @@ const reimbursees: ReceiptReimbursees = {
     const name = new Map([[BOB.id, "Bob Baker"], [NO_ACCOUNT.id, NO_ACCOUNT.name], [LAPSED.id, "Lee Lapsed"]]).get(id);
     return name ? { id, name, isAdult: true } : null;
   },
-  hasAccount: async (id) => id !== NO_ACCOUNT.id,
+  withoutAccount: async (ids) => ids.filter((id) => id === NO_ACCOUNT.id),
   addNonMemberAdult: async (name) => ({ id: 301, name, isAdult: true }),
 };
 
