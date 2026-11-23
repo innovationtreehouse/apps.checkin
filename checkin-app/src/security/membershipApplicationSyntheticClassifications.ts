@@ -1,5 +1,5 @@
 /**
- * Non-Prisma response model the Board's Applications tab ships through
+ * Non-Prisma response models the Board's Applications tab ships through
  * handler() (the catalogSyntheticClassifications.ts pattern).
  *
  * MembershipApplicationRow — one row of GET /api/membership-ops/applications:
@@ -12,6 +12,11 @@
  *
  * Every mirrored field's tier is pinned to its schema field's tier by
  * __tests__/membership-application-strip.test.ts.
+ *
+ * WaitingApplicationSettleResult — the counts from one run of the waiting-
+ * application settle sweep (POST /api/membership-ops/applications/settle-waiting):
+ * households swept, check reviews opened, households that failed. All
+ * `internal`, and no field names a household or person.
  *
  * Hand-authored, not generated: this describes an API response, not a table.
  * This is a security-boundary artifact — changes ship in a boundary PR.
@@ -29,6 +34,11 @@ export const classifications = {
     paidAt: "internal",
     requestedForHouseholdId: "public",
     notRenewing: "internal",
+  },
+  WaitingApplicationSettleResult: {
+    households: "internal",
+    opened: "internal",
+    failed: "internal",
   },
 } as const;
 

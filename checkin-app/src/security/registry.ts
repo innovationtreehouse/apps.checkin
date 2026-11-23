@@ -346,6 +346,20 @@ defineRoute({
     ],
 });
 
+// Board runs the waiting-application settle sweep once: every household
+// application waiting on its background check is settled, as the bg-settle cron
+// does. Board-only, the same set as review-override: settling moves membership
+// state. The bag is { WaitingApplicationSettleResult }, three counts.
+defineRoute({
+    endpoint: 'POST /api/membership-ops/applications/settle-waiting',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: 'settled',
+    returns: ['WaitingApplicationSettleResult'],
+    orderedView: [
+        ['isBoardMember', ['everyones:internal']],
+    ],
+});
+
 // Board's in-flight membership applications. Exposes every applicant household's
 // PII (parents + children names/emails), so only isSysadmin/board may see it, and
 // the field grant is explicit per role.
