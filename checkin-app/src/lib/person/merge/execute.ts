@@ -14,6 +14,7 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { anyMergedAway } from "@/lib/person/archivedPeople";
+import { isBlankEmail, leadsUnfinishedProgram, LEADER_EMAIL_REQUIRED, LEADER_NEEDS_EMAIL } from "@/lib/programs/leaderEligibility";
 import { bgSubjectKey, disputedCheckBlock, type CheckSide } from "./guard";
 import {
     KEEP_INCLUDE,
@@ -145,6 +146,9 @@ export async function prepareMerge(
     const trustBlock = await trustedLoginRefusal(prisma, { keepId, mergeId, keeperUpdate: keeperUpdate.data, emailChangeReason: reason }, actor);
     if (trustBlock) return { refused: trustBlock };
 
+    const leaderBlock = await leaderEmailMergeRefusal(prisma, keep, merge, keeperUpdate.data);
+    if (leaderBlock) return { refused: leaderBlock };
+
     return { plan: { keep, merge, choices: parsed.choices, emailChangeReason: reason } };
 }
 
@@ -153,6 +157,18 @@ async function ownHouseholdRefusal(db: DbClient, actor: AuthenticatedUser, keep:
     const attempt = { table: "Person" as const, attempted: { keepId: keep.id, mergeId: merge.id } };
     return await findSelfGrantRefusal(db, actor.id, { personId: keep.id, householdId: keep.householdId }, attempt)
         ?? await findSelfGrantRefusal(db, actor.id, { personId: merge.id, householdId: merge.householdId }, attempt);
+}
+
+/**
+ * A merge whose keeper ends with no email while a program it leads, or one it takes
+ * over from the merged-away side, hasn't finished, as a refusal, or null.
+ */
+async function leaderEmailMergeRefusal(db: DbClient, keep: KeepSubject, merge: MergeSubject, keeperUpdate: Record<string, unknown>): Promise<MergeRefusal | null> {
+    const finalEmail = "email" in keeperUpdate ? keeperUpdate.email : keep.email;
+    if (!isBlankEmail(finalEmail ?? null)) return null;
+    if (!isBlankEmail(keep.email) && await leadsUnfinishedProgram(db, [keep.id])) return { status: 409, error: LEADER_EMAIL_REQUIRED };
+    if (await leadsUnfinishedProgram(db, [merge.id])) return { status: 409, error: LEADER_NEEDS_EMAIL };
+    return null;
 }
 
 /** A merge that would change a disputed person's check facts, as a refusal, or null. */
@@ -338,6 +354,8 @@ async function recheckSubjects(tx: TxClient, plan: MergePlan, actor: Authenticat
     if (disputedBlock) throw new MergeRefusedError(disputedBlock);
     const trustBlock = await trustedLoginRefusal(tx, { emailChangeReason: plan.emailChangeReason, keeperUpdate: keeperUpdate.data, keepId: keep.id, mergeId: merge.id }, actor);
     if (trustBlock) throw new MergeRefusedError(trustBlock);
+    const leaderBlock = await leaderEmailMergeRefusal(tx, keep, merge, keeperUpdate.data);
+    if (leaderBlock) throw new MergeRefusedError(leaderBlock);
     return { keep, merge, keeperUpdate: keeperUpdate.data };
 }
 

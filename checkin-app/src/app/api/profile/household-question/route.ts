@@ -6,6 +6,7 @@ const REFUSALS: Record<JoinRefusal, { message: string; status: number }> = {
     not_pending: { message: "There is no question to answer.", status: 409 },
     youth: { message: "A youth cannot answer this. Please ask the Board.", status: 403 },
     denied: { message: "This household cannot be answered for. Please ask the Board.", status: 403 },
+    leads_program: { message: "This record leads a program, so its email can't be removed. Ask the Board to name another leader first.", status: 409 },
 };
 
 async function readJoin(req: Request): Promise<boolean> {

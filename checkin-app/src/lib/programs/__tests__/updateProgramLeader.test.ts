@@ -6,7 +6,7 @@
  */
 import type { Program } from '@/generated/prisma/client';
 import { updateProgram } from '@/lib/programs/update';
-import { programLeaderIneligibility } from '@/lib/programs/leaderEligibility';
+import { LEADER_NEEDS_EMAIL, programLeaderIneligibility } from '@/lib/programs/leaderEligibility';
 import { isActiveOrgMember } from '@/lib/orgMembership';
 import { checkValidFor, loadCheckReviews } from '@/lib/membership/checkStanding';
 
@@ -42,7 +42,7 @@ const tx = {
 };
 
 const threshold = new Date('2099-01-01');
-const fresh = { dateOfBirth: null, isDeclaredAdult: true, householdId: 3, lastBackgroundCheck: new Date('2099-06-01') };
+const fresh = { dateOfBirth: null, isDeclaredAdult: true, householdId: 3, lastBackgroundCheck: new Date('2099-06-01'), email: 'leader@example.com' };
 const mockPerson = jest.fn();
 const mockRefusalAudit = jest.fn().mockResolvedValue({});
 
@@ -109,6 +109,20 @@ describe('assigning a leader on edit', () => {
     it("measures a new leader's clearance at the start of the program's membership year", async () => {
         await updateProgram(program, { leadMentorId: 9 }, board);
         expect(checkValidFor).toHaveBeenCalledWith(2099);
+    });
+
+    it('refuses a new leader with no email on file, saving nothing', async () => {
+        for (const email of [null, '  ']) {
+            mockPerson.mockResolvedValue({ ...fresh, email });
+            const result = await updateProgram(program, { leadMentorId: 9 }, board);
+            expect(result).toMatchObject({ ok: false, refusal: 'invalid', message: LEADER_NEEDS_EMAIL });
+        }
+        expect(tx.program.update).not.toHaveBeenCalled();
+    });
+
+    it('keeps a leader already in place who has no email, when the form resends them', async () => {
+        mockPerson.mockResolvedValue({ ...fresh, email: null });
+        expect((await updateProgram(program, { leadMentorId: 7, name: 'Robotics 2' }, board)).ok).toBe(true);
     });
 
     it('saves a new leader who meets every requirement', async () => {
