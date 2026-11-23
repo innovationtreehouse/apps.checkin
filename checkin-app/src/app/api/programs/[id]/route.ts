@@ -3,10 +3,12 @@ import { VALID_CONTACT_WHERE } from "@/lib/emergencyContacts/valid";
 import { logger } from "@/lib/logger";
 import { withAuth, authenticateRequest } from "@/lib/auth";
 import prisma from "@/lib/prisma";
-import { handler, notFound, forbidden, badRequest } from "@/security/handler";
+import { handler, notFound, forbidden } from "@/security/handler";
 import { getRoute, type Role } from "@/security/core";
 import { isActiveOrgMember, isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { apiError } from "@/lib/api-response";
+import { isComponentHttpError, parseId } from "@checkin/component-kit";
+import { toApiResponseError } from "@/lib/components/route";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { adultPhoneOnly, emailWithheldParticipants, rosterHousehold, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
 import { householdPaymentViewer } from "@/lib/programs/paymentVisibility";
@@ -90,8 +92,12 @@ function viewHoldsRoster(role: Role): boolean {
 }
 
 const getProgram = handler<{ id: string }>(ENDPOINT, async ({ auth, params, role }) => {
-    const programId = parseInt(params.id, 10);
-    if (isNaN(programId)) throw badRequest('Invalid program ID');
+    let programId: number;
+    try {
+        programId = parseId(params.id, "program ID");
+    } catch (error) {
+        throw toApiResponseError(error);
+    }
 
     // Explicit select, not include: whole rows would ship every pii/personal
     // column a lead mentor's view happens to grant (googleId, dateOfBirth,
@@ -261,10 +267,7 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
     const { id } = await ctx.params;
 
     try {
-        const programId = parseInt(id, 10);
-        if (isNaN(programId)) {
-            return apiError("Invalid program ID", 400);
-        }
+        const programId = parseId(id, "program ID");
 
         const access = await authorizeProgramEdit(programId, auth.user);
         if (!access.ok) return apiError(access.message, REFUSAL_STATUS[access.refusal]);
@@ -277,6 +280,9 @@ export const PATCH = withAuth({}, async (req, auth, ctx: { params: Promise<{ id:
         if (result.notice) responseObj.notice = result.notice;
         return NextResponse.json(responseObj);
     } catch (error) {
+        if (isComponentHttpError(error)) {
+            return apiError(error.message, error.status);
+        }
         logger.error("Program update error:", error);
         return apiError("Failed to update program", 500);
     }

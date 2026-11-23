@@ -18,7 +18,7 @@ import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { isSaleEnded } from "@/lib/programs/saleState";
 import { PROGRAM_ENDED_PAYMENT } from "@/lib/programs/checkoutSignature";
 import { apiError } from "@/lib/api-response";
-import { httpError, isComponentHttpError, parseId, ServiceError } from "@checkin/component-kit";
+import { httpError, isComponentHttpError, parseId, readJson, ServiceError } from "@checkin/component-kit";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { householdMayEnrol, NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergencyContacts/service";
 import { personActor, recordAudit } from "@/lib/auditActor";
@@ -30,6 +30,16 @@ function parseParticipantId(raw: unknown): number {
     return parseId(String(raw), "participantId");
 }
 
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function readObjectBody(req: Request): Promise<Record<string, unknown>> {
+    const body = await readJson(req);
+    if (!isJsonObject(body)) throw httpError(400, "Invalid JSON body");
+    return body;
+}
+
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
     const { id } = await params;
@@ -37,7 +47,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
     try {
         const programId = parseId(id, "program ID");
 
-        const body = await req.json();
+        const body = await readObjectBody(req);
         const participantId = parseParticipantId(body.participantId);
 
         // A basis asks to enroll by hand: no store payment, recording what the place stands for.
@@ -348,7 +358,7 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
     try {
         const programId = parseId(id, "program ID");
 
-        const body = await req.json();
+        const body = await readObjectBody(req);
         const participantId = parseParticipantId(body.participantId);
         const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
 
@@ -431,7 +441,7 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         // as history. Unchosen, a PENDING place is removed and an ACTIVE one
         // withdrawn. Either exit is pinned to the status read here, so a payment
         // landing mid-request gets a 409 instead of an exit chosen for the old status.
-        const mode: 'remove' | 'withdraw' = body.mode ?? (current.status === 'ACTIVE' ? 'withdraw' : 'remove');
+        const mode = body.mode === 'remove' || body.mode === 'withdraw' ? body.mode : current.status === 'ACTIVE' ? 'withdraw' : 'remove';
         const only: Prisma.ProgramParticipantWhereInput = {
             AND: [{ status: current.status }, unpaidOnly ? unpaidWhere : {}],
         };

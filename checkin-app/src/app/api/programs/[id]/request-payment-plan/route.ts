@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
+import { isComponentHttpError, parseId } from "@checkin/component-kit";
 import { isKnownAdult } from "@/lib/programAge";
 import { changeProgramStockWith, StockNotRecordedError } from "@/lib/shopify/stock";
 import { ENROLLMENT_WRITES } from "@/lib/programs/enrollmentState";
@@ -18,10 +19,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
     const { id } = await params;
 
     try {
-        const programId = parseInt(id, 10);
-        if (isNaN(programId)) {
-            return apiError("Invalid program ID", 400);
-        }
+        const programId = parseId(id, "program ID");
 
         const body = await req.json();
         const { participantId, kind } = body;
@@ -213,6 +211,9 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         if (warning) responseObj.warning = warning;
         return NextResponse.json(responseObj);
     } catch (error) {
+        if (isComponentHttpError(error)) {
+            return apiError(error.message, error.status);
+        }
         logger.error("Payment plan request error:", error);
         return apiError("Failed to request payment plan", 500);
     }
