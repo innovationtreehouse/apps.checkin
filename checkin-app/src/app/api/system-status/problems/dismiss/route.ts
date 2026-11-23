@@ -28,7 +28,8 @@ export const POST = handler(ENDPOINT, async ({ req, auth }) => {
         await dismissProblem(item, { userId: auth.user.id });
     } catch (err) {
         if (isServiceError(err) && err.status === 404) throw notFound("That item is not on the Problems list");
-        throw err;
+        // The library's message can carry personal data, so only the item's names reach the log.
+        throw new Error(`${item.library} dismiss of ${item.step} threw`);
     }
     await prisma.auditLog.create({
         data: {

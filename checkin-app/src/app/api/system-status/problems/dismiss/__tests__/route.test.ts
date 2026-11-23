@@ -116,6 +116,24 @@ describe('POST /api/system-status/problems/dismiss', () => {
         expect(auditCreate).not.toHaveBeenCalled();
     });
 
+    it.each([
+        ['a library that cannot be read', new ServiceError(503, 'Database for Pat Example unavailable')],
+        ['anything else', new Error('connection to Pat Example lost')],
+    ])('answers an opaque 500, logged with no error text and no audit row, for %s', async (_what, err) => {
+        signIn({ isBoardMember: true });
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+        dismiss.mockRejectedValue(err);
+
+        const res = await press();
+
+        expect(res.status).toBe(500);
+        expect(await res.text()).not.toMatch(/Pat/);
+        expect(logged).toHaveBeenCalled();
+        expect(JSON.stringify(logged.mock.calls, (_k, v: unknown) => (v instanceof Error ? v.message : v))).not.toMatch(/Pat/);
+        expect(auditCreate).not.toHaveBeenCalled();
+        logged.mockRestore();
+    });
+
     it('400s a malformed body without dismissing', async () => {
         signIn({ isSysadmin: true });
 
