@@ -751,12 +751,6 @@ model BoardSettings {
   volunteerMembershipFeeCents Int      @default(0) @map("volunteerDuesCents")
   /// @sensitivity:public
   orgMembershipYearBoundary  DateTime? @db.Date
-  /// Unused column awaiting its drop. Hidden from the client so no code reads or
-  /// writes it before the column goes. @sensitivity:internal
-  orgMembershipVariantId     String? @ignore
-  /// Unused column awaiting its drop. Hidden from the client so no code reads or
-  /// writes it before the column goes. @sensitivity:internal
-  orgMembershipProductUrl    String? @ignore
   /// Discount code (created in Shopify by the board) appended to the checkout
   /// link for Volunteer Family households so Shopify applies their discount.
   /// @sensitivity:internal
