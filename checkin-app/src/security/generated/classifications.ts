@@ -615,6 +615,15 @@ export const classifications = {
         requestedById: 'internal',
         requestedAt: 'internal',
     },
+    ProblemDismissal: {
+        id: 'internal',
+        library: 'internal',
+        step: 'internal',
+        itemId: 'internal',
+        failedAt: 'internal',
+        dismissedById: 'internal',
+        dismissedAt: 'internal',
+    },
 } as const;
 
 export const relations = {
@@ -833,6 +842,8 @@ export const relations = {
     QuickBooksPostingSlot: {
     },
     QuickBooksPostingQueue: {
+    },
+    ProblemDismissal: {
     },
 } as const;
 

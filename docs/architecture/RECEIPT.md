@@ -335,8 +335,17 @@ for a receipt not stuck in that step and 409 when the receipt is still stuck aft
 capture (`WAITING_NOTICE_MS`), so the next daily run failed it too, as step "mail message",
 timed from capture and linking to the mail page. Its Retry replays the email, is the Board's
 only (see [Mail](#mail)), and answers 409 when the email is still not processed afterwards.
-A captured email whose stored copy expires before it is processed drops off the list at
-expiry. The decided design keeps it listed instead; see "Not built" under [File storage](#file-storage).
+A captured email whose stored copy expires before it is processed stays listed, marked
+`expired` and shown as "expired, can't be replayed", with Dismiss only; a Retry sent anyway
+answers 409 with the expiry message. It is never dropped silently: it leaves the list when it
+is processed or when a person dismisses it.
+
+Every stuck item on the Problems list, in any library, can be dismissed by whoever may retry it
+(`mayRetry`: the Board any step, a sysadmin any step outside the Board-only ones).
+`POST /api/system-status/problems/dismiss` records the dismissal in the app's
+`ProblemDismissal` table against the item's `failedAt`, and the list leaves out an item
+dismissed at its current `failedAt`. An item that succeeds and later fails again carries a new
+`failedAt` and is listed again.
 
 A failed reading leaves nothing stuck: the receipt waits in `ocr_failed` for its submitter. So
 `problemNotices()` counts the `ocr_failed:<kind>` audit rows of the last day, and at
@@ -440,10 +449,6 @@ stays after the copy expires, so a message is never captured twice.
 
 **Not built.**
 
-- Keeping expired captured mail on the stuck list, the decided design: a captured
-  email whose stored copy expires before it is processed stays on the Problems list
-  as a stuck "mail message", marked "expired, can't be replayed", with Dismiss only,
-  until a person dismisses it, and is never dropped silently.
 - Dropping the `file_blob` column, after re-pointing both file routes' registry
   entries from `fileBlob` to `fileKey`.
 

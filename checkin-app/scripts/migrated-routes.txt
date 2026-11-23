@@ -25,6 +25,7 @@ GET /api/system-status/links
 GET /api/system-status/unsynced-scans
 POST /api/system-status/unsynced-scans/[id]
 GET /api/system-status/kiosk-heartbeat
+POST /api/system-status/problems/dismiss
 # Global catalog — library route factories via handler().
 GET /api/catalog/categories
 GET /api/catalog/subcategories

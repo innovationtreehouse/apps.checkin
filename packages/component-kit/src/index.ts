@@ -246,6 +246,8 @@ export interface StuckItem {
   step: string;
   href: string | null;
   failedAt: Date;
+  /** The item can no longer be retried, so the Problems list offers Dismiss only. */
+  expired?: true;
 }
 
 /**

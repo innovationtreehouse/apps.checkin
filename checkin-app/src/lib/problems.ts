@@ -1,4 +1,5 @@
 import { ServiceError, type StuckItem } from "@checkin/component-kit";
+import { personActor, recordAudit } from "@/lib/auditActor";
 import { config } from "@/lib/config";
 import { getCronJobStatuses, type CronJobStatus } from "@/lib/cronRuns";
 import { sendTemplated } from "@/lib/email-templates/send";
@@ -124,9 +125,50 @@ export async function retryProblem({ library, step, id }: { library: string; ste
     await source.retry({ id, step }, by);
 }
 
+/** The person who pressed Dismiss. */
+type ProblemDismisser = { userId: number };
+
 /**
- * Every stuck item across the receipt flow and membership, oldest first, and the count lines (`notices`): the
- * libraries' own and failed email sends. A source whose read fails is named in `unread`.
+ * Takes one listed item off the Problems list until it fails again: the dismissal is kept against the item's
+ * current `failedAt`, with its PROBLEM_DISMISS audit row in the same transaction. An item not listed now,
+ * already dismissed included, answers 404.
+ */
+export async function dismissProblem({ library, step, id }: { library: string; step: string; id: string }, by: ProblemDismisser): Promise<void> {
+    const source = SOURCES.find((s) => s.library === library && isWired(s));
+    if (!source) throw new ServiceError(404, "No such library on the Problems list");
+    const [item] = await withoutDismissed((await source.read()).filter((i) => i.step === step && i.id === id).map((i) => ({ ...i, library })));
+    if (!item) throw new ServiceError(404, "No such item on the Problems list");
+    await prisma.$transaction(async (tx) => {
+        const { count } = await tx.problemDismissal.createMany({
+            data: [{ library, step, itemId: id, failedAt: item.failedAt, dismissedById: by.userId }],
+            skipDuplicates: true,
+        });
+        // A concurrent press dismissed it first, and wrote the audit row.
+        if (count === 0) throw new ServiceError(404, "No such item on the Problems list");
+        await recordAudit(tx, personActor(by.userId), {
+            action: "CREATE",
+            tableName: "PROBLEM_DISMISS",
+            affectedEntityId: 0,
+            newData: { library, step, id },
+        });
+    });
+}
+
+/** The items no person has dismissed at their current `failedAt`. */
+async function withoutDismissed(items: Problem[]): Promise<Problem[]> {
+    if (items.length === 0) return items;
+    const dismissed = await prisma.problemDismissal.findMany({
+        where: { OR: items.map((i) => ({ library: i.library, step: i.step, itemId: i.id, failedAt: i.failedAt })) },
+        select: { library: true, step: true, itemId: true, failedAt: true },
+    });
+    const key = (library: string, step: string, id: string, failedAt: Date) => JSON.stringify([library, step, id, failedAt.getTime()]);
+    const hidden = new Set(dismissed.map((d) => key(d.library, d.step, d.itemId, d.failedAt)));
+    return items.filter((i) => !hidden.has(key(i.library, i.step, i.id, i.failedAt)));
+}
+
+/**
+ * Every stuck item across the receipt flow and membership that no person has dismissed, oldest first, and the
+ * count lines (`notices`): the libraries' own and failed email sends. A source whose read fails is named in `unread`.
  */
 export async function getProblems(now = new Date()): Promise<{ items: Problem[]; unread: string[]; notices: Notice[] }> {
     const sources = SOURCES.filter(isWired);
@@ -150,8 +192,9 @@ export async function getProblems(now = new Date()): Promise<{ items: Problem[];
             unread.push(library);
         }
     });
-    items.sort((a, b) => a.failedAt.getTime() - b.failedAt.getTime());
-    return { items, unread, notices };
+    const listed = await withoutDismissed(items);
+    listed.sort((a, b) => a.failedAt.getTime() - b.failedAt.getTime());
+    return { items: listed, unread, notices };
 }
 
 const address = (value: string | null | undefined): string | null => value?.trim() || null;
