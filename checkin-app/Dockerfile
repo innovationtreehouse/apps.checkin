@@ -75,12 +75,8 @@ ENV GOOGLE_CLIENT_ID=build-placeholder \
     GOOGLE_CLIENT_SECRET=build-placeholder \
     NEXTAUTH_SECRET=build-placeholder
 RUN npm -w checkin-app run build
-# The receipt file backfill and the dev data check run as one-off tasks in this image, which has no tsx
-# and no traced path to a script, so each ships as one self-contained file.
-RUN npx --no-install esbuild checkin-app/scripts/receipt-file-backfill.ts --bundle \
-      --platform=node --format=esm --tsconfig=checkin-app/tsconfig.json --log-level=warning \
-      --banner:js="import{createRequire}from'node:module';const require=createRequire(import.meta.url);" \
-      --outfile=/one-off/receipt-file-backfill.mjs
+# The dev data check runs as a one-off task in this image, which has no tsx and no traced path to a
+# script, so it ships as one self-contained file.
 RUN npx --no-install esbuild checkin-app/scripts/dev-data-check.ts --bundle \
       --platform=node --format=esm --tsconfig=checkin-app/tsconfig.json --log-level=warning \
       --banner:js="import{createRequire}from'node:module';const require=createRequire(import.meta.url);" \
@@ -148,7 +144,6 @@ COPY --from=builder /libs/ ./
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/checkin-app/libraries.json ./checkin-app/libraries.json
 COPY --from=builder /app/scripts/each-library.sh ./scripts/each-library.sh
-COPY --from=builder /one-off/receipt-file-backfill.mjs ./checkin-app/receipt-file-backfill.mjs
 COPY --from=builder /one-off/dev-data-check.mjs ./checkin-app/dev-data-check.mjs
 
 EXPOSE 4000

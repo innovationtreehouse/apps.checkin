@@ -14,7 +14,6 @@ export { importReceipts, type ImportRowResult } from "./services/importService";
 export { orgSettingsService } from "./services/orgSettingsService";
 export { createGmailReader } from "./lib/gmail";
 export { createMemoryFileStore } from "./lib/fileStorage";
-export { backfillFiles, verifyFiles, type FileBackfillReport, type FileVerifyReport } from "./services/fileBackfill";
 export { readMailbox, takeInMailbox, type MailIntakeResult } from "./services/mailIntake";
 export { sweepOutcomeNotices } from "./services/outcomeNotices";
 export { sweepInterruptedOcr, sweepStuckUploaded } from "./services/catchUp";
