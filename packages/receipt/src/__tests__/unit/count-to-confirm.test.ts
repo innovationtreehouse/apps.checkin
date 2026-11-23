@@ -86,7 +86,7 @@ function matches(row: Row, where: Prisma.ReceiptWhereInput): boolean {
 
 vi.mock("../../repositories/receipt", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../repositories/receipt")>()),
-  receiptRepo: { list: vi.fn(), count: vi.fn(), listLineItems: vi.fn() },
+  receiptRepo: { list: vi.fn(), count: vi.fn(async (where: Prisma.ReceiptWhereInput) => rows.filter((r) => matches(r, where)).length), listLineItems: vi.fn() },
 }));
 
 /** A reimbursement waiting in submitter review. */
@@ -136,7 +136,6 @@ beforeEach(() => {
       reimburseePersonId: r.reimburseePersonId == null ? null : (live(r.reimburseePersonId) ?? r.reimburseePersonId),
     })) as never,
   );
-  vi.mocked(receiptRepo.count).mockImplementation(async (where) => rows.filter((r) => matches(r, where)).length);
 });
 
 describe("countToConfirm counts the reimbursements waiting on the viewer", () => {
