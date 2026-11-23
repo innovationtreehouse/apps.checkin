@@ -1,5 +1,5 @@
 /**
- * Non-Prisma response models the Shopify-mirror routes (/api/finance-ops/payments,
+ * Non-Prisma response models the Shopify-mirror routes (/api/finance-ops/payments/*,
  * /api/finance-ops/s-read/*) ship through handler() — the
  * catalogSyntheticClassifications.ts pattern.
  *
@@ -40,6 +40,13 @@ export const classifications = {
   // `{ success }` from POST /api/finance-ops/s-read/sync.
   SReadSyncTrigger: {
     success: "internal",
+  },
+  // The counts from POST /api/finance-ops/payments/reconcile (runReconcile's result).
+  PaymentReconcileRun: {
+    configured: "internal",
+    ordersScanned: "internal",
+    reversalsRaised: "internal",
+    failed: "internal",
   },
   // One step of the s-read wiring diagnosis.
   SReadDiagnoseStep: {
