@@ -277,7 +277,7 @@ export default function MembershipSettingsPage() {
                   <Stack key={slot.year} gap="xs">
                     <Group gap="xs">
                       <Title order={5}>{label}</Title>
-                      {i === 1 && slot.variantId.trim() === "" && <Badge color="red">needs variant</Badge>}
+                      {i === 1 && slot.variantId.trim() === "" && <Badge color={slot.year === liveYear ? "red" : "yellow"}>needs variant</Badge>}
                     </Group>
                     <VariantPicker
                       name={label}
