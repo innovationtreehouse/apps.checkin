@@ -303,8 +303,8 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
     await applyVolunteerFamilyStatus(tx, orgMembershipId, householdId, false);
     await record({ status }, { status: to, bgCleared: true, reason: "household qualifies on its people's checks", ...(refunded ? { refundedOrder: true } : {}) });
     const clearance: ClearanceOutcome = refunded
-        ? { status: to, activated: false, householdId: null, isInitial: false, refunded: { processId, shopifyOrderId: process.shopifyOrderId! } }
-        : { status: to, activated: paid, householdId, isInitial: process.kind === "INITIAL" };
+        ? { status: to, activated: false, processId, householdId: null, isInitial: false, refunded: { shopifyOrderId: process.shopifyOrderId! } }
+        : { status: to, activated: paid, processId, householdId, isInitial: process.kind === "INITIAL" };
     return { steps: [...steps, "cleared"], clearance };
 }
 

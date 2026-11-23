@@ -648,10 +648,37 @@ model OrgMembershipProcess {
   noteAckAt             DateTime?               @ignore
 
   attestations BackgroundCheckAttestation[]
+  clearanceStepFailures ClearanceStepFailure[]
 
   @@index([orgMembershipId])
   @@index([requestedForHouseholdId])
   @@index([status])
+}
+
+/// A step owed after a clearance committed that failed: listed on the Problems list,
+/// with a Retry, until the step succeeds and the row is deleted.
+model ClearanceStepFailure {
+  /// @sensitivity:public
+  id        Int                  @id @default(autoincrement())
+  /// @sensitivity:internal
+  processId Int
+  process   OrgMembershipProcess @relation(fields: [processId], references: [id], onDelete: Cascade)
+  /// @sensitivity:internal
+  step      ClearanceStep
+  /// When the step first failed; also the time the step is re-run as of.
+  /// @sensitivity:internal
+  failedAt  DateTime             @default(now())
+  /// The latest failure's error. Never leaves the server.
+  /// @sensitivity:internal
+  error     String
+
+  @@unique([processId, step])
+}
+
+enum ClearanceStep {
+  REFUNDED_ORDER_RAISE
+  PERSON_BG_TRIGGER
+  PERSON_AGREEMENT_TRIGGER
 }
 
 /// The Shopify variant that sells each membership year. One row per year.
