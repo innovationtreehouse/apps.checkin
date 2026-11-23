@@ -300,6 +300,18 @@ describe("MembershipSettingsPage", () => {
       expect(screen.getAllByText("needs variant")).toHaveLength(1);
     });
 
+    const badgeStyle = () => screen.getByText("needs variant").closest(".mantine-Badge-root")?.getAttribute("style");
+
+    it("off season, badges an empty coming year yellow", async () => {
+      await open([{ membershipYear: 2026, shopifyVariantId: "111", productUrl: null }]);
+      expect(badgeStyle()).toContain("--mantine-color-yellow-filled");
+    });
+
+    it("inside the renewal window, badges an empty coming year red", async () => {
+      await open([{ membershipYear: 2026, shopifyVariantId: "111", productUrl: null }], {}, "2027-07-15T12:00:00.000Z");
+      expect(badgeStyle()).toContain("--mantine-color-red-filled");
+    });
+
     it("shows no badge for an empty year in progress once the coming year has a row", async () => {
       await open([{ membershipYear: 2027, shopifyVariantId: "222", productUrl: null }]);
       expect(screen.getByLabelText("2026-2027 variant ID")).toHaveValue("");
