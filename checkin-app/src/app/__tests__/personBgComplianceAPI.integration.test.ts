@@ -4,7 +4,7 @@
 /**
  * Integration tests for the person-scoped PERSON_BG_NEEDED / DOB_MISSING buckets
  * of GET /api/membership-audit/compliance (warn-only). Asserts a ≥18
- * non-fresh program participant / volunteer / lead and position holder surfaces,
+ * non-fresh program participant / volunteer / lead / run leader and position holder surfaces,
  * a household lead holding no position does not, under-18 and fresh people are
  * omitted, a program volunteer with no membership still appears in the person-level
  * list, and a missing-DOB person lands in the data-hygiene bucket.
@@ -60,6 +60,7 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
     let participantId: number;
     let volunteerId: number;
     let leadId: number;
+    let runLeaderId: number;
     let minorId: number;
     let freshId: number;
     let missingDobId: number;
@@ -75,6 +76,7 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
         const progIds = progs.map(p => p.id);
         await prisma.programParticipant.deleteMany({ where: { programId: { in: progIds } } });
         await prisma.programVolunteer.deleteMany({ where: { programId: { in: progIds } } });
+        await prisma.programInstance.deleteMany({ where: { programId: { in: progIds } } });
         // Drop the leadMentor FK before deleting the lead person.
         await prisma.program.deleteMany({ where: { id: { in: progIds } } });
         await prisma.budgetOwnerTreasurer.deleteMany({ where: { budgetOwner: { name: { contains: TAG } } } });
@@ -122,6 +124,9 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
         await prisma.programParticipant.create({ data: { programId, personId: missingDobId } });
         await prisma.programVolunteer.create({ data: { programId, personId: volunteerId } });
         await prisma.programVolunteer.create({ data: { programId, personId: minorId } });
+        // Adult, no check → NEEDED. Leads a run of the program and nothing else.
+        runLeaderId = (await makePerson('runleader', { dateOfBirth: new Date('1983-01-01') })).id;
+        await prisma.programInstance.create({ data: { programId, name: `${TAG} run`, leadMentorId: runLeaderId } });
 
         // Leads of ACTIVE member households, no check, attached to no program.
         const lead = async (slug: string) => {
@@ -177,6 +182,9 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
         }
         const vol = peopleNeedingBgCheck.find((p: { personId: number }) => p.personId === volunteerId);
         expect(vol.programId).toBe(programId);
+        const runLeader = peopleNeedingBgCheck.find((p: { personId: number }) => p.personId === runLeaderId);
+        expect(runLeader.programId).toBe(programId);
+        expect(runLeader.programName).toBe(`${TAG} program`);
 
         // Missing-DOB person is data-hygiene, not bg-needed.
         const dobIds = new Set(peopleMissingDob.map((p: { personId: number }) => p.personId));
