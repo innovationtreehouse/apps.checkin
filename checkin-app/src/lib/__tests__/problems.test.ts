@@ -6,7 +6,7 @@ import { getCronJobStatuses } from "@/lib/cronRuns";
 import type { TemplateCtx } from "@/lib/email-templates/registry";
 import { sendTemplated } from "@/lib/email-templates/send";
 import prisma from "@/lib/prisma";
-import { dismissProblem, getProblems, LIBRARY_DB_VARS, retryProblem, sendProblemsDigest, SHOPIFY_READ_STALE_AFTER_MS } from "../problems";
+import { dismissProblem, getProblems, LIBRARY_DB_VARS, retryProblem, sendProblemsDigest, SHOPIFY_READ_STALE_AFTER_MS, UNPAID_PAYOUT_LINES_MAX } from "../problems";
 
 // Model objects made on first use and open to assignment, $transaction included, which the shared mock does not take.
 jest.mock("@/lib/prisma", () => ({
@@ -28,7 +28,7 @@ jest.mock("@checkin/workflow-mapping", () => ({ stuckItems: jest.fn(), problemNo
 jest.mock("@checkin/local-inventory", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
 jest.mock("@/lib/finance/postingRuns", () => ({ currentPostingWarnings: jest.fn() }));
 jest.mock("@/lib/membership/positionCheck", () => ({ checkEmailStuckItems: jest.fn(), retryCheckEmail: jest.fn() }));
-jest.mock("@/lib/shopifyRead/client", () => ({ scheduledReadState: jest.fn() }));
+jest.mock("@/lib/shopifyRead/client", () => ({ scheduledReadState: jest.fn(), unpaidPayoutsPastRereadWindow: jest.fn(), PAYOUT_REREAD_WINDOW_DAYS: 30 }));
 
 const receipt = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/receipt");
 const expense = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/expense");
@@ -37,7 +37,7 @@ const mapping = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.M
 const inventory = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/local-inventory");
 const { currentPostingWarnings } = jest.requireMock<{ currentPostingWarnings: jest.Mock }>("@/lib/finance/postingRuns");
 const positionCheck = jest.requireMock<{ checkEmailStuckItems: jest.Mock; retryCheckEmail: jest.Mock }>("@/lib/membership/positionCheck");
-const { scheduledReadState } = jest.requireMock<{ scheduledReadState: jest.Mock }>("@/lib/shopifyRead/client");
+const { scheduledReadState, unpaidPayoutsPastRereadWindow } = jest.requireMock<{ scheduledReadState: jest.Mock; unpaidPayoutsPastRereadWindow: jest.Mock }>("@/lib/shopifyRead/client");
 
 const NOW = new Date("2026-11-08T08:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3600_000);
@@ -79,6 +79,7 @@ beforeEach(() => {
     currentPostingWarnings.mockResolvedValue([]);
     positionCheck.checkEmailStuckItems.mockResolvedValue([]);
     scheduledReadState.mockResolvedValue(null);
+    unpaidPayoutsPastRereadWindow.mockResolvedValue([]);
 });
 
 afterAll(() => {
@@ -359,6 +360,54 @@ describe("the Shopify reader's line", () => {
         await sendProblemsDigest(NOW);
 
         expect(digestCtx().items).toContain("Shopify read failed: failed");
+    });
+});
+
+describe("the unpaid Shopify payouts line", () => {
+    const PAYOUTS = "/income/payouts";
+    const payoutLines = async () => (await getProblems(NOW)).notices.filter((n) => n.href === PAYOUTS);
+    const payout = (gid: string, issuedAt: string, status: string) => ({ payoutGid: gid, issuedAt: new Date(issuedAt), status, netCents: 100, currency: "USD", source: null });
+
+    it("asks for the payouts as of the run's own time", async () => {
+        await getProblems(NOW);
+        expect(unpaidPayoutsPastRereadWindow).toHaveBeenCalledWith(NOW);
+    });
+
+    it("has no line when every payout is paid or still within the re-read window", async () => {
+        expect(await payoutLines()).toEqual([]);
+    });
+
+    it("lists each unpaid payout by its issue date and status, with no error text", async () => {
+        unpaidPayoutsPastRereadWindow.mockResolvedValue([payout("p1", "2026-10-01T18:00:00Z", "IN_TRANSIT"), payout("p2", "2026-10-03T18:00:00Z", "SCHEDULED")]);
+        expect(await payoutLines()).toEqual([
+            { text: "Shopify payout of Oct 1, 2026 still in transit after 30 days", href: PAYOUTS },
+            { text: "Shopify payout of Oct 3, 2026 still scheduled after 30 days", href: PAYOUTS },
+        ]);
+    });
+
+    it("says so when a payout has no status", async () => {
+        unpaidPayoutsPastRereadWindow.mockResolvedValue([payout("p1", "2026-10-01T18:00:00Z", "")]);
+        expect(await payoutLines()).toEqual([{ text: "Shopify payout of Oct 1, 2026 still with no status after 30 days", href: PAYOUTS }]);
+    });
+
+    it(`gives one count line naming the oldest when more than ${UNPAID_PAYOUT_LINES_MAX} are unpaid`, async () => {
+        const many = Array.from({ length: UNPAID_PAYOUT_LINES_MAX + 1 }, (_, i) => payout(`p${i}`, `2026-09-${String(i + 10)}T18:00:00Z`, "IN_TRANSIT"));
+        unpaidPayoutsPastRereadWindow.mockResolvedValue(many);
+        expect(await payoutLines()).toEqual([{ text: `${many.length} Shopify payouts still not paid after 30 days, oldest Sep 10, 2026`, href: PAYOUTS }]);
+    });
+
+    it("names the payouts as unread when they cannot be read", async () => {
+        jest.spyOn(console, "error").mockImplementation(() => undefined);
+        unpaidPayoutsPastRereadWindow.mockRejectedValue(new Error("db down"));
+        expect(await getProblems(NOW)).toMatchObject({ unread: ["Shopify payouts"], notices: [] });
+    });
+
+    it("reaches the daily email", async () => {
+        unpaidPayoutsPastRereadWindow.mockResolvedValue([payout("p1", "2026-10-01T18:00:00Z", "IN_TRANSIT")]);
+
+        await sendProblemsDigest(NOW);
+
+        expect(digestCtx().items).toContain("Shopify payout of Oct 1, 2026 still in transit after 30 days");
     });
 });
 

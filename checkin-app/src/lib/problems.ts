@@ -8,7 +8,7 @@ import prisma from "@/lib/prisma";
 import { unreadLine } from "@/lib/problemsLines";
 import { currentPostingWarnings } from "@/lib/finance/postingRuns";
 import { checkEmailStuckItems, retryCheckEmail } from "@/lib/membership/positionCheck";
-import { APP_TIMEZONE, formatDateTime } from "@/lib/time";
+import { APP_TIMEZONE, formatDate, formatDateTime } from "@/lib/time";
 
 /** The name the Problems list gives the receipt library's items. */
 export const RECEIPT_LIBRARY = "receipt";
@@ -135,10 +135,30 @@ async function shopifyReaderNotices(now: Date): Promise<Notice[]> {
     return age > SHOPIFY_READ_STALE_AFTER_MS ? line(`Shopify store copy is ${Math.floor(age / HOUR_MS)} hours old`) : [];
 }
 
+/** Above this many unpaid payouts, the Problems list gives one count line instead of one line each. */
+export const UNPAID_PAYOUT_LINES_MAX = 5;
+
+/** A line for each payout the Shopify reader no longer re-reads that is still not paid. */
+async function unpaidPayoutNotices(now: Date): Promise<Notice[]> {
+    const { unpaidPayoutsPastRereadWindow, PAYOUT_REREAD_WINDOW_DAYS } = await import("@/lib/shopifyRead/client");
+    const payouts = await unpaidPayoutsPastRereadWindow(now);
+    const day = (at: Date) => formatDate(at, { timeZone: APP_TIMEZONE, dateStyle: "medium" });
+    const after = `after ${PAYOUT_REREAD_WINDOW_DAYS} days`;
+    const line = (text: string): Notice => ({ text, href: "/income/payouts" });
+    if (payouts.length > UNPAID_PAYOUT_LINES_MAX) {
+        return [line(`${payouts.length} Shopify payouts still not paid ${after}, oldest ${day(payouts[0].issuedAt)}`)];
+    }
+    return payouts.map((p) => {
+        const status = p.status ? `still ${p.status.toLowerCase().replaceAll("_", " ")}` : "still with no status";
+        return line(`Shopify payout of ${day(p.issuedAt)} ${status} ${after}`);
+    });
+}
+
 /** The count lines read outside the libraries, each named by `library` in `unread` when its read fails. */
 const COUNT_SOURCES: { library: string; notices: (now: Date) => Promise<Notice[]> }[] = [
     { library: "email", notices: emailFailureNotices },
     { library: "Shopify reader", notices: shopifyReaderNotices },
+    { library: "Shopify payouts", notices: unpaidPayoutNotices },
 ];
 
 /**
@@ -197,7 +217,7 @@ export async function withoutDismissed<T extends DismissalKey>(items: T[]): Prom
 
 /**
  * Every stuck item across the receipt flow and membership that no person has dismissed, oldest first, and the
- * count lines (`notices`): the libraries' own, failed email sends, and the Shopify reader's. A source whose read fails is named in `unread`.
+ * count lines (`notices`): the libraries' own, failed email sends, the Shopify reader's, and unpaid Shopify payouts. A source whose read fails is named in `unread`.
  */
 export async function getProblems(now = new Date()): Promise<{ items: Problem[]; unread: string[]; notices: Notice[] }> {
     const sources = SOURCES.filter(isWired);
