@@ -412,6 +412,77 @@ describe('income reads', () => {
         expect(sql).toContain(`o.source IS DISTINCT FROM 'TEST_LOADED'`);
     });
 
+    describe('unpaidPayoutsPastRereadWindow', () => {
+        const NOW = new Date('2026-11-23T12:00:00Z');
+        const daysAgo = (d: number) => new Date(NOW.getTime() - d * 24 * 3600_000);
+        const row = (gid: string, days: number, status: string | null, source: string | null = 'INCREMENTAL') =>
+            ({ payoutGid: gid, issuedAt: daysAgo(days), status, netCents: 100, currency: 'USD', source });
+
+        type Value = Date | string | number | null;
+        type Where = Record<string, unknown>;
+        // SQL's three-valued logic over the operators the read uses: a comparison with NULL is unknown (null).
+        const field = (value: Value, cond: unknown): boolean | null => {
+            if (cond === null) return value === null;
+            if (typeof cond !== 'object') return value === null ? null : value === cond;
+            const c = cond as { not?: unknown; lt?: Date; equals?: string; mode?: string };
+            if (c.not === null && value === null) return false;
+            if (value === null) return c.not === null ? true : null;
+            if (c.lt && !(value instanceof Date && value < c.lt)) return false;
+            if (c.equals !== undefined) return c.mode === 'insensitive' ? String(value).toLowerCase() === c.equals.toLowerCase() : value === c.equals;
+            if (typeof c.not === 'string') return value !== c.not;
+            return true;
+        };
+        const and = (vs: (boolean | null)[]) => (vs.includes(false) ? false : vs.includes(null) ? null : true);
+        const or = (vs: (boolean | null)[]) => (vs.includes(true) ? true : vs.includes(null) ? null : false);
+        const matches = (r: Record<string, Value>, where: Where): boolean | null =>
+            and(Object.entries(where).map(([k, v]) => {
+                if (k === 'AND') return and((v as Where[]).map((w) => matches(r, w)));
+                if (k === 'OR') return or((v as Where[]).map((w) => matches(r, w)));
+                if (k === 'NOT') {
+                    const inner = or((v as Where[]).map((w) => matches(r, w)));
+                    return inner === null ? null : !inner;
+                }
+                return field(r[k], v);
+            }));
+        const listed = async (rows: ReturnType<typeof row>[]) => {
+            db.shopPayout.findMany.mockImplementation(async ({ where }: { where: Where }) => rows.filter((r) => matches(r, where) === true));
+            return (await freshClient().unpaidPayoutsPastRereadWindow(NOW)).map((p) => p.payoutGid);
+        };
+
+        it('lists a payout not paid 31 days after issue, and not one at 29 days', async () => {
+            expect(await listed([row('old', 31, 'IN_TRANSIT'), row('recent', 29, 'IN_TRANSIT')])).toEqual(['old']);
+        });
+
+        it('does not list a paid payout', async () => {
+            expect(await listed([row('paid', 31, 'PAID'), row('lower', 31, 'paid')])).toEqual([]);
+        });
+
+        it('does not list a failed or cancelled payout, whose status is final at the store', async () => {
+            expect(await listed([row('failed', 31, 'FAILED'), row('cancelled', 31, 'CANCELED')])).toEqual([]);
+        });
+
+        it('lists a scheduled payout and one with no status', async () => {
+            expect(await listed([row('scheduled', 40, 'SCHEDULED'), row('none', 35, null)])).toEqual(['scheduled', 'none']);
+        });
+
+        it('ignores test-loaded rows and keeps hand-loaded and unstamped ones, as income does', async () => {
+            expect(await listed([row('test', 31, 'IN_TRANSIT', 'TEST_LOADED'), row('hand', 31, 'IN_TRANSIT', 'HAND_LOADED'), row('unstamped', 31, 'IN_TRANSIT', null)])).toEqual(['hand', 'unstamped']);
+        });
+
+        it('cuts off at exactly the reader\'s re-read window, oldest first', async () => {
+            await listed([]);
+            const args = db.shopPayout.findMany.mock.calls[0][0];
+            expect(args.where.issuedAt).toEqual({ not: null, lt: daysAgo(30) });
+            expect(args.orderBy).toEqual([{ issuedAt: 'asc' }, { payoutGid: 'asc' }]);
+        });
+
+        it('reads nothing when the mirror is unwired', async () => {
+            delete process.env.SHOPIFY_READ_DATABASE_URL;
+            expect(await freshClient().unpaidPayoutsPastRereadWindow(NOW)).toEqual([]);
+            expect(poolCtor).not.toHaveBeenCalled();
+        });
+    });
+
     it('no income read opens anything when the mirror is unwired', async () => {
         delete process.env.SHOPIFY_READ_DATABASE_URL;
         const client = freshClient();

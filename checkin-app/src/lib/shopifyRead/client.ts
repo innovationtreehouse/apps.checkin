@@ -555,6 +555,34 @@ export async function incomePaidPayoutsSince(from: Date): Promise<IncomeMirrorPa
     return rows.flatMap(toIncomePayout);
 }
 
+/** How many days after issue the Shopify reader stops re-reading a payout: s-read's REREAD_WINDOW_DAYS. */
+export const PAYOUT_REREAD_WINDOW_DAYS = 30;
+
+/** Statuses a payout ends in at the store; any other status may still change to paid. */
+const FINAL_PAYOUT_STATUSES = ["PAID", "FAILED", "CANCELED"];
+
+/**
+ * Payouts issued before `now` less the reader's re-read window that are still in a status that
+ * may change to paid, oldest first. The reader no longer re-reads them, so their status may be stale.
+ */
+export async function unpaidPayoutsPastRereadWindow(now: Date): Promise<IncomeMirrorPayoutRow[]> {
+    const db = await getClient();
+    if (!db) return [];
+    const before = new Date(now.getTime() - PAYOUT_REREAD_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const rows = await db.shopPayout.findMany({
+        where: {
+            issuedAt: { not: null, lt: before },
+            AND: [
+                notTestLoaded(),
+                { OR: [{ status: null }, { NOT: FINAL_PAYOUT_STATUSES.map((s) => ({ status: { equals: s, mode: "insensitive" as const } })) }] },
+            ],
+        },
+        orderBy: [{ issuedAt: "asc" }, { payoutGid: "asc" }],
+        select: PAYOUT_SELECT,
+    });
+    return rows.flatMap(toIncomePayout);
+}
+
 /** One payout in any status, or null when absent, undated or test-loaded. */
 export async function incomePayout(gid: string): Promise<IncomeMirrorPayoutRow | null> {
     const db = await getClient();
