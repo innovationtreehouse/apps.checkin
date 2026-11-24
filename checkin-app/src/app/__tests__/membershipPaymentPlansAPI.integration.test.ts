@@ -407,6 +407,30 @@ describe('Membership payment-plan routes', () => {
             expect(__getSentEmails()).toHaveLength(0);
         });
 
+        it('a re-POST with a new kind updates the kind and sends only the review-team notify', async () => {
+            await prisma.orgMembershipProcess.update({ where: { id: leadProcessId }, data: { scholarshipRequestKind: 'PAYMENT_PLAN' } });
+            mockSession.mockResolvedValue({ user: { id: leadId } });
+
+            const res = await RequestPost(requestReq({ processId: leadProcessId, kind: 'SCHOLARSHIP' }));
+            expect(res.status).toBe(200);
+
+            const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: leadProcessId } });
+            expect(proc?.scholarshipRequestKind).toBe('SCHOLARSHIP');
+            expect(proc?.isPaymentPlanRequested).toBe(true);
+            const sent = __getSentEmails();
+            expect(sent.filter((e) => e.subject.includes('New membership scholarship') && e.to === REVIEW_TEAM)).toHaveLength(1);
+            expect(sent.filter((e) => e.subject === 'We received your scholarship / payment-plan request')).toHaveLength(0);
+        });
+
+        it('a re-POST with the same kind sends zero emails', async () => {
+            await prisma.orgMembershipProcess.update({ where: { id: leadProcessId }, data: { scholarshipRequestKind: 'PAYMENT_PLAN' } });
+            mockSession.mockResolvedValue({ user: { id: leadId } });
+
+            const res = await RequestPost(requestReq({ processId: leadProcessId, kind: 'PAYMENT_PLAN' }));
+            expect(res.status).toBe(200);
+            expect(__getSentEmails()).toHaveLength(0);
+        });
+
         // User decision: an applicant receives EXACTLY ONE automatic *scholarship*
         // email (the request ack, covered above). Certify/approve sends NO automatic
         // scholarship-decision email — the board communicates decisions manually —
