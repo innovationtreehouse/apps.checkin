@@ -6,7 +6,7 @@ import { Alert, Anchor, Badge, Button, Card, Group, Paper, SegmentedControl, Sta
 import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { api, useLoad } from "@/lib/api";
 import { formatPhone } from "@/lib/phone";
-import { formatDateOnly } from "@/lib/time";
+import { APP_TIMEZONE, formatDate, formatDateOnly } from "@/lib/time";
 import { membershipYearLabel } from "@/lib/programYear";
 import type { PositionCheckStanding, PositionHolderRow } from "@/lib/membership/positionHolders";
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -31,6 +31,7 @@ type PersonRow = {
   programId: number | null;
   programName: string | null;
   reason: string;
+  lastVisitAt?: string;
 };
 type BlanketStampedRow = {
   processId: number;
@@ -56,7 +57,7 @@ type ComplianceAnswer = {
   blanketStamped?: BlanketStampedRow[];
   mergeInheritedBgChecks?: MergeInheritedRow[];
   peopleAwaitingAgreement?: PersonRow[];
-  peopleNeedingAgreement?: PersonRow[];
+  peopleFreeTimeWithoutAgreement?: PersonRow[];
 };
 
 // Reason tag -> human label + badge color. Keys mirror the endpoint's tags.
@@ -142,7 +143,7 @@ function PersonSection({
             <div>
               <Text fw={600} fz="lg">{p.name}</Text>
               <Text size="sm" c="dimmed">
-                {p.programName && `Program: ${p.programName} · `}Household #{p.householdId}
+                {p.programName && `Program: ${p.programName} · `}{p.lastVisitAt && `Last free-time visit: ${formatDate(p.lastVisitAt, { timeZone: APP_TIMEZONE, dateStyle: "medium" })} · `}Household #{p.householdId}
               </Text>
             </div>
             <Group gap="sm">
@@ -187,9 +188,7 @@ export default function CompliancePage() {
     }
   };
 
-  // Open an individual membership agreement for one adult child. For people the
-  // nightly rule skips because they're over its age ceiling — the board judges adult
-  // child vs. unmarked spouse, which no field records.
+  // Open an individual membership agreement for one adult non-lead.
   const requestAgreement = async (personId: number) => {
     setBusyId(personId);
     try {
@@ -215,7 +214,16 @@ export default function CompliancePage() {
   const blanketStamped = data.blanketStamped ?? [];
   const mergeInherited = data.mergeInheritedBgChecks ?? [];
   const peopleAwaitingAgreement = data.peopleAwaitingAgreement ?? [];
-  const peopleNeedingAgreement = data.peopleNeedingAgreement ?? [];
+  const peopleFreeTime = data.peopleFreeTimeWithoutAgreement ?? [];
+  const agreementRows = peopleAwaitingAgreement.length + peopleFreeTime.length;
+  const requestAction = (p: PersonRow) =>
+    requestedIds.has(p.personId) ? (
+      <Badge variant="light">Agreement requested</Badge>
+    ) : (
+      <Button size="xs" variant="light" loading={busyId === p.personId} disabled={busyId === p.personId} onClick={() => requestAgreement(p.personId)}>
+        Request individual agreement
+      </Button>
+    );
 
   return (
     <Stack>
@@ -229,7 +237,7 @@ export default function CompliancePage() {
 
       {households.length === 0 && peopleNeedingBgCheck.length === 0 && peopleMissingDob.length === 0 && peopleWithDisputedCheck.length === 0
         && positionHolders.length === 0 && blanketStamped.length === 0 && mergeInherited.length === 0
-        && peopleAwaitingAgreement.length === 0 && peopleNeedingAgreement.length === 0 && (
+        && agreementRows === 0 && (
         <Card withBorder radius="md" padding="xl" ta="center">
           <Text c="dimmed">Everyone is in compliance. 🎉</Text>
         </Card>
@@ -389,11 +397,11 @@ export default function CompliancePage() {
         people={peopleMissingDob}
       />
 
-      {(peopleAwaitingAgreement.length > 0 || peopleNeedingAgreement.length > 0) && (
+      {agreementRows > 0 && (
         <Alert color="blue" variant="light" title="Why this list differs from the 18+ roster">
           <Text size="sm">
-            The agreement lists below judge age <b>as of today</b>, because an agreement is
-            opened the day someone turns 18 — a minor cannot be bound by their own signature.{" "}
+            The agreement lists below judge age <b>as of today</b>, because only someone who
+            is already an adult can sign their own agreement — a minor cannot be bound by it.{" "}
             <Anchor component={Link} href="/membership-audit/turning-18">The 18+ roster</Anchor>{" "}
             judges age <b>as of the start of the member year</b>, because that is the cohort the
             board plans the year around. Both are right for their own purpose, so the two lists
@@ -411,19 +419,11 @@ export default function CompliancePage() {
       />
 
       <PersonSection
-        title="Individual agreement — over 25, not requested"
-        description="Non-lead adults over 25 in member households. They are skipped automatically because an adult over 25 who isn't a household lead is usually a spouse who should be marked as a lead. Request an agreement only if this person is an adult child."
-        color="cyan"
-        people={peopleNeedingAgreement}
-        renderAction={(p) =>
-          requestedIds.has(p.personId) ? (
-            <Badge variant="light">Agreement requested</Badge>
-          ) : (
-            <Button size="xs" variant="light" loading={busyId === p.personId} disabled={busyId === p.personId} onClick={() => requestAgreement(p.personId)}>
-              Request individual agreement
-            </Button>
-          )
-        }
+        title="Free-time check-in, no agreement"
+        description="Adults who aren't a household lead, checked in outside any program this membership year and haven't signed an individual agreement this year. Nothing opens at the door and entry is never blocked; request an agreement here if one is owed."
+        color="orange"
+        people={peopleFreeTime}
+        renderAction={requestAction}
       />
     </Stack>
   );

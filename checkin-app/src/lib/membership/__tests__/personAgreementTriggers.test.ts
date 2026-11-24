@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
-import { inAgreementAgeBand, hasKnownAdultAge, agreementCycleFloor, openPersonAgreement, runPersonAgreementSweep } from "@/lib/membership/personAgreementTriggers";
+import type { TxClient } from "@/lib/db-client";
+import { closePersonAgreementOnLead, membershipYearAt, openPersonAgreement, openPersonAgreementOnEngage, previousMembershipYear, runPersonAgreementSweep } from "@/lib/membership/personAgreementTriggers";
 
 jest.mock("@/lib/prisma", () => ({
     __esModule: true,
@@ -7,102 +8,34 @@ jest.mock("@/lib/prisma", () => ({
 }));
 
 /**
- * The two pure rules behind PERSON_AGREEMENT: who the automatic pass picks, and
- * when a prior agreement stops covering the current cycle. Both are the parts that decide
- * whether a real person is asked to sign, so they're pinned here rather than left to the
- * DB-backed trigger test.
+ * The pure year arithmetic behind PERSON_AGREEMENT, and the failure handling of the
+ * yearly pass and the open on taking part. Who is picked is pinned by the DB-backed test.
  */
 
 const BOUNDARY = new Date("2000-09-01"); // anchor day-of-year; the year is irrelevant
-const yearsAgo = (n: number, from = new Date("2026-08-02")) =>
-    new Date(Date.UTC(from.getUTCFullYear() - n, from.getUTCMonth(), from.getUTCDate()));
-// A real instant on 2 August, mid-morning in the org's zone — the age rules take an
-// instant and resolve it to the day it falls on there, so a bare UTC midnight would
-// stand for the evening of the 1st.
+// A real instant on 2 August, mid-morning in the org's zone — the year rule takes an
+// instant and resolves it to the day it falls on there.
 const NOW = new Date("2026-08-02T15:00:00.000Z");
 
-describe("inAgreementAgeBand — the automatic population", () => {
-    const now = NOW;
-
-    it("takes 18 through 25 with a DOB on file", () => {
-        expect(inAgreementAgeBand({ dateOfBirth: yearsAgo(18), isDeclaredAdult: false }, now)).toBe(true);
-        expect(inAgreementAgeBand({ dateOfBirth: yearsAgo(22), isDeclaredAdult: false }, now)).toBe(true);
-        expect(inAgreementAgeBand({ dateOfBirth: yearsAgo(25), isDeclaredAdult: false }, now)).toBe(true);
+describe("membershipYearAt — the year a new agreement is counted from", () => {
+    it("starts at the latest boundary on or before today", () => {
+        expect(membershipYearAt(BOUNDARY, NOW)).toEqual({ start: new Date("2025-09-01"), end: new Date("2026-09-01") });
+        expect(membershipYearAt(BOUNDARY, new Date("2026-09-01T16:00:00.000Z"))).toEqual({ start: new Date("2026-09-01"), end: new Date("2027-09-01") });
     });
 
-    it("refuses a minor — the whole point is that a parent's signature stops binding at 18", () => {
-        expect(inAgreementAgeBand({ dateOfBirth: yearsAgo(17), isDeclaredAdult: false }, now)).toBe(false);
-        // One day short of 18.
-        const almost = new Date(Date.UTC(2008, 7, 3));
-        expect(inAgreementAgeBand({ dateOfBirth: almost, isDeclaredAdult: false }, now)).toBe(false);
+    it("does not move early for the renewal window", () => {
+        // Two weeks before the boundary, renewals are open, but the year in progress is still the old one.
+        expect(membershipYearAt(BOUNDARY, new Date("2026-08-18T16:00:00.000Z")).start).toEqual(new Date("2025-09-01"));
     });
 
-    it("waits for local midnight, not UTC midnight, on the 18th birthday", () => {
-        // 9 PM on 1 August in the org's zone — UTC has already turned over to the 2nd,
-        // and the nightly sweep runs in exactly this window.
-        const eve = new Date("2026-08-02T02:00:00.000Z");
-        expect(inAgreementAgeBand({ dateOfBirth: yearsAgo(18), isDeclaredAdult: false }, eve)).toBe(false);
-        expect(hasKnownAdultAge({ dateOfBirth: yearsAgo(18), isDeclaredAdult: false }, eve)).toBe(false);
+    it("turns over at local midnight on the boundary, not UTC midnight", () => {
+        // 9 PM on 31 August in the org's zone — UTC is already on 1 September.
+        expect(membershipYearAt(BOUNDARY, new Date("2026-09-01T02:00:00.000Z")).start).toEqual(new Date("2025-09-01"));
     });
 
-    it("refuses over 25 — a non-lead adult that old is a spouse, not an adult child", () => {
-        expect(inAgreementAgeBand({ dateOfBirth: yearsAgo(26), isDeclaredAdult: false }, now)).toBe(false);
-        // The ceiling is explicit, not inherited from the DOB purge: a 30-year-old
-        // spouse added with a DOB is refused immediately, not merely by the next purge.
-        expect(inAgreementAgeBand({ dateOfBirth: yearsAgo(30), isDeclaredAdult: false }, now)).toBe(false);
-    });
-
-    it("refuses an unknown age, declared-adult included (that flag MEANS over 25)", () => {
-        expect(inAgreementAgeBand({ dateOfBirth: null, isDeclaredAdult: true }, now)).toBe(false);
-        expect(inAgreementAgeBand({ dateOfBirth: null, isDeclaredAdult: false }, now)).toBe(false);
-    });
-});
-
-describe("hasKnownAdultAge — the looser manual (board) rule", () => {
-    const now = NOW;
-
-    it("accepts the over-25s the automatic band refuses — the board judges those itself", () => {
-        expect(hasKnownAdultAge({ dateOfBirth: null, isDeclaredAdult: true }, now)).toBe(true);
-        expect(hasKnownAdultAge({ dateOfBirth: yearsAgo(30), isDeclaredAdult: false }, now)).toBe(true);
-    });
-
-    it("still refuses a minor and an unknown age", () => {
-        expect(hasKnownAdultAge({ dateOfBirth: yearsAgo(17), isDeclaredAdult: false }, now)).toBe(false);
-        expect(hasKnownAdultAge({ dateOfBirth: null, isDeclaredAdult: false }, now)).toBe(false);
-    });
-});
-
-describe("agreementCycleFloor — one agreement per cycle, no double-ask", () => {
-    it("covers everything signed since the current cycle opened", () => {
-        // Mid-cycle: boundary Sept 1, so the live cycle started 2025-09-01.
-        const floor = agreementCycleFloor(BOUNDARY, new Date("2026-03-15"));
-        expect(new Date("2026-01-10") >= floor).toBe(true); // signed in January — still covers
-        expect(new Date("2025-03-01") >= floor).toBe(false); // last cycle — needs a fresh one
-    });
-
-    it("does not re-ask someone who signed during the run-up to the boundary", () => {
-        // Sign Aug 20, boundary rolls Sept 1, and a floor
-        // set AT the boundary would ask them again two weeks later. Backing the floor off
-        // by the renewal lead window (as runRenewalSweep does) keeps them covered.
-        const signedAt = new Date("2026-08-20");
-        const before = agreementCycleFloor(BOUNDARY, new Date("2026-08-25"));
-        const after = agreementCycleFloor(BOUNDARY, new Date("2026-09-02"));
-        expect(signedAt >= before).toBe(true);
-        expect(signedAt >= after).toBe(true);
-    });
-
-    it("does ask again a year later", () => {
-        const signedAt = new Date("2026-08-20");
-        const nextCycle = agreementCycleFloor(BOUNDARY, new Date("2027-09-02"));
-        expect(signedAt >= nextCycle).toBe(false);
-    });
-
-    it("advances by exactly one year across a boundary", () => {
-        const before = agreementCycleFloor(BOUNDARY, new Date("2026-08-25"));
-        const after = agreementCycleFloor(BOUNDARY, new Date("2026-09-02"));
-        expect(after.getUTCFullYear() - before.getUTCFullYear()).toBe(1);
-        expect(after.getUTCMonth()).toBe(before.getUTCMonth());
-        expect(after.getUTCDate()).toBe(before.getUTCDate());
+    it("the previous year ends where this one starts", () => {
+        const year = membershipYearAt(BOUNDARY, NOW);
+        expect(previousMembershipYear(year)).toEqual({ start: new Date("2024-09-01"), end: year.start });
     });
 });
 
@@ -117,7 +50,7 @@ describe("openPersonAgreement — the per-person transaction", () => {
     });
 });
 
-describe("runPersonAgreementSweep — one person's failure", () => {
+describe("runPersonAgreementSweep — the yearly pass, one person's failure", () => {
     it("counts it and still opens the rest", async () => {
         jest.mocked(prisma.boardSettings.findUnique).mockResolvedValue({ orgMembershipYearBoundary: BOUNDARY } as never);
         jest.mocked(prisma.person.findMany).mockResolvedValue([{ id: 1 }, { id: 2 }] as never);
@@ -130,5 +63,50 @@ describe("runPersonAgreementSweep — one person's failure", () => {
         expect(result).toMatchObject({ opened: 1, failed: 1 });
         expect(errors).toHaveBeenCalledWith(expect.stringContaining("person 1"), expect.any(Error));
         errors.mockRestore();
+    });
+});
+
+describe("openPersonAgreementOnEngage — taking part never fails on it", () => {
+    it("logs a failure and returns null instead of throwing", async () => {
+        jest.mocked(prisma.boardSettings.findUnique).mockResolvedValue({ orgMembershipYearBoundary: BOUNDARY } as never);
+        jest.mocked(prisma.$transaction).mockRejectedValueOnce(new Error("lock timeout"));
+        const errors = jest.spyOn(console, "error").mockImplementation(() => {});
+
+        await expect(openPersonAgreementOnEngage(7, NOW)).resolves.toBeNull();
+
+        expect(errors).toHaveBeenCalledWith(expect.stringContaining("person 7"), expect.any(Error));
+        errors.mockRestore();
+    });
+});
+
+describe("closePersonAgreementOnLead — a new lead signs the household agreement instead", () => {
+    it("archives each open, unsigned agreement, with an audit row, and touches nothing signed", async () => {
+        const tx = {
+            orgMembershipProcess: {
+                findMany: jest.fn().mockResolvedValue([{ id: 31 }]),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            auditLog: { create: jest.fn() },
+        };
+
+        await closePersonAgreementOnLead(tx as unknown as TxClient, 5);
+
+        expect(tx.orgMembershipProcess.findMany.mock.calls[0][0].where).toMatchObject({ kind: "PERSON_AGREEMENT", subjectPersonId: 5, contractSignedAt: null, status: "PENDING_EXTERNAL_ACTION" });
+        expect(tx.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
+            where: expect.objectContaining({ id: 31, contractSignedAt: null, status: "PENDING_EXTERNAL_ACTION" }),
+            data: expect.objectContaining({ status: "ARCHIVED" }),
+        });
+        expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("writes no audit row when the agreement was signed in the meantime", async () => {
+        const tx = {
+            orgMembershipProcess: { findMany: jest.fn().mockResolvedValue([{ id: 31 }]), updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+            auditLog: { create: jest.fn() },
+        };
+
+        await closePersonAgreementOnLead(tx as unknown as TxClient, 5);
+
+        expect(tx.auditLog.create).not.toHaveBeenCalled();
     });
 });

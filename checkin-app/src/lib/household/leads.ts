@@ -4,6 +4,7 @@ import { isYouth } from "@/lib/time";
 import { mayDeclareAges } from "@/lib/person/adultDob";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { closePersonAgreementOnLead } from "@/lib/membership/personAgreementTriggers";
 
 /**
  * Shared household-lead ownership check. Loads the person and
@@ -153,6 +154,7 @@ async function addHouseholdLeadTx(
     }
 
     await tx.person.update({ where: { id: participantId }, data: { isHouseholdLead: true } });
+    await closePersonAgreementOnLead(tx, participantId);
     return { created: true };
 }
 

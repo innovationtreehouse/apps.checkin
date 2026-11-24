@@ -10,6 +10,7 @@
  *    saves it trimmed.
  */
 
+import { openPersonAgreementOnEngage } from '@/lib/membership/personAgreementTriggers';
 import { POST } from '@/app/api/programs/route';
 import { getServerSession } from 'next-auth/next';
 import { formatDateOnly } from '@/lib/time';
@@ -52,6 +53,7 @@ jest.mock('@/lib/shopify/stock', () => ({
 jest.mock('@/lib/logger', () => ({
     logBackendError: jest.fn().mockResolvedValue(undefined),
 }));
+jest.mock('@/lib/membership/personAgreementTriggers', () => ({ openPersonAgreementOnEngage: jest.fn() }));
 
 const mockProgramCreate = jest.fn();
 const mockAuditLogCreate = jest.fn().mockResolvedValue({});
@@ -120,6 +122,11 @@ describe('POST /api/programs — name', () => {
     it('saves the trimmed name', async () => {
         expect((await post('  Woodshop  ')).status).toBe(200);
         expect(mockProgramCreate.mock.calls[0][0].data.name).toBe('Woodshop');
+    });
+
+    it('opens the named leader\'s individual agreement if they owe one: leading a program is taking part', async () => {
+        expect((await post('Woodshop')).status).toBe(200);
+        expect(openPersonAgreementOnEngage).toHaveBeenCalledWith(7);
     });
 
     it('writes the name key with the name', async () => {

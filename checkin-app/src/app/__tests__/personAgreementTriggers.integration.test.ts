@@ -2,22 +2,24 @@
  * @jest-environment node
  */
 /**
- * Integration tests for PERSON_AGREEMENT: the nightly population predicate, the
- * per-cycle dedup, the manual board open, and the signature completing the obligation.
+ * Integration tests for PERSON_AGREEMENT: the yearly re-sign population, the opens on
+ * taking part, the per-year dedup, the Board's open, and the signature completing it.
  *
- * These run against a real DB on purpose. The population is a nested relation filter
- * (household -> orgMembership -> status, spread with programAttachedWhere), which
- * type-checks whatever it selects — only a real query proves it picks the right people.
- *
- * Modeled on personBgTriggers.integration.test.ts.
+ * These run against a real DB on purpose. The populations are nested relation filters
+ * (household -> orgMembership -> status, spread with tookPartWhere), which type-check
+ * whatever they select — only a real query proves they pick the right people.
  */
 
 import {
     runPersonAgreementSweep,
+    openPersonAgreementOnEngage,
     openPersonAgreementForNewMember,
     openPersonAgreementForBoard,
-    PersonAgreementError,
+    findOpenPersonAgreement,
+    membershipYearAt,
+    previousMembershipYear,
 } from '@/lib/membership/personAgreementTriggers';
+import { addHouseholdLead } from '@/lib/household/leads';
 import { markContractSigned } from '@/lib/membership/external';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
@@ -27,7 +29,7 @@ jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>
 const TAG = 'person-agreement-trigger-test';
 const BOUNDARY_SEED = new Date('2000-09-01');
 
-/** Ages relative to the real clock, so no fixture ages past its band on a future run. */
+/** Ages relative to the real clock, so no fixture changes age group on a future run. */
 const yearsAgo = (n: number) => {
     const d = new Date();
     return new Date(Date.UTC(d.getUTCFullYear() - n, d.getUTCMonth(), d.getUTCDate()));
@@ -35,6 +37,13 @@ const yearsAgo = (n: number) => {
 const AGE_20 = yearsAgo(20);
 const AGE_17 = yearsAgo(17);
 const AGE_30 = yearsAgo(30);
+const NOW = new Date();
+const THIS_YEAR = membershipYearAt(BOUNDARY_SEED, NOW);
+const LAST_YEAR = previousMembershipYear(THIS_YEAR);
+const daysAfter = (d: Date, n: number) => new Date(d.getTime() + n * 86_400_000);
+const IN_LAST_YEAR = { startAt: daysAfter(LAST_YEAR.start, 10), endAt: daysAfter(LAST_YEAR.start, 60) };
+const IN_THIS_YEAR = { startAt: THIS_YEAR.start, endAt: daysAfter(THIS_YEAR.end, -1) };
+const TWO_YEARS_AGO = { startAt: daysAfter(LAST_YEAR.start, -300), endAt: daysAfter(LAST_YEAR.start, -200) };
 
 async function makeMemberHousehold(slug: string, membershipStatus: 'ACTIVE' | 'NONE' = 'ACTIVE') {
     const hh = await prisma.household.create({ data: { name: `${TAG} ${slug}` } });
@@ -59,9 +68,9 @@ async function makePerson(
     });
 }
 
-async function attachToProgram(slug: string, personId: number, dates: { startAt?: Date; endAt?: Date } = {}) {
+async function attachToProgram(slug: string, personId: number, dates: { startAt: Date; endAt: Date } = IN_LAST_YEAR) {
     const program = await prisma.program.create({
-        data: { appliesToYear: 2026, name: `${TAG} ${slug} program`, startAt: dates.startAt ?? new Date('2026-01-01'), endAt: dates.endAt ?? new Date('2026-12-31') },
+        data: { appliesToYear: dates.startAt.getUTCFullYear(), name: `${TAG} ${slug} program`, startAt: dates.startAt, endAt: dates.endAt },
     });
     await prisma.programParticipant.create({ data: { programId: program.id, personId } });
     return program.id;
@@ -115,150 +124,200 @@ describe('PERSON_AGREEMENT triggers', () => {
         await prisma.$disconnect();
     });
 
-    it('opens for an 18-25 non-lead in a member household, and nobody else', async () => {
-        await setBoundary(BOUNDARY_SEED);
-        const hh = await makeMemberHousehold('cohort');
-        const adultChild = await makePerson('cohort-adult-child', hh.id, { dateOfBirth: AGE_20 });
-        const lead = await makePerson('cohort-lead', hh.id, { dateOfBirth: AGE_30, isHouseholdLead: true });
-        const spouse = await makePerson('cohort-spouse', hh.id, { isDeclaredAdult: true });
-        const minor = await makePerson('cohort-minor', hh.id, { dateOfBirth: AGE_17 });
-        for (const p of [adultChild, lead, spouse, minor]) await attachToProgram(`cohort-${p.id}`, p.id);
-        // 18-25 and in the household, but in no program — out of scope (the board can
-        // still request one by hand).
-        const unattached = await makePerson('cohort-unattached', hh.id, { dateOfBirth: AGE_20 });
-        // Same shape, but the household isn't a member.
-        const nonMemberHh = await makeMemberHousehold('cohort-nonmember', 'NONE');
-        const outsider = await makePerson('cohort-outsider', nonMemberHh.id, { dateOfBirth: AGE_20 });
-        await attachToProgram('cohort-outsider', outsider.id);
+    const CHILD = { dateOfBirth: AGE_20 };
 
-        await runPersonAgreementSweep(new Date());
+    describe('yearly re-sign', () => {
+        it('opens for an adult non-lead who took part last year, and nobody else', async () => {
+            const hh = await makeMemberHousehold('cohort');
+            const adultChild = await makePerson('cohort-adult-child', hh.id, CHILD);
+            const grandparent = await makePerson('cohort-grandparent', hh.id, { isDeclaredAdult: true });
+            const lead = await makePerson('cohort-lead', hh.id, { dateOfBirth: AGE_30, isHouseholdLead: true });
+            const secondLead = await makePerson('cohort-second-lead', hh.id, { dateOfBirth: AGE_30, isHouseholdLead: true });
+            const unknownAge = await makePerson('cohort-unknown-age', hh.id);
+            const minor = await makePerson('cohort-minor', hh.id, { dateOfBirth: AGE_17 });
+            for (const p of [adultChild, grandparent, lead, secondLead, unknownAge, minor]) await attachToProgram(`cohort-${p.id}`, p.id);
+            const sittingOut = await makePerson('cohort-sitting-out', hh.id, CHILD);
+            const nonMemberHh = await makeMemberHousehold('cohort-nonmember', 'NONE');
+            const outsider = await makePerson('cohort-outsider', nonMemberHh.id, CHILD);
+            await attachToProgram('cohort-outsider', outsider.id);
 
-        expect(await agreementCountFor(adultChild.id)).toBe(1);
-        expect(await agreementCountFor(lead.id)).toBe(0); // signs the household agreement
-        expect(await agreementCountFor(spouse.id)).toBe(0); // over 25 ⇒ presumed spouse
-        expect(await agreementCountFor(minor.id)).toBe(0); // can't be bound by their own signature
-        expect(await agreementCountFor(unattached.id)).toBe(0);
-        expect(await agreementCountFor(outsider.id)).toBe(0);
+            await runPersonAgreementSweep(NOW);
+
+            expect(await agreementCountFor(adultChild.id)).toBe(1);
+            expect(await agreementCountFor(grandparent.id)).toBe(1); // no age ceiling
+            expect(await agreementCountFor(lead.id)).toBe(0); // signs the household agreement
+            expect(await agreementCountFor(secondLead.id)).toBe(0); // a partner made a lead
+            expect(await agreementCountFor(unknownAge.id)).toBe(0);
+            expect(await agreementCountFor(minor.id)).toBe(0);
+            expect(await agreementCountFor(sittingOut.id)).toBe(0); // didn't take part
+            expect(await agreementCountFor(outsider.id)).toBe(0);
+        });
+
+        it('counts volunteering and leading as taking part', async () => {
+            const hh = await makeMemberHousehold('roles');
+            const volunteer = await makePerson('roles-volunteer', hh.id, CHILD);
+            const leader = await makePerson('roles-leader', hh.id, CHILD);
+            const program = await prisma.program.create({
+                data: { appliesToYear: IN_LAST_YEAR.startAt.getUTCFullYear(), name: `${TAG} roles program`, ...IN_LAST_YEAR, leadMentorId: leader.id },
+            });
+            await prisma.programVolunteer.create({ data: { programId: program.id, personId: volunteer.id } });
+
+            await runPersonAgreementSweep(NOW);
+
+            expect(await agreementCountFor(volunteer.id)).toBe(1);
+            expect(await agreementCountFor(leader.id)).toBe(1);
+        });
+
+        it('skips someone whose only program was before last year', async () => {
+            const hh = await makeMemberHousehold('lapsed');
+            const person = await makePerson('lapsed-child', hh.id, CHILD);
+            await attachToProgram('lapsed', person.id, TWO_YEARS_AGO);
+
+            await runPersonAgreementSweep(NOW);
+
+            expect(await agreementCountFor(person.id)).toBe(0);
+        });
+
+        it('is idempotent — a second nightly run opens nothing', async () => {
+            const hh = await makeMemberHousehold('idem');
+            const person = await makePerson('idem-child', hh.id, CHILD);
+            await attachToProgram('idem', person.id);
+
+            await runPersonAgreementSweep(NOW);
+            const rerun = await runPersonAgreementSweep(NOW);
+
+            expect(rerun.opened).toBe(0);
+            expect(await agreementCountFor(person.id)).toBe(1);
+        });
+
+        it('a signed agreement is not re-opened in the same year, and is opened again the next year', async () => {
+            const hh = await makeMemberHousehold('resign');
+            const person = await makePerson('resign-child', hh.id, CHILD);
+            await attachToProgram('resign', person.id);
+            await runPersonAgreementSweep(NOW);
+            const opened = await prisma.orgMembershipProcess.findFirstOrThrow({ where: { kind: 'PERSON_AGREEMENT', subjectPersonId: person.id } });
+            await markContractSigned(opened.id, person.id);
+
+            await runPersonAgreementSweep(NOW);
+            expect(await agreementCountFor(person.id)).toBe(1);
+
+            // A year on, this year's program is last year's.
+            await attachToProgram('resign-this-year', person.id, IN_THIS_YEAR);
+            await runPersonAgreementSweep(daysAfter(THIS_YEAR.end, 1));
+            expect(await agreementCountFor(person.id)).toBe(2);
+        });
+
+        it('opens nothing when no membership-year boundary is configured', async () => {
+            await setBoundary(null);
+            const hh = await makeMemberHousehold('noboundary');
+            const person = await makePerson('noboundary-child', hh.id, CHILD);
+            await attachToProgram('noboundary', person.id);
+
+            const result = await runPersonAgreementSweep(NOW);
+
+            expect(result.opened).toBe(0);
+            expect(await agreementCountFor(person.id)).toBe(0);
+            await setBoundary(BOUNDARY_SEED);
+        });
     });
 
-    // Attachment rows are never cleared when a program ends, so an unbounded
-    // attached-ever predicate would re-ask someone who took one class at 18 every cycle
-    // until they age out of the band. The lookback is what stops that.
-    it('stops asking once the only program ended more than a year ago', async () => {
-        const monthsAgo = (n: number) => {
-            const d = new Date();
-            d.setUTCMonth(d.getUTCMonth() - n);
-            return d;
-        };
-        const hh = await makeMemberHousehold('lapsed');
-        const finishedLongAgo = await makePerson('lapsed-finished', hh.id, { dateOfBirth: AGE_20 });
-        await attachToProgram('lapsed-old', finishedLongAgo.id, { startAt: monthsAgo(20), endAt: monthsAgo(14) });
-        // Ended inside the lookback — still counts for one more cycle.
-        const finishedRecently = await makePerson('lapsed-recent', hh.id, { dateOfBirth: AGE_20 });
-        await attachToProgram('lapsed-recent', finishedRecently.id, { startAt: monthsAgo(10), endAt: monthsAgo(2) });
-        // No end date at all reads as still running, which is the point of the NULL rule:
-        // an ongoing program must not expire its own members out of the population.
-        const ongoing = await makePerson('lapsed-ongoing', hh.id, { dateOfBirth: AGE_20 });
-        await attachToProgram('lapsed-ongoing', ongoing.id);
+    describe('taking part', () => {
+        it('opens for an adult non-lead with no agreement this year', async () => {
+            const hh = await makeMemberHousehold('engage');
+            const person = await makePerson('engage-child', hh.id, CHILD);
 
-        await runPersonAgreementSweep(new Date());
+            await openPersonAgreementOnEngage(person.id, NOW);
 
-        expect(await agreementCountFor(finishedLongAgo.id)).toBe(0);
-        expect(await agreementCountFor(finishedRecently.id)).toBe(1);
-        expect(await agreementCountFor(ongoing.id)).toBe(1);
-    });
+            expect(await agreementCountFor(person.id)).toBe(1);
+        });
 
-    it('is idempotent — a second nightly run opens nothing', async () => {
-        const hh = await makeMemberHousehold('idem');
-        const person = await makePerson('idem-child', hh.id, { dateOfBirth: AGE_20 });
-        await attachToProgram('idem', person.id);
+        it('opens nothing for a lead, a minor or an unknown age', async () => {
+            const hh = await makeMemberHousehold('engage-none');
+            const lead = await makePerson('engage-lead', hh.id, { dateOfBirth: AGE_30, isHouseholdLead: true });
+            const minor = await makePerson('engage-minor', hh.id, { dateOfBirth: AGE_17 });
+            const unknownAge = await makePerson('engage-unknown-age', hh.id);
 
-        await runPersonAgreementSweep(new Date());
-        expect(await agreementCountFor(person.id)).toBe(1);
+            for (const p of [lead, minor, unknownAge]) await openPersonAgreementOnEngage(p.id, NOW);
 
-        const rerun = await runPersonAgreementSweep(new Date());
-        expect(rerun.opened).toBe(0);
-        expect(await agreementCountFor(person.id)).toBe(1);
-    });
+            for (const p of [lead, minor, unknownAge]) expect(await agreementCountFor(p.id)).toBe(0);
+        });
 
-    it('opens nothing when no membership-year boundary is configured', async () => {
-        await setBoundary(null);
-        const hh = await makeMemberHousehold('noboundary');
-        const person = await makePerson('noboundary-child', hh.id, { dateOfBirth: AGE_20 });
-        await attachToProgram('noboundary', person.id);
+        it('opens nothing when one was signed this year', async () => {
+            const hh = await makeMemberHousehold('engage-signed');
+            const person = await makePerson('engage-signed-child', hh.id, CHILD);
+            const first = await openPersonAgreementOnEngage(person.id, NOW);
+            await markContractSigned(first!.id, person.id);
 
-        const result = await runPersonAgreementSweep(new Date());
+            await openPersonAgreementOnEngage(person.id, NOW);
 
-        expect(result.opened).toBe(0);
-        expect(await agreementCountFor(person.id)).toBe(0);
-        await setBoundary(BOUNDARY_SEED);
-    });
+            expect(await agreementCountFor(person.id)).toBe(1);
+        });
 
-    it('activation opens one for a joining household, without waiting for the nightly run', async () => {
-        const hh = await makeMemberHousehold('activation');
-        const person = await makePerson('activation-child', hh.id, { dateOfBirth: AGE_20 });
-        await attachToProgram('activation', person.id);
+        it('activation opens one for a joining household whose adult non-lead takes part this year', async () => {
+            const hh = await makeMemberHousehold('activation');
+            const person = await makePerson('activation-child', hh.id, CHILD);
+            await attachToProgram('activation', person.id, IN_THIS_YEAR);
 
-        await openPersonAgreementForNewMember(hh.id, new Date());
+            await openPersonAgreementForNewMember(hh.id, NOW);
 
-        expect(await agreementCountFor(person.id)).toBe(1);
+            expect(await agreementCountFor(person.id)).toBe(1);
+        });
     });
 
     it('signing completes it outright — ACTIVE, no payment or BG gate', async () => {
         const hh = await makeMemberHousehold('signing');
-        const person = await makePerson('signing-child', hh.id, { dateOfBirth: AGE_20 });
-        await attachToProgram('signing', person.id);
-        await runPersonAgreementSweep(new Date());
+        const person = await makePerson('signing-child', hh.id, CHILD);
+        const opened = await openPersonAgreementOnEngage(person.id, NOW);
+        expect(opened?.status).toBe('PENDING_EXTERNAL_ACTION');
+        expect(opened?.orgMembershipId).toBeNull();
 
-        const opened = await prisma.orgMembershipProcess.findFirstOrThrow({
-            where: { kind: 'PERSON_AGREEMENT', subjectPersonId: person.id },
-        });
-        expect(opened.status).toBe('PENDING_EXTERNAL_ACTION');
-        expect(opened.orgMembershipId).toBeNull();
-
-        const signed = await markContractSigned(opened.id, person.id);
+        const signed = await markContractSigned(opened!.id, person.id);
 
         expect(signed?.status).toBe('ACTIVE');
         expect(signed?.contractSignedAt).not.toBeNull();
-        // Never touched the payment/BG track — those gates don't apply to a person process.
         expect(signed?.paidAt).toBeNull();
         expect(signed?.bgClearedAt).toBeNull();
     });
 
-    it('a signed agreement is not re-opened by the next nightly run (same cycle)', async () => {
-        const hh = await makeMemberHousehold('resign');
-        const person = await makePerson('resign-child', hh.id, { dateOfBirth: AGE_20 });
-        await attachToProgram('resign', person.id);
-        await runPersonAgreementSweep(new Date());
-        const opened = await prisma.orgMembershipProcess.findFirstOrThrow({
-            where: { kind: 'PERSON_AGREEMENT', subjectPersonId: person.id },
+    describe('made a household lead', () => {
+        it('closes their open, unsigned agreement', async () => {
+            const hh = await makeMemberHousehold('promote-open');
+            const person = await makePerson('promote-open-adult', hh.id, CHILD);
+            const opened = await openPersonAgreementOnEngage(person.id, NOW);
+
+            await addHouseholdLead(prisma, hh.id, person.id);
+
+            const closed = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: opened!.id } });
+            expect(closed.status).toBe('ARCHIVED');
+            expect(await findOpenPersonAgreement(person.id)).toBeNull();
         });
-        await markContractSigned(opened.id, person.id);
 
-        await runPersonAgreementSweep(new Date());
+        it('leaves a signed agreement alone', async () => {
+            const hh = await makeMemberHousehold('promote-signed');
+            const person = await makePerson('promote-signed-adult', hh.id, CHILD);
+            const opened = await openPersonAgreementOnEngage(person.id, NOW);
+            await markContractSigned(opened!.id, person.id);
 
-        expect(await agreementCountFor(person.id)).toBe(1);
+            await addHouseholdLead(prisma, hh.id, person.id);
+
+            const kept = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: opened!.id } });
+            expect(kept.status).toBe('ACTIVE');
+            expect(kept.contractSignedAt).not.toBeNull();
+        });
     });
 
-    describe('manual board open', () => {
-        it('reaches an over-25 adult child the nightly rule skips', async () => {
-            const hh = await makeMemberHousehold('manual-over25');
-            const person = await makePerson('manual-over25-child', hh.id, { isDeclaredAdult: true });
+    describe('Board open', () => {
+        it('reaches any adult non-lead: an unknown age, an over-25, someone in no program', async () => {
+            const hh = await makeMemberHousehold('manual-any');
+            const unknownAge = await makePerson('manual-unknown-age', hh.id);
+            const declared = await makePerson('manual-declared', hh.id, { isDeclaredAdult: true });
+            const unattached = await makePerson('manual-unattached', hh.id, { dateOfBirth: AGE_30 });
 
-            const process = await openPersonAgreementForBoard(person.id, 1);
-
-            expect(process.kind).toBe('PERSON_AGREEMENT');
-            expect(process.status).toBe('PENDING_EXTERNAL_ACTION');
-            expect(await agreementCountFor(person.id)).toBe(1);
-        });
-
-        it('reaches someone in no program at all', async () => {
-            const hh = await makeMemberHousehold('manual-unattached');
-            const person = await makePerson('manual-unattached-child', hh.id, { dateOfBirth: AGE_20 });
-
-            await openPersonAgreementForBoard(person.id, 1);
-
-            expect(await agreementCountFor(person.id)).toBe(1);
+            for (const p of [unknownAge, declared, unattached]) {
+                const process = await openPersonAgreementForBoard(p.id, 1);
+                expect(process.kind).toBe('PERSON_AGREEMENT');
+                expect(process.status).toBe('PENDING_EXTERNAL_ACTION');
+            }
         });
 
         it('refuses a household lead — an open one would shadow their household signing flow', async () => {
@@ -269,17 +328,17 @@ describe('PERSON_AGREEMENT triggers', () => {
             expect(await agreementCountFor(lead.id)).toBe(0);
         });
 
-        it('refuses an unknown age — fix the date of birth first', async () => {
-            const hh = await makeMemberHousehold('manual-nodob');
-            const person = await makePerson('manual-nodob-person', hh.id);
+        it('refuses someone whose date of birth shows a minor', async () => {
+            const hh = await makeMemberHousehold('manual-minor');
+            const minor = await makePerson('manual-minor-person', hh.id, { dateOfBirth: AGE_17 });
 
-            await expect(openPersonAgreementForBoard(person.id, 1)).rejects.toBeInstanceOf(PersonAgreementError);
-            expect(await agreementCountFor(person.id)).toBe(0);
+            await expect(openPersonAgreementForBoard(minor.id, 1)).rejects.toMatchObject({ code: 'minor' });
+            expect(await agreementCountFor(minor.id)).toBe(0);
         });
 
         it('is idempotent — a second click returns the same obligation', async () => {
             const hh = await makeMemberHousehold('manual-idem');
-            const person = await makePerson('manual-idem-child', hh.id, { dateOfBirth: AGE_20 });
+            const person = await makePerson('manual-idem-child', hh.id, CHILD);
 
             const first = await openPersonAgreementForBoard(person.id, 1);
             const second = await openPersonAgreementForBoard(person.id, 1);

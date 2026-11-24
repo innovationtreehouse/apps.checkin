@@ -55,7 +55,7 @@ describe("flow: Board oversight", () => {
         // The compliance dashboard answers with its household and person lists.
         const compliance = await api<Record<string, unknown>>(board, "/api/membership-audit/compliance");
         expect(compliance.status).toBe(200);
-        for (const list of ["households", "peopleNeedingBgCheck", "peopleMissingDob", "peopleWithDisputedCheck", "positionHolders", "peopleAwaitingAgreement", "peopleNeedingAgreement"]) {
+        for (const list of ["households", "peopleNeedingBgCheck", "peopleMissingDob", "peopleWithDisputedCheck", "positionHolders", "peopleAwaitingAgreement", "peopleFreeTimeWithoutAgreement"]) {
             expect(Array.isArray(compliance.json[list])).toBe(true);
         }
 

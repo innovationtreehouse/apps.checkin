@@ -5,13 +5,12 @@ export const dynamic = "force-dynamic";
 
 /**
  * POST /api/membership-audit/person-agreement — board/sysadmin opens an individual
- * membership agreement for one adult child. Body: { personId }.
+ * membership agreement for one adult who isn't a household lead. Body: { personId }.
  *
- * The escape hatch for people the nightly rule doesn't reach: not program-attached, or
- * over its age ceiling (the board can tell an adult child from a spouse; the automatic
- * rule can't). Still refuses a household lead — they sign the household agreement, and an
- * open PERSON_AGREEMENT on a lead would shadow it — and still refuses an unknown age.
- * Idempotent: an obligation already open for this cycle is returned as-is.
+ * Reaches anyone the automatic rule doesn't: an unknown age, any relationship, no program.
+ * Refuses a household lead — they sign the household agreement, and an open
+ * PERSON_AGREEMENT on a lead would shadow it — and a date of birth showing a minor.
+ * Idempotent: an obligation already open is returned as-is.
  *
  * Responds with the obligation's id/kind/status only. Nothing identifying the subject
  * goes back out: the caller already named them.

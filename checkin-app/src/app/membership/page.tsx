@@ -77,22 +77,19 @@ export default function MembershipPage() {
 
       <KeyVolunteerAgreementPanel />
 
-      {/* Your own agreement, not your household's — an adult can't be bound by a
-          parent's signature. Rendered above the household flow and independent of it:
-          the subject is usually a non-lead in a settled member household, where every
-          branch below shows "you're a member" and nothing else. */}
+      {/* Your own agreement, not your household's: shown until signed, and it blocks nothing. */}
       {state?.personAgreement && (
-        <Card withBorder radius="md" padding="lg" mb="lg" maw={640}>
-          <Title order={2}>Sign your individual membership agreement</Title>
-          <Text c="dimmed" my="md">
-            You&apos;re 18 or older, so you sign your own membership agreement rather than
-            being covered by your household&apos;s. Have your insurance details handy — the
-            agreement asks for your provider and policy number.
+        <Alert color="yellow" variant="light" mb="lg" maw={640} title="Your individual membership agreement is unsigned">
+          <Text size="sm" mb="md">
+            You sign your own membership agreement rather than being covered by your
+            household&apos;s. Nothing is blocked while it&apos;s unsigned, but this stays here
+            until you sign. Have your insurance details handy — the agreement asks for your
+            provider and policy number.
           </Text>
           <Button disabled={saving} loading={saving} onClick={startSigning}>
             {state.personAgreement.started ? "Resume signing →" : "Sign your agreement →"}
           </Button>
-        </Card>
+        </Alert>
       )}
 
       {state?.ownBackgroundCheck && <BackgroundChecksPanel selfId={session.user.id} ownCheck={state.ownBackgroundCheck} onMarked={load} />}
