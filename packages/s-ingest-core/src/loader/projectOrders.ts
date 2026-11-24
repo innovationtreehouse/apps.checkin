@@ -1,14 +1,27 @@
 /**
  * Project a normalized order into the live tables: shop_order, shop_order_line,
- * shop_refund. Idempotent and newest-wins on Shopify's `updatedAt`: a node whose
+ * shop_refund. The store's copy outranks a hand-made one: a store write replaces a
+ * hand-made row whatever their stamps, and a hand-made write never replaces a row the
+ * store wrote. Within a rank it is newest-wins on Shopify's `updatedAt`: a node whose
  * `updatedAt` is older than the stored row's is skipped entirely (order AND its
  * lines/refunds), so a stale bulk snapshot, re-ingested export, or replayed event
  * can never revert financial status, refunds, or cancellation. Equal `updatedAt`
  * re-writes, which keeps same-version re-projection idempotent.
  */
 import type { DbClient } from "../ingest/rawLog.js";
-import type { EventSource } from "../generated/prisma/client.js";
+import { EventSource, type Prisma } from "../generated/prisma/client.js";
 import type { NormalizedOrder } from "../shopify/schemas.js";
+
+const HAND_MADE: EventSource[] = [EventSource.HAND_LOADED, EventSource.TEST_LOADED];
+
+/** Which stored row `source` may replace. A null stored source is a store write. */
+function replaceableBy(source: EventSource, updatedAt: Date | null): Prisma.ShopOrderWhereInput {
+  const notNewer: Prisma.ShopOrderWhereInput[] = updatedAt
+    ? [{ updatedAt: null }, { updatedAt: { lte: updatedAt } }]
+    : [{ updatedAt: null }];
+  if (HAND_MADE.includes(source)) return { source: { in: HAND_MADE }, OR: notNewer };
+  return { OR: [...notNewer, { source: { in: HAND_MADE } }] };
+}
 
 export async function projectOrder(
   db: DbClient,
@@ -53,11 +66,11 @@ export async function projectOrder(
       where: {
         storeId,
         shopifyGid: order.shopifyGid,
-        OR: order.updatedAt ? [{ updatedAt: null }, { updatedAt: { lte: order.updatedAt } }] : [{ updatedAt: null }],
+        ...replaceableBy(source, order.updatedAt),
       },
       data: fields,
     });
-    if (updated === 0) return; // stored row is newer — leave it and its children alone
+    if (updated === 0) return; // stored row outranks this one — leave it and its children alone
   }
 
   // Reconcile line items by GID: upsert present ones, soft-mark absent ones when the payload is complete.
