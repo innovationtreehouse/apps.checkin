@@ -1,5 +1,11 @@
 import prisma from "@/lib/prisma";
 import { inAgreementAgeBand, hasKnownAdultAge, agreementCycleFloor, openPersonAgreement, runPersonAgreementSweep } from "@/lib/membership/personAgreementTriggers";
+import { calendarDayIn } from "@/lib/time";
+
+let mockOrgZone = "America/Chicago";
+jest.mock("@/lib/appSettings", () => ({
+    orgToday: async (now: Date) => jest.requireActual<typeof import("@/lib/time")>("@/lib/time").calendarDayIn(now, mockOrgZone),
+}));
 
 jest.mock("@/lib/prisma", () => ({
     __esModule: true,
@@ -16,13 +22,12 @@ jest.mock("@/lib/prisma", () => ({
 const BOUNDARY = new Date("2000-09-01"); // anchor day-of-year; the year is irrelevant
 const yearsAgo = (n: number, from = new Date("2026-08-02")) =>
     new Date(Date.UTC(from.getUTCFullYear() - n, from.getUTCMonth(), from.getUTCDate()));
-// A real instant on 2 August, mid-morning in the org's zone — the age rules take an
-// instant and resolve it to the day it falls on there, so a bare UTC midnight would
-// stand for the evening of the 1st.
+// A real instant on 2 August, mid-morning in the org's zone, and the day it falls on.
 const NOW = new Date("2026-08-02T15:00:00.000Z");
+const TODAY = new Date("2026-08-02T00:00:00.000Z");
 
 describe("inAgreementAgeBand — the automatic population", () => {
-    const now = NOW;
+    const now = TODAY;
 
     it("takes 18 through 25 with a DOB on file", () => {
         expect(inAgreementAgeBand({ dateOfBirth: yearsAgo(18), isDeclaredAdult: false }, now)).toBe(true);
@@ -37,12 +42,14 @@ describe("inAgreementAgeBand — the automatic population", () => {
         expect(inAgreementAgeBand({ dateOfBirth: almost, isDeclaredAdult: false }, now)).toBe(false);
     });
 
-    it("waits for local midnight, not UTC midnight, on the 18th birthday", () => {
-        // 9 PM on 1 August in the org's zone — UTC has already turned over to the 2nd,
-        // and the nightly sweep runs in exactly this window.
-        const eve = new Date("2026-08-02T02:00:00.000Z");
-        expect(inAgreementAgeBand({ dateOfBirth: yearsAgo(18), isDeclaredAdult: false }, eve)).toBe(false);
-        expect(hasKnownAdultAge({ dateOfBirth: yearsAgo(18), isDeclaredAdult: false }, eve)).toBe(false);
+    it("opens on the 18th birthday as the org zone's day turns, not Chicago's", () => {
+        // 12:30 AM on 2 August in New York, 11:30 PM on 1 August in Chicago.
+        const instant = "2026-08-02T04:30:00.000Z";
+        const eighteen = { dateOfBirth: yearsAgo(18), isDeclaredAdult: false };
+        expect(inAgreementAgeBand(eighteen, calendarDayIn(instant, "America/New_York"))).toBe(true);
+        expect(hasKnownAdultAge(eighteen, calendarDayIn(instant, "America/New_York"))).toBe(true);
+        expect(inAgreementAgeBand(eighteen, calendarDayIn(instant, "America/Chicago"))).toBe(false);
+        expect(hasKnownAdultAge(eighteen, calendarDayIn(instant, "America/Chicago"))).toBe(false);
     });
 
     it("refuses over 25 — a non-lead adult that old is a spouse, not an adult child", () => {
@@ -59,7 +66,7 @@ describe("inAgreementAgeBand — the automatic population", () => {
 });
 
 describe("hasKnownAdultAge — the looser manual (board) rule", () => {
-    const now = NOW;
+    const now = TODAY;
 
     it("accepts the over-25s the automatic band refuses — the board judges those itself", () => {
         expect(hasKnownAdultAge({ dateOfBirth: null, isDeclaredAdult: true }, now)).toBe(true);
@@ -111,7 +118,7 @@ describe("openPersonAgreement — the per-person transaction", () => {
         const transaction = jest.mocked(prisma.$transaction);
         transaction.mockResolvedValue(null as never);
 
-        await openPersonAgreement(1, NOW, NOW);
+        await openPersonAgreement(1, TODAY, NOW);
 
         expect(transaction.mock.calls[0]?.[1]).toEqual({ maxWait: 5_000, timeout: 15_000 });
     });
@@ -130,5 +137,25 @@ describe("runPersonAgreementSweep — one person's failure", () => {
         expect(result).toMatchObject({ opened: 1, failed: 1 });
         expect(errors).toHaveBeenCalledWith(expect.stringContaining("person 1"), expect.any(Error));
         errors.mockRestore();
+    });
+});
+
+describe("runPersonAgreementSweep — the org zone's day", () => {
+    afterEach(() => { mockOrgZone = "America/Chicago"; });
+
+    it.each([
+        ["America/New_York", "2026-10-12T00:00:00.000Z"],
+        ["America/Chicago", "2026-10-11T00:00:00.000Z"],
+    ])("bounds the program window by the day in %s", async (zone, day) => {
+        mockOrgZone = zone;
+        jest.mocked(prisma.boardSettings.findUnique).mockResolvedValue({ orgMembershipYearBoundary: BOUNDARY } as never);
+        const findMany = jest.mocked(prisma.person.findMany).mockResolvedValue([] as never);
+
+        // 12:30 AM on the 12th in New York, 11:30 PM on the 11th in Chicago.
+        await runPersonAgreementSweep(new Date("2026-10-12T04:30:00.000Z"));
+
+        const where = findMany.mock.calls.at(-1)![0]!.where as { OR: { programsLed?: { some: { AND: { startAt?: { lte: Date } }[] } } }[] };
+        const led = where.OR.find((arm) => arm.programsLed)!.programsLed!;
+        expect(led.some.AND[1].startAt!.lte.toISOString()).toBe(day);
     });
 });

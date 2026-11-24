@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { orgToday } from "@/lib/appSettings";
 import { withAuth } from "@/lib/auth";
 import { bgThresholdForYear, liveMembershipYear } from "@/lib/membership/renewal";
 import { membershipYearStart } from "@/lib/programYear";
@@ -68,6 +69,7 @@ function mergeSourceIdentities(s: { mergedArchive: { fromId: number; snapshot: u
  */
 export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req) => {
     const now = new Date();
+    const today = await orgToday(now);
     const sinceParam = new URL(req.url).searchParams.get("bgClearedSince");
     const since = sinceParam ? new Date(sinceParam) : null;
     const bgClearedSince = since && !Number.isNaN(since.getTime()) ? since : null;
@@ -145,13 +147,13 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     const peopleNeedingBgCheck: PersonRow[] = [];
     const peopleMissingDob: PersonRow[] = [];
     if (isRecheckPolicySet(bgRecheckMonths) && boundary && liveYear !== null) {
-        const recent = recentProgramWhere(now);
+        const recent = recentProgramWhere(today);
         const programSelect = { select: { id: true, name: true, appliesToYear: true } };
         // A superset of who the new-member trigger opens for (it takes the
         // program-attached arm only), so every obligation it creates has a row here.
         // The submit action opens or reuses a person's review for anyone listed.
         const people = await prisma.person.findMany({
-            where: bgObligatedWhere(now),
+            where: bgObligatedWhere(today),
             select: {
                 id: true,
                 name: true,
@@ -224,7 +226,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
 
     // 4c. Position holders, judged against the start of the year each serves in.
     const positionHolderRows = isRecheckPolicySet(bgRecheckMonths) && settings?.orgMembershipYearBoundary
-        ? await positionHolders(prisma, settings.orgMembershipYearBoundary, bgRecheckMonths, now)
+        ? await positionHolders(prisma, settings.orgMembershipYearBoundary, bgRecheckMonths, now, today)
         : [];
 
     // 5. Blanket-stamped background checks: a household clearance with no per-adult
@@ -378,7 +380,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     // list from offering people the automatic pass would never have considered.
     const overCeiling = await prisma.person.findMany({
         where: {
-            ...autoPopulationWhere(now),
+            ...autoPopulationWhere(today),
             isDeclaredAdult: true,
         },
         select: { id: true, name: true, householdId: true },

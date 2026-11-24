@@ -1,4 +1,4 @@
-import { calculateAge, isYouth, orgCalendarDay } from "@/lib/time";
+import { calculateAge, isYouth } from "@/lib/time";
 
 /**
  * Whether we KNOW this person is an adult: declared over 25, or 18+ by DOB.
@@ -82,11 +82,11 @@ export function isLeaderAgeEligible(person: { dateOfBirth: Date | string | null;
 
 /**
  * DB-level date threshold for the leader-picker query: born on or before this
- * date ⇒ 23 or older today. The isDeclaredAdult OR leg covers null-DOB adults
+ * date ⇒ 23 or older on `today`, the org's calendar day. The isDeclaredAdult OR leg covers null-DOB adults
  * (flag means "marked 25+" which clears 23).
  */
-export function leaderAgeCutoff(): Date {
-  const d = new Date(orgCalendarDay());
+export function leaderAgeCutoff(today: Date): Date {
+  const d = new Date(today);
   d.setUTCFullYear(d.getUTCFullYear() - LEADER_MIN_AGE);
   return d;
 }

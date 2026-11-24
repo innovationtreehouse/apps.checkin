@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { orgToday } from "@/lib/appSettings";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { ApiResponseError, badRequest, forbidden, handler, notFound, unauthorized } from "@/security/handler";
 import { reconcileAndWarn } from "@/lib/emergencyContacts/service";
@@ -48,6 +49,7 @@ export const GET = handler('GET /api/household', async ({ auth }) => {
     if (!user) throw notFound("User not found");
 
     const now = new Date();
+    const today = await orgToday(now);
     const settings = user.household
         ? await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true, bgRecheckMonths: true } })
         : null;
@@ -70,7 +72,7 @@ export const GET = handler('GET /api/household', async ({ auth }) => {
             // Every adult carries bgStatus while the policy is set, so its presence says nothing about a check
             // on file. Only the computed status leaves, never the date; the stripper keeps it for the person and their lead.
             if (!settings || !bgTracked || !isAdult) return { ...peer, emailLocked: isEmailLocked(m) };
-            const status = bgStatus(lastBackgroundCheck, settings, now);
+            const status = bgStatus(lastBackgroundCheck, settings, now, today);
             return { ...peer, emailLocked: isEmailLocked(m), bgStatus: { personId: m.id, ...(status && { status }) } };
         }),
     };
