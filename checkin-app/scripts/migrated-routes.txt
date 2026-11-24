@@ -222,6 +222,7 @@ POST /api/membership/check-started
 
 # Shopify mirror (s-read) — board payment queue and s-read routes via handler().
 GET /api/finance-ops/payments
+POST /api/finance-ops/payments/reconcile
 GET /api/finance-ops/s-read/sync
 POST /api/finance-ops/s-read/sync
 GET /api/finance-ops/s-read/diagnose

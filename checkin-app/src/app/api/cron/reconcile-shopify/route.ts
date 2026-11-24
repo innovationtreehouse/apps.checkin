@@ -61,6 +61,9 @@ function rowsFailed(outcome: object): number {
  * checkpoint) and raises refund/chargeback/cancel problems for the board. See
  * lib/finance/reconcile/. No-op when the mirror isn't wired
  * (config.shopifyReadDatabaseUrl() null — no SHOPIFY_READ_DB / override set).
+ * The reconcile shares a lease with the payments page's refresh
+ * (POST /api/finance-ops/payments/reconcile); when that refresh holds it, this step
+ * does nothing and the response carries `leaseHeld: true`.
  *
  * Also runs the program-sale sweep (lib/programs/saleSweep.ts): ends sales whose
  * off-sale date has arrived and emails the board unpaid claims a week later.
