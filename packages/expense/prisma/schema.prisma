@@ -672,8 +672,9 @@ model CapitalAsset {
   // QuickBooks entity type of source_qb_txn_id (Bill | Purchase); null when the seed did not say.
   /// @sensitivity:internal
   sourceQbTxnEntity    String?  @map("source_qb_txn_entity")
+  // Not read or written; dropped in a later release, once no running code reads it.
   /// @sensitivity:internal
-  sourceDonatedLineId  Int?     @map("source_donated_line_id")
+  sourceDonatedLineId  Int?     @map("source_donated_line_id") @ignore
   // "expense_line" or "gift_line"; null on seeded rows and rows minted before it existed.
   /// @sensitivity:internal
   sourceKind           String?  @map("source_kind")
@@ -707,47 +708,6 @@ model CapitalAssetSequence {
   highestIssued Int    @map("highest_issued")
 
   @@map("capital_asset_sequences")
-}
-
-// A donated gift line at or over the capital thresholds, waiting on or past finance's capital
-// review. Keyed by the gift line, so a resend does nothing. It carries the gift's ids, never its
-// donor. `isCapital` is null until reviewed; an asset line mints into the register.
-model DonatedCapitalLine {
-  /// @sensitivity:internal
-  id                Int       @id @default(autoincrement())
-  /// @sensitivity:internal
-  orgId             String    @map("org_id")
-  /// @sensitivity:internal
-  giftSource        String    @map("gift_source")
-  /// @sensitivity:internal
-  giftId            Int       @map("gift_id")
-  /// @sensitivity:internal
-  giftLineId        Int       @map("gift_line_id")
-  /// @sensitivity:internal
-  description       String
-  /// @sensitivity:internal
-  quantity          Float
-  // The line's value with its share of the receipt's tax and shipping.
-  /// @sensitivity:internal
-  /// @financeMark
-  costCents         Int       @map("cost_cents")
-  /// @sensitivity:internal
-  acquisitionDate   String?   @map("acquisition_date")
-  /// @sensitivity:internal
-  budgetOwnerId     Int       @map("budget_owner_id")
-  /// @sensitivity:internal
-  isCapital         Boolean?  @map("is_capital")
-  /// @sensitivity:internal
-  depreciationYears Int?      @map("depreciation_years")
-  /// @sensitivity:pii
-  reviewedByUserId  Int?      @map("reviewed_by_user_id")
-  /// @sensitivity:internal
-  reviewedAt        DateTime? @map("reviewed_at")
-  /// @sensitivity:internal
-  createdAt         DateTime  @default(now()) @map("created_at")
-
-  @@unique([orgId, giftSource, giftId, giftLineId], map: "donated_capital_lines_gift_line_key")
-  @@map("donated_capital_lines")
 }
 
 // A QuickBooks transaction finance has permanently removed from matching.

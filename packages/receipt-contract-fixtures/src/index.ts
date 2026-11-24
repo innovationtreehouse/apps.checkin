@@ -101,9 +101,9 @@ export function fixturesForSeam<T = unknown>(seam: Seam): Array<{ id: string; va
 }
 
 /** A crossing between libraries that has a refusals fixture under `fixtures/refusals/`. */
-export type Crossing = "S1" | "X13" | "X5" | "X9" | "X4" | "gift-load" | "capital-send";
+export type Crossing = "S1" | "X13" | "X5" | "X9" | "X4" | "gift-load";
 
-export const CROSSINGS: Crossing[] = ["S1", "X13", "X5", "X9", "X4", "gift-load", "capital-send"];
+export const CROSSINGS: Crossing[] = ["S1", "X13", "X5", "X9", "X4", "gift-load"];
 
 /** What the callee must answer: a normal return, a refusal for good (`kindOf` "data"), or a wiring bug (`kindOf` "bug"). */
 export type RefusalExpectation = "accepted" | "refused" | "bug";

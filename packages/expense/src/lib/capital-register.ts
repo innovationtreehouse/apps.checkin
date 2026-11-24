@@ -93,7 +93,7 @@ export function seedCollision(assetNumber: string, existing: SeedColumns & { see
 
 export type AssetSource =
   | { kind: "expense_line"; expenseId: string; lineItemId: number }
-  | { kind: "gift_line"; giftSource: "receipt" | "manual"; giftId: number; giftLineId: number; donatedLineId?: number };
+  | { kind: "gift_line"; giftSource: "receipt" | "manual"; giftId: number; giftLineId: number };
 
 export interface AssetUnit {
   costCents: number;
@@ -105,7 +105,7 @@ export interface AssetUnit {
 function sourceColumns(source: AssetSource) {
   return source.kind === "expense_line"
     ? { sourceKind: source.kind, sourceExpenseId: source.expenseId, sourceLineItemId: source.lineItemId, sourceReceiptId: source.expenseId }
-    : { sourceKind: source.kind, sourceGiftSource: source.giftSource, sourceGiftId: source.giftId, sourceGiftLineId: source.giftLineId, sourceDonatedLineId: source.donatedLineId };
+    : { sourceKind: source.kind, sourceGiftSource: source.giftSource, sourceGiftId: source.giftId, sourceGiftLineId: source.giftLineId };
 }
 
 function sourceWhere(orgId: string, source: AssetSource): Prisma.CapitalAssetWhereInput {

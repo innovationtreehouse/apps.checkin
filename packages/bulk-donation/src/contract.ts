@@ -3,7 +3,7 @@
 import { z } from "zod";
 import type { OnFailure } from "@checkin/component-kit";
 import type { BooksMap, BooksMapRole, QboAccountList, QuickBooksClient } from "@checkin/quickbooks";
-import type { DonatedCapitalLine, ResolvedInventoryDelta } from "@checkin/receipt-types";
+import type { ResolvedInventoryDelta } from "@checkin/receipt-types";
 
 /** The acting host user, projected to what rows stamp (actor ids and usernames). */
 export interface BulkDonationPrincipal {
@@ -138,8 +138,6 @@ export interface InKindDirectory {
   largeValueCents(): Promise<number>;
 }
 
-export { DonatedCapitalLineSchema as CapitalReviewLineSchema, type DonatedCapitalLine as CapitalReviewLine } from "@checkin/receipt-types";
-
 /** A line's capital decision as the expense library's review reads and writes it; null until designated. */
 export interface CapitalLine {
   id: number;
@@ -202,12 +200,6 @@ export interface InKindCapital {
   review: CapitalReview;
   /** Mints one asset per unit of the line; a repeat for the same line returns the same numbers. */
   register(orgId: string, line: CapitalAssetLine): Promise<string[]>;
-  /** Sends an accepted gift's lines; the callee keeps those at or over its capital thresholds. A resend does nothing. */
-  submit(orgId: string, lines: DonatedCapitalLine[]): Promise<void>;
-  /** The gifts with a line still waiting on capital review. */
-  awaitingReview(orgId: string): Promise<{ giftSource: string; giftId: number }[]>;
-  /** The gift's lines capital review made assets; each books to a fixed-asset account. */
-  assetLineIds(orgId: string, gift: { giftSource: "receipt" | "manual"; giftId: number }): Promise<number[]>;
 }
 
 /** One donated part to resolve: the gift line, its GTIN-13, and whether capital review made it an asset. */
