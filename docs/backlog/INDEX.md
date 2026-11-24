@@ -206,7 +206,6 @@ _Note: FR+FE+CI (+CI4 glue) are ONE dependency-chained pipeline — little value
 | PL6 | Lifecycle: transactional outbox / DB CHECK constraints / `classify` badge + SQL view (was decided-deferred architectural) | ENHANCE | COND | M | ? | C | #1305 (open) |
 | PL7 | s-read FUTUREWORK: projection DLQ, replay/reset-watermark admin ops, alarm wiring, in-VPC migrate-runner | ENHANCE | COND | M | ? | C | #1306 (open) |
 | PL8 | **Orphan Student Alerts** (CUJ 7.5): dashboard alert for unclaimed parent accounts | CREATE | READY-FOR-DEV | S | ? | C,D | #1307 (open) |
-| PL9 | SWR / data-fetching migration tail (Phase 7 ~30 files); resilient-load rollout. **Design MERGED to main (#925 resilient SWR loader + #716 hook-migration plan).** | CHORE | IN-DESIGN | M | ? | C | #1308 (open) |
 | PL10 | Index page: command palette (Cmd-K), dynamic detail results, keyboard nav (nice-to-have) | CREATE | NEEDS-DESIGN | M | ? | C | #1309 (open) |
 | PL11 | Test-runner split Jest/Vitest (#228) [monorepo conversion #214 done, Lambda infra #235 done] | CHORE | READY-FOR-DEV | M | ? | C,F | #228 (open); #214, #235 closed |
 | PL12 | Dev tooling: `+ new persona` creation; dev-instance macro set; sysadmin-persona impersonation | ENHANCE | READY-FOR-DEV | S | ? | C | #1310 (open) |

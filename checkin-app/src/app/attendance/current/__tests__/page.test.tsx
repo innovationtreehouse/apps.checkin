@@ -203,6 +203,18 @@ describe("attendance/current page", () => {
     beforeEach(() => jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] }));
     afterEach(() => jest.useRealTimers());
 
+    it("keeps the Loader, not the unavailable alert, while the first load retries", async () => {
+      setSearchParams("mode=kiosk");
+      stubAttendance(() => { throw new TypeError("fetch failed"); });
+      renderWithProviders(<KioskDisplay />);
+      await act(async () => { jest.advanceTimersByTime(1000); });
+
+      expect(global.fetch).toHaveBeenCalled();
+      expect(document.querySelector(".mantine-Loader-root")).not.toBeNull();
+      expect(screen.queryByText("Attendance is unavailable — the roster could not be loaded.")).not.toBeInTheDocument();
+      expect(screen.queryByText(unreachable)).not.toBeInTheDocument();
+    });
+
     it("off the kiosk, shows the failure in place of the roster once the retries run out, and raises no toast", async () => {
       setAdminSession();
       stubAttendance(() => { throw new TypeError("fetch failed"); });
