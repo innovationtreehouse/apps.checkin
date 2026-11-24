@@ -8,10 +8,12 @@
  */
 
 import { NextResponse } from 'next/server';
+import { notFound, redirect } from 'next/navigation';
 import { withAuth } from '@/lib/auth';
 import { getServerSession } from 'next-auth/next';
 import { getKioskPublicKeys, verifyKioskSignature } from '@/lib/verify-kiosk';
 import { ORG_DOMAIN } from '@/lib/config';
+import { logBackendError } from '@/lib/logger';
 import type { AuthenticatedUser } from '@/types/auth';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -20,6 +22,7 @@ jest.mock('@/lib/verify-kiosk', () => ({
     getKioskPublicKeys: jest.fn(),
     verifyKioskSignature: jest.fn(),
 }));
+jest.mock('@/lib/logger', () => ({ logBackendError: jest.fn(), logger: { error: jest.fn() } }));
 
 const mockSession = getServerSession as jest.Mock;
 const mockPubKeys = getKioskPublicKeys as jest.Mock;
@@ -301,5 +304,37 @@ describe('withAuth — dev instance org gate', () => {
 
         expect(res.status).toBe(200);
         expect(handler).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('withAuth — handler throws', () => {
+    let consoleError: jest.SpyInstance;
+    beforeEach(() => {
+        mockSession.mockResolvedValue({ user: user() });
+        consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    });
+    afterEach(() => consoleError.mockRestore());
+
+    const throwing = (thrown: unknown) => withAuth({}, async () => { throw thrown; });
+
+    it('turns an uncaught error into a logged JSON 500', async () => {
+        const boom = new Error('boom');
+        const res = await throwing(boom)(new Request('http://localhost/api/whatever?email=x', { method: 'PATCH' }) as never);
+
+        expect(res.status).toBe(500);
+        expect(await res.json()).toEqual({ error: 'Internal Server Error' });
+        expect(logBackendError).toHaveBeenCalledWith(boom, 'PATCH /api/whatever');
+    });
+
+    it('lets redirect() propagate', async () => {
+        const route = withAuth({}, async () => redirect('/elsewhere'));
+        await expect(route(sessionReq())).rejects.toThrow('NEXT_REDIRECT');
+        expect(logBackendError).not.toHaveBeenCalled();
+    });
+
+    it('lets notFound() propagate', async () => {
+        const route = withAuth({}, async () => notFound());
+        await expect(route(sessionReq())).rejects.toThrow();
+        expect(logBackendError).not.toHaveBeenCalled();
     });
 });
