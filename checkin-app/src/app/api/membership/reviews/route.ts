@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { leadMembersWhere } from "@/lib/household/leads";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
@@ -16,7 +17,7 @@ const REVIEW_QUEUE_SELECT = {
     requestedForHousehold: {
         select: {
             name: true,
-            householdMembers: { where: { isHouseholdLead: true }, select: { id: true, name: true, email: true } },
+            householdMembers: { where: leadMembersWhere(), select: { id: true, name: true, email: true } },
         },
     },
     _count: { select: { attestations: true } },

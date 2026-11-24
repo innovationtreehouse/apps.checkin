@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { leadMembersWhere } from "@/lib/household/leads";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
@@ -53,7 +54,7 @@ export const GET = handler('GET /api/finance-ops/payment-plans', async ({ req })
                                 id: true,
                                 orgMembership: { select: { status: true } },
                                 householdMembers: {
-                                    where: { isHouseholdLead: true },
+                                    where: leadMembersWhere(),
                                     select: { id: true, name: true, email: true },
                                 },
                             },

@@ -1,4 +1,5 @@
 import { logger } from "@/lib/logger";
+import { leadMembersWhere } from "@/lib/household/leads";
 import prisma from "@/lib/prisma";
 import { handler } from "@/security/handler";
 import { ordersByLegacyIds, type MirrorOrder } from "@/lib/shopifyRead/client";
@@ -41,7 +42,7 @@ export const GET = handler(
                                           name: true,
                                           // The household lead carries the contact email shown in the queue.
                                           householdMembers: {
-                                              where: { isHouseholdLead: true },
+                                              where: leadMembersWhere(),
                                               select: { name: true, email: true },
                                               take: 1,
                                           },

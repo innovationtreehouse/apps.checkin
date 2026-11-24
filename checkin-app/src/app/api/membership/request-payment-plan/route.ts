@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { leadMembersWhere } from "@/lib/household/leads";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
@@ -29,7 +30,7 @@ export const POST = withAuth({}, async (req, auth) => {
 
         const process = await prisma.orgMembershipProcess.findUnique({
             where: { id: processId },
-            include: { orgMembership: { include: { household: { include: { householdMembers: { where: { isHouseholdLead: true }, select: { id: true } } } } } } },
+            include: { orgMembership: { include: { household: { include: { householdMembers: { where: leadMembersWhere(), select: { id: true } } } } } } },
         });
 
         if (!process || !process.orgMembership?.household) {

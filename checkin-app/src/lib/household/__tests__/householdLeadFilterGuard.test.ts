@@ -9,8 +9,8 @@ import ts from 'typescript';
  * A lead filter is an `isHouseholdLead: true` (or `{ equals: true }`) property whose nearest
  * enclosing key is a Prisma filter key, or that sits in a const typed `*WhereInput`. Under a
  * projection or write key, or in a `*Select` const, it is not a filter. Anywhere else the
- * scan cannot place it, so it counts. New filters use `householdLeadsWhere` from
- * `lib/household/leads.ts`.
+ * scan cannot place it, so it counts. New filters use `householdLeadsWhere` or `leadMembersWhere`
+ * from `lib/household/leads.ts`.
  *
  * Exact counts both ways: a new copy fails, and so does an entry left behind after its
  * copies moved onto a helper.
@@ -37,25 +37,13 @@ const TEST_FILE = /\.test\.tsx?$/;
 
 type Entry = { file: string; count: number; reason: string };
 
-const RELATION = 'relation-scoped; needs a sibling helper';
 const ANY_LEAD = 'any lead, not by household; needs a sibling helper';
 const LEAD_BY_ID = 'lead by id; the household is the output, not an input';
 
 const ALLOWLIST: Entry[] = [
-    { file: 'app/api/finance-ops/membership-payment-plans/route.ts', count: 1, reason: RELATION },
-    { file: 'app/api/finance-ops/payment-plans/route.ts', count: 1, reason: RELATION },
-    { file: 'app/api/finance-ops/payments/route.ts', count: 1, reason: RELATION },
-    { file: 'app/api/membership-audit/compliance/route.ts', count: 2, reason: RELATION },
-    { file: 'app/api/membership-audit/households-missing-contact/route.ts', count: 1, reason: RELATION },
-    { file: 'app/api/membership-ops/volunteer-memberships/route.ts', count: 3, reason: `2 ${RELATION}; 1 ${ANY_LEAD}` },
-    { file: 'app/api/membership/request-payment-plan/route.ts', count: 1, reason: RELATION },
-    { file: 'app/api/membership/reviews/route.ts', count: 1, reason: RELATION },
-    { file: 'app/api/programs/[id]/route.ts', count: 1, reason: RELATION },
-    { file: 'app/api/safety/trusted-adults/route.ts', count: 1, reason: RELATION },
-    { file: 'lib/emailRecipients.ts', count: 2, reason: RELATION },
+    { file: 'app/api/membership-ops/volunteer-memberships/route.ts', count: 1, reason: ANY_LEAD },
     { file: 'lib/finance/reconcile/membership.ts', count: 1, reason: ANY_LEAD },
     { file: 'lib/finance/reconcile/program.ts', count: 1, reason: ANY_LEAD },
-    { file: 'lib/household/filters.ts', count: 3, reason: RELATION },
     { file: 'lib/membership/boardAlerts.ts', count: 1, reason: ANY_LEAD },
     { file: 'lib/outreach/recipients.ts', count: 1, reason: ANY_LEAD },
     { file: 'lib/programs/paymentVisibility.ts', count: 1, reason: `${LEAD_BY_ID}; gates payment visibility` },
@@ -180,7 +168,7 @@ describe('household-lead read filters', () => {
             if (hits.length === want) return [];
             if (hits.length > want) {
                 return [`${file}: ${hits.length} lead filter(s), allowlisted ${want} (lines ${hits.join(', ')}). `
-                    + 'Use householdLeadsWhere(householdId) from lib/household/leads.ts. '
+                    + 'Use householdLeadsWhere(householdId), or leadMembersWhere() under a household relation, from lib/household/leads.ts. '
                     + 'If the site is not a "leads of household X" read, classify it: a projection or write whose '
                     + 'key the scan does not know goes in IGNORE_KEYS; a different lead query is a sibling-helper case.'];
             }
