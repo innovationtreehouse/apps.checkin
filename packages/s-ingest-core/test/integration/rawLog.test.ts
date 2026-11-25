@@ -67,6 +67,7 @@ describeDb("appendRawEvent", () => {
     const handMade = await appendRawEvent(prisma, args(node("PAID"), EventSource.HAND_LOADED));
     const store = await appendRawEvent(prisma, args(node("PAID"), EventSource.INCREMENTAL));
     expect(store.inserted).toBe(true);
+    expect(store.payloadChanged).toBe(false);
     expect(store.rawEventId).not.toBe(handMade.rawEventId);
     const latest = await prisma.shopifyRawEvent.findFirst({
       where: { storeId: STORE, shopifyGid: GID },
@@ -88,6 +89,7 @@ describeDb("appendRawEvent", () => {
     await appendRawEvent(prisma, args(node("PAID")));
     const changed = await appendRawEvent(prisma, args(node("REFUNDED")));
     expect(changed.inserted).toBe(true);
+    expect(changed.payloadChanged).toBe(true);
     expect(await countEvents()).toBe(2);
   });
 

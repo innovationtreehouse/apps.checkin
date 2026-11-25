@@ -18,6 +18,7 @@ vi.mock("../../src/ingest/ingestNode.js", () => ({
     shopifyGid: input.node.id,
     occurredAt: null,
     inserted: true,
+    payloadChanged: true,
   })),
 }));
 

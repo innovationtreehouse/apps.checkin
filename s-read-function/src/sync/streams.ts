@@ -124,6 +124,7 @@ function rereadSinceIso(now: Date): string {
 /**
  * Re-ingest already-read nodes so later changes at the store reach the copy. An unchanged
  * node appends no raw event; a changed one is appended and projected like any other read.
+ * A store read that only confirms a hand-made version is appended but not counted as a change.
  * Callers read the window newest first, so a run that stops at `stopAt` has covered the
  * newest rows, the ones most likely to change. Leaves the watermark alone.
  */
@@ -142,7 +143,7 @@ export async function rereadStream(
     if (Date.now() >= stopAt.getTime()) return { count, changed, stopped: true };
     const res = await ingestNode(prisma, { storeId, objectType, node, source: EventSource.INCREMENTAL, syncRunId });
     count++;
-    if (res.inserted) {
+    if (res.payloadChanged) {
       changed++;
       logger.info("re-read found a change", { objectType, shopifyGid: res.shopifyGid });
     }
