@@ -404,6 +404,40 @@ defineRoute({
     ],
 });
 
+// The Roles screen: every person in a live household or holding a role, with
+// their email, role flags, youth flag and Key Volunteer Agreement standing.
+// Sysadmin and board only, the set that grants and revokes roles. 'personal'
+// is granted for isYouth alone; the date of birth it is derived from never
+// leaves.
+defineRoute({
+    endpoint: 'GET /api/roles',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: 'people',
+    // Bag: { RoleHolder }, assembled by the route from Person, PersonRole and
+    // OrgMembershipProcess.
+    returns: ['RoleHolder'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+    ],
+});
+
+// Grant or revoke one person's roles, or (sysadmin only, checked in the route)
+// their staging access. The target comes from the request body, so the role
+// gate is the whole subject boundary. Returns the target's updated RoleHolder
+// row without isYouth or the agreement standing, so no 'personal' grant.
+defineRoute({
+    endpoint: 'PATCH /api/roles',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: 'user',
+    // Bag: { RoleHolder }.
+    returns: ['RoleHolder'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:pii', 'everyones:internal', 'member', 'public']],
+        ['isBoardMember', ['everyones:pii', 'everyones:internal', 'member', 'public']],
+    ],
+});
+
 // Board-only cleanup path for a BackgroundCheckAttestation the participant-
 // merge refuses to carry forward: its collision check ("Both attested the
 // same background check") means the same human reviewed
