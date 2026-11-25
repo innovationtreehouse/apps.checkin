@@ -317,6 +317,8 @@ Not dropped (they're valid), not backlog (no plan to build). Revisit only if pri
 
 **Segment pricing retired (2026-11-19), removed from buckets:** **CO1** member-segment pricing (#270, #278) · **CO2** payment-webhook validation (#278, #2694) · **CO3** guest-checkout full price (#1291). All four issues are closed. Program member pricing is gated by household-bound minted codes judged at the money event (`docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` §2), the webhook checks the product, the amount check was dropped by decision, and the volunteer membership code stays redeemable by anyone holding it, with reconciliation flagging unentitled use, by register rule. CO3 only arose under segment pricing.
 
+**PL9** — SWR / data-fetching migration tail → BUILT (#1308 closed): pages load through `useLoad`, and the kit's behaviour is documented in `packages/component-ui/README.md`.
+
 **RB5** — Key Volunteer role → BUILT (#1317): `KEY_VOLUNTEER` is Board-granted, opens the Key Volunteer Agreement, and gates the grant of Board, BG reviewer and Finance.
 
 **M15** — certifier ∈ member-family → BUILT: `POST /api/shop/certifications` requires both the certifier (sysadmin/board exempt) and the target to belong to an active member family.

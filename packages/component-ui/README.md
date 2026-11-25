@@ -1,8 +1,10 @@
 # @checkin/component-ui
 
-The client kit every library page and every app page loads and writes through:
-`useLoad`, `api()`, `HttpError`, `LoadError`, `Pager`, the viewer context, and
-`showSuccess` / `showError` / `showWarning`. The rules for using it are in
+The client kit library pages and app pages load and write through: `useLoad`,
+`api()`, `HttpError`, `LoadError`, `Pager`, the viewer context, and
+`showSuccess` / `showError` / `showWarning`. App pages use it except the files
+on `rawFetchExemptions` in the root `eslint.config.mjs`, which call `fetch`
+directly. The rules for using it are in
 `docs/conventions.md` ("A library's pages share one client kit"). This file
 describes how the kit behaves.
 
