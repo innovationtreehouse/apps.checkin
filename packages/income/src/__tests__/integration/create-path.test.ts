@@ -909,6 +909,39 @@ describeDb("drainIncomeOutbox — every findOrCreate outcome", () => {
     await drain();
     expect(await rowFor(p)).toMatchObject({ status: "POSTED", origin: "created" });
   });
+
+  it.each([
+    ["the full grace before the payout", "2026-06-26"],
+    ["the last day of the window", "2026-07-05"],
+  ])("a deposit dated %s is found, not created again", async (_, day) => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.hand("EDGE", day, 500);
+    await drain();
+    expect(await rowFor(p)).toMatchObject({ status: "MATCHED", origin: "matched", depositId: "EDGE" });
+    expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("a deposit dated a day past the window is not its match", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.hand("TOO_LATE", "2026-07-06", 500);
+    await drain();
+    expect(await rowFor(p)).toMatchObject({ status: "POSTED", origin: "created" });
+    expect((await rowFor(p)).depositId).not.toBe("TOO_LATE");
+  });
+
+  it("a hand deposit another payout holds is never found for a second payout of the same amount; it is created", async () => {
+    const first = payout(2, "2026-06-28", 500);
+    qbo.hand("HELD", "2026-06-28", 500);
+    await drain();
+    expect(await rowFor(first)).toMatchObject({ status: "MATCHED", depositId: "HELD" });
+
+    const second = payout(3, "2026-06-28", 500);
+    await drain();
+    expect(await rowFor(second)).toMatchObject({ status: "POSTED", origin: "created", qbNote: null });
+    expect((await rowFor(second)).depositId).not.toBe("HELD");
+    expect(await rowFor(first)).toMatchObject({ status: "MATCHED", depositId: "HELD" });
+    expect(qbo.posts).toHaveLength(1);
+  });
 });
 
 describeDb("drainIncomeOutbox — replay after a crash", () => {
@@ -1055,6 +1088,39 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     );
     expect(lines).toHaveLength(4);
     expect(lines.reduce((s, l) => s + l.cents, 0)).toBe(9830);
+  });
+
+  it("splits a refund to the lines that lost units, never by line amount; sums to net", async () => {
+    const g = payout(2, "2026-06-28", 0);
+    // Charge 10000 over two lines; one of the two Camp units refunded for 3000.
+    txns[g] = [
+      { txnGid: `${g}/c`, type: "charge", orderGid: "O9", orderName: "#9", amountCents: 10000, feeCents: 320, netCents: 9680, source: "api" },
+      { txnGid: `${g}/r`, type: "refund", orderGid: "O9", orderName: "#9", amountCents: -3000, feeCents: 0, netCents: -3000, source: "api" },
+    ];
+    setPayout(g, { netCents: 6680 });
+    orderLines.push(
+      { orderGid: "O9", variantId: "V1", title: "Camp", sku: null, quantity: 2, currentQuantity: 1, priceCents: 3000, discountCents: 0 },
+      { orderGid: "O9", variantId: "V2", title: "Shirt", sku: null, quantity: 1, currentQuantity: 1, priceCents: 4000, discountCents: 0 },
+    );
+    owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
+    await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V2", budgetOwnerId: null, quickBooksAccountId: "83" } });
+
+    await drain();
+    expect(await rowFor(g)).toMatchObject({ status: "POSTED", depositTotalCents: 6680 });
+    const lines = qbo.posts[0].body.Line.map((l) => ({
+      cents: Math.round(l.Amount * 100),
+      account: l.DepositLineDetail.AccountRef.value,
+      cls: l.DepositLineDetail.ClassRef?.value,
+    }));
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        { cents: 3000, account: "82", cls: "700" },
+        { cents: 4000, account: "83", cls: undefined },
+        { cents: -320, account: "90", cls: undefined },
+      ]),
+    );
+    expect(lines).toHaveLength(3);
   });
 
   it("hands a deposit that cannot be built to the on-failure port", async () => {
