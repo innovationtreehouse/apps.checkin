@@ -2,6 +2,7 @@ import type { OrgMembershipStatus, Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { membershipYearCycle, coveredThrough } from "@/lib/membership/renewal";
 import { membershipFeeSettledAwaitingBg, settledThisCycleWhere } from "@/lib/membership/lifecycle";
+import { orgToday } from "@/lib/appSettings";
 
 /**
  * Canonical "is this person an active Treehouse Member?" read model.
@@ -107,7 +108,8 @@ export function orgMembershipStatusBlocksLogin(
  * How far a household's membership fee currently covers, as a boundary date — or null when
  * no horizon can be computed (membership fee not settled, or the board hasn't set
  * {@link BoardSettings.orgMembershipYearBoundary}). A membership always runs
- * boundary-to-boundary. A household settled for the live membership year
+ * boundary-to-boundary. A household settled for the membership year live on the
+ * org calendar day at `now`
  * ({@link settledThisCycleWhere} — a paid INITIAL or RENEWAL that records that
  * year) is covered to the boundary that closes the year;
  * one that did not settle is covered only to the boundary that opened it, so off
@@ -143,7 +145,7 @@ export async function membershipValidThrough(householdId: number, now = new Date
     });
     if (!settings?.orgMembershipYearBoundary) return null;
 
-    const cycle = membershipYearCycle(settings.orgMembershipYearBoundary, now);
+    const cycle = membershipYearCycle(settings.orgMembershipYearBoundary, await orgToday(now));
     const settled = (await prisma.orgMembershipProcess.findFirst({
         where: { orgMembershipId: membership.id, ...settledThisCycleWhere(cycle.cycleStart.getUTCFullYear()) },
         select: { id: true },

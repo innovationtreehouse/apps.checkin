@@ -66,8 +66,8 @@ export function hasKnownAdultAge(person: { dateOfBirth: Date | null; isDeclaredA
  * again days later. runRenewalSweep makes the same allowance via settledThisCycleWhere,
  * so the individual agreement and the household agreement roll on one cycle.
  */
-export function agreementCycleFloor(configuredBoundary: Date, now: Date): Date {
-    const { windowStart } = renewalWindow(configuredBoundary, now);
+export function agreementCycleFloor(configuredBoundary: Date, today: Date): Date {
+    const { windowStart } = renewalWindow(configuredBoundary, today);
     const floor = new Date(windowStart);
     floor.setUTCFullYear(floor.getUTCFullYear() - 1);
     return floor;
@@ -186,8 +186,8 @@ export async function runPersonAgreementSweep(now: Date) {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     if (!settings?.orgMembershipYearBoundary) return { opened: 0, failed: 0, reason: "no membership-year boundary configured" };
 
-    const floor = agreementCycleFloor(settings.orgMembershipYearBoundary, now);
     const today = await orgToday(now);
+    const floor = agreementCycleFloor(settings.orgMembershipYearBoundary, today);
     const people = await prisma.person.findMany({ where: { ...autoPopulationWhere(today) }, select: { id: true } });
 
     let opened = 0;
@@ -213,8 +213,8 @@ export async function openPersonAgreementForNewMember(householdId: number, asOf:
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     if (!settings?.orgMembershipYearBoundary) return;
 
-    const floor = agreementCycleFloor(settings.orgMembershipYearBoundary, asOf);
     const today = await orgToday(asOf);
+    const floor = agreementCycleFloor(settings.orgMembershipYearBoundary, today);
     const people = await prisma.person.findMany({
         where: { householdId, ...autoPopulationWhere(today) },
         select: { id: true },
@@ -250,7 +250,7 @@ export async function openPersonAgreementForBoard(personId: number, actorId: num
 
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     // No boundary configured: no cycle to dedup against, so fall back to "one ever".
-    const floor = settings?.orgMembershipYearBoundary ? agreementCycleFloor(settings.orgMembershipYearBoundary, now) : new Date(0);
+    const floor = settings?.orgMembershipYearBoundary ? agreementCycleFloor(settings.orgMembershipYearBoundary, today) : new Date(0);
 
     await openPersonAgreement(personId, today, floor, { manual: true, actorId });
     const open = await findOpenPersonAgreement(personId);

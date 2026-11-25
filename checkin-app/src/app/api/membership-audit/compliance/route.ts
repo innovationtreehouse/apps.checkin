@@ -387,7 +387,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         select: { id: true, name: true, householdId: true },
         orderBy: { name: "asc" },
     });
-    const floor = settings?.orgMembershipYearBoundary ? agreementCycleFloor(settings.orgMembershipYearBoundary, now) : null;
+    const floor = settings?.orgMembershipYearBoundary ? agreementCycleFloor(settings.orgMembershipYearBoundary, today) : null;
     const handled = await prisma.orgMembershipProcess.findMany({
         where: {
             kind: "PERSON_AGREEMENT",

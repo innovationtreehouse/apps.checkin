@@ -1,5 +1,5 @@
-import { nextBoundary, landsNextYear, memberYearStarts, birthCutoff, membershipYearOf, membershipYearLabel, programYearsTouched, variantSlotYears } from '@/lib/programYear';
-import { calculateAge } from '@/lib/time';
+import { nextBoundary, upcomingBoundary, renewalWindow, membershipYearCycle, liveMembershipYear, landsNextYear, memberYearStarts, birthCutoff, membershipYearOf, membershipYearLabel, programYearsTouched, variantSlotYears } from '@/lib/programYear';
+import { calculateAge, calendarDayIn } from '@/lib/time';
 
 // Anchor "now" so the rollover branch is deterministic.
 const NOW = new Date('2026-07-06T00:00:00Z');
@@ -14,6 +14,49 @@ describe('nextBoundary', () => {
     it('rolls to next year when the boundary month/day has already passed', () => {
         const now = new Date('2026-10-01T00:00:00Z'); // past Sept 1
         expect(nextBoundary(new Date(SEPT1), now).toISOString()).toBe('2027-09-01T00:00:00.000Z');
+    });
+});
+
+describe('nextBoundary and upcomingBoundary on the boundary day', () => {
+    const boundaryDay = new Date('2026-09-01T00:00:00Z');
+
+    it('nextBoundary includes the boundary day itself', () => {
+        expect(nextBoundary(new Date(SEPT1), boundaryDay).toISOString()).toBe('2026-09-01T00:00:00.000Z');
+    });
+
+    it('upcomingBoundary skips it: the boundary day belongs to the year it opens', () => {
+        expect(upcomingBoundary(new Date(SEPT1), boundaryDay).toISOString()).toBe('2027-09-01T00:00:00.000Z');
+        expect(upcomingBoundary(new Date(SEPT1), new Date('2026-08-31T00:00:00Z')).toISOString()).toBe('2026-09-01T00:00:00.000Z');
+    });
+});
+
+// 01:00Z is 8 PM the evening before in Chicago: the year turns at the org's midnight, not UTC's.
+describe('membership year on the org calendar day', () => {
+    const boundary = new Date(SEPT1);
+    const chicago = (iso: string) => calendarDayIn(new Date(iso), 'America/Chicago');
+    const utc = (iso: string) => calendarDayIn(new Date(iso), 'UTC');
+
+    it('the renewal window opens at the org\'s midnight', () => {
+        const instant = '2026-07-01T01:00:00Z';
+        expect(renewalWindow(boundary, chicago(instant)).inSeason).toBe(false);
+        expect(renewalWindow(boundary, utc(instant)).inSeason).toBe(true);
+        expect(membershipYearCycle(boundary, chicago(instant)).label).toBe('2025-2026');
+        expect(liveMembershipYear(boundary, chicago(instant))).toBe(2025);
+        expect(liveMembershipYear(boundary, utc(instant))).toBe(2026);
+    });
+
+    it('the boundary passes at the org\'s midnight', () => {
+        const instant = '2026-09-01T01:00:00Z';
+        expect(renewalWindow(boundary, chicago(instant))).toMatchObject({ boundary: new Date('2026-09-01T00:00:00Z'), inSeason: true });
+        expect(renewalWindow(boundary, utc(instant))).toMatchObject({ boundary: new Date('2027-09-01T00:00:00Z'), inSeason: false });
+        expect(membershipYearOf(boundary, chicago(instant))).toBe(2025);
+    });
+
+    it('on the boundary day itself the season is closed and the new year has begun', () => {
+        const day = new Date('2026-09-01T00:00:00Z');
+        expect(renewalWindow(boundary, day).inSeason).toBe(false);
+        expect(membershipYearOf(boundary, day)).toBe(2026);
+        expect(membershipYearCycle(boundary, day).label).toBe('2026-2027');
     });
 });
 

@@ -5,7 +5,8 @@ import { apiError } from "@/lib/api-response";
 import { REGISTRY } from "@/lib/email-templates/registry";
 import { findUnknownTokens } from "@/lib/email-templates/tokens";
 import { readTemplateFields, writeTemplateFields, type FieldTargets } from "@/lib/email-templates/settingsFields";
-import { nextBoundary } from "@/lib/membership/renewal";
+import { upcomingBoundary } from "@/lib/membership/renewal";
+import { orgToday } from "@/lib/appSettings";
 import type { BusinessRole } from "@/types/auth";
 import { personActor, recordAudit } from "@/lib/auditActor";
 
@@ -37,14 +38,14 @@ const TOKENS = REGISTRY["outreach.opening"].allowedTokens;
  * GET /api/settings/outreach — the saved outreach copy (null where a campaign sends its
  * default), under the BoardSettings field names, plus the current
  * membership-year boundary's next occurrence (read-only, for the live preview's
- * {{deadline}} — computed server-side so the client never has to re-derive nextBoundary()
+ * {{deadline}} — computed server-side so the client never has to re-derive upcomingBoundary()
  * and pull prisma into the bundle). Null when the boundary isn't configured yet.
  */
 export const GET = withAuth({ roles: ROLES }, async () => {
     const settings = await readTemplateFields(TARGETS);
     const boundarySetting = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
     const nextDeadline = boundarySetting?.orgMembershipYearBoundary
-        ? nextBoundary(boundarySetting.orgMembershipYearBoundary, new Date()).toISOString().slice(0, 10)
+        ? upcomingBoundary(boundarySetting.orgMembershipYearBoundary, await orgToday()).toISOString().slice(0, 10)
         : null;
     return NextResponse.json({ settings, nextDeadline });
 });

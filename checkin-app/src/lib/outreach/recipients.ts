@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { notRenewingTargetYear } from "@/lib/membership/notRenewing";
+import { orgToday } from "@/lib/appSettings";
 import type { Prisma } from "@/generated/prisma/client";
 import type { EmailType } from "@/lib/outreach/render";
 
@@ -22,8 +23,8 @@ export interface RecipientSnapshot {
  * has not. `archivedAt` is checked here because row security hides an archived household
  * only from queries that reach Household.
  */
-export function outreachAudienceWhere(emailType: EmailType, boundary: Date | null | undefined, now: Date): Prisma.PersonWhereInput {
-    const year = notRenewingTargetYear(boundary, now);
+export function outreachAudienceWhere(emailType: EmailType, boundary: Date | null | undefined, today: Date): Prisma.PersonWhereInput {
+    const year = notRenewingTargetYear(boundary, today);
     const where: Prisma.PersonWhereInput = {
         isHouseholdLead: true,
         household: {
@@ -46,7 +47,7 @@ export function outreachAudienceWhere(emailType: EmailType, boundary: Date | nul
 /** {@link outreachAudienceWhere} for the Board's configured membership-year boundary. */
 export async function outreachAudienceAt(emailType: EmailType, now: Date): Promise<Prisma.PersonWhereInput> {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-    return outreachAudienceWhere(emailType, settings?.orgMembershipYearBoundary, now);
+    return outreachAudienceWhere(emailType, settings?.orgMembershipYearBoundary, await orgToday(now));
 }
 
 /** The recipients of one campaign send: the audience its email type implies. */

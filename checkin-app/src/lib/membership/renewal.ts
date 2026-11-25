@@ -9,10 +9,11 @@ import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { personActor, systemActor } from "@/lib/auditActor";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { clearNotRenewingInTx } from "@/lib/membership/notRenewing";
-import { membershipYearLabel, membershipYearOf, membershipYearStart, nextBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear, RENEWAL_LEAD_MONTHS } from "@/lib/programYear";
+import { membershipYearLabel, membershipYearOf, membershipYearStart, nextBoundary, upcomingBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear, RENEWAL_LEAD_MONTHS } from "@/lib/programYear";
+import { orgToday } from "@/lib/appSettings";
 import { lockProcessRows } from "@/lib/lockOrder";
 
-export { nextBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear };
+export { nextBoundary, upcomingBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear };
 
 /**
  * Annual renewal. A common membership-year boundary (BoardSettings) drives every
@@ -89,13 +90,13 @@ export function bgValidUntilBoundary(
 
 
 /**
- * The years a board grant may record at `now`, earliest first: the year in progress
+ * The years a board grant may record on `today`, an org calendar day, earliest first: the year in progress
  * and, inside the renewal window, the coming year. None with no boundary set.
  */
-export function grantableYears(configuredBoundary: Date | null | undefined, now: Date): { year: number; label: string }[] {
+export function grantableYears(configuredBoundary: Date | null | undefined, today: Date): { year: number; label: string }[] {
     if (!configuredBoundary) return [];
-    const inProgress = membershipYearOf(configuredBoundary, now);
-    const live = membershipYearCycle(configuredBoundary, now).cycleStart.getUTCFullYear();
+    const inProgress = membershipYearOf(configuredBoundary, today);
+    const live = membershipYearCycle(configuredBoundary, today).cycleStart.getUTCFullYear();
     return (live > inProgress ? [inProgress, live] : [inProgress]).map((year) => ({ year, label: membershipYearLabel(year) }));
 }
 
@@ -142,15 +143,16 @@ export async function runRenewalSweep(now: Date) {
         return { opened: 0, skipped: 0, reason: "no membership-year boundary configured" };
     }
 
-    const { boundary, windowStart, inSeason } = renewalWindow(settings.orgMembershipYearBoundary, now);
+    const today = await orgToday(now);
+    const { boundary, windowStart, inSeason } = renewalWindow(settings.orgMembershipYearBoundary, today);
     if (!inSeason) {
         return { opened: 0, skipped: 0, reason: "not yet within renewal window" };
     }
 
     // In season the live year is the coming year. Lazy: payment.ts imports this module.
-    const comingYear = membershipYearCycle(settings.orgMembershipYearBoundary, now).cycleStart.getUTCFullYear();
+    const comingYear = membershipYearCycle(settings.orgMembershipYearBoundary, today).cycleStart.getUTCFullYear();
     const { liveYearVariantId } = await import("@/lib/membership/payment");
-    if (!(await liveYearVariantId(settings.orgMembershipYearBoundary, now))) {
+    if (!(await liveYearVariantId(settings.orgMembershipYearBoundary, today))) {
         return { opened: 0, skipped: 0, reason: `no membership product set for ${membershipYearLabel(comingYear)}` };
     }
 

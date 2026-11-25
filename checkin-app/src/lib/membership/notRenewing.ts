@@ -4,7 +4,8 @@ import { ServiceError } from "@checkin/component-kit";
 import { config } from "@/lib/config";
 import { personActor } from "@/lib/auditActor";
 import { emailBoardMembers } from "@/lib/emailRecipients";
-import { isYouth } from "@/lib/time";
+import { calendarDayIn, isYouth } from "@/lib/time";
+import { orgToday } from "@/lib/appSettings";
 import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { RENEWAL_UNDERWAY, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { liveMembershipYear, membershipYearLabel, renewalWindow } from "@/lib/programYear";
@@ -22,26 +23,27 @@ export class NotRenewingError extends ServiceError {
     }
 }
 
-/** The noted year: the live year inside the renewal window, the year after it outside. */
-export function notRenewingTargetYear(boundary: Date | null | undefined, now: Date): number | null {
-    const live = liveMembershipYear(boundary, now);
+/** The noted year on `today`, an org calendar day: the live year inside the renewal window, the year after it outside. */
+export function notRenewingTargetYear(boundary: Date | null | undefined, today: Date): number | null {
+    const live = liveMembershipYear(boundary, today);
     if (!boundary || live === null) return null;
-    return renewalWindow(boundary, now).inSeason ? live : live + 1;
+    return renewalWindow(boundary, today).inSeason ? live : live + 1;
 }
 
 /** True while the note's year has not passed: it is the live year or a later one. */
-export function noteStands(notRenewingYear: number | null, boundary: Date | null | undefined, now: Date): notRenewingYear is number {
-    const live = liveMembershipYear(boundary, now);
+export function noteStands(notRenewingYear: number | null, boundary: Date | null | undefined, today: Date): notRenewingYear is number {
+    const live = liveMembershipYear(boundary, today);
     return notRenewingYear !== null && live !== null && notRenewingYear >= live;
 }
 
-/** True when a RENEWAL application was opened for the year its household has said it won't renew into. */
+/** True when a RENEWAL application was opened, on its creation day in `timeZone`, for the year its household has said it won't renew into. */
 export function isNotRenewingRenewal(
     row: { kind: string; createdAt: Date },
     notRenewingYear: number | null,
     boundary: Date | null | undefined,
+    timeZone: string,
 ): boolean {
-    return row.kind === "RENEWAL" && notRenewingYear !== null && liveMembershipYear(boundary, row.createdAt) === notRenewingYear;
+    return row.kind === "RENEWAL" && notRenewingYear !== null && liveMembershipYear(boundary, calendarDayIn(row.createdAt, timeZone)) === notRenewingYear;
 }
 
 const LEAD_SELECT = { name: true, householdId: true, isHouseholdLead: true, dateOfBirth: true } as const;
@@ -76,7 +78,7 @@ async function boundaryNow() {
 /** Sets the note for the caller's household; a repeat is a no-op. Emails the Board after commit. */
 export async function markNotRenewing(personId: number, now = new Date()) {
     const lead = await leadOf(personId);
-    const year = notRenewingTargetYear(await boundaryNow(), now);
+    const year = notRenewingTargetYear(await boundaryNow(), await orgToday(now));
     if (year === null) throw new NotRenewingError(409, "The membership year isn't set up yet. Please contact the Board.", "no_boundary");
 
     const { membership, changed } = await prisma.$transaction(async (tx) => {

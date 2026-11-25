@@ -41,8 +41,8 @@ beforeEach(() => {
 afterEach(() => jest.useRealTimers());
 
 it.each([
-    ["the day before the renewal window opens", new Date(Date.UTC(2027, 5, 30)), 2026],
-    ["the day the renewal window opens", new Date(Date.UTC(2027, 6, 1)), 2027],
+    ["the day before the renewal window opens", new Date(Date.UTC(2027, 5, 30, 12)), 2026],
+    ["the day the renewal window opens", new Date(Date.UTC(2027, 6, 1, 12)), 2027],
 ])("records the live year on %s, in the write that flips the request", async (_label, now, year) => {
     jest.useFakeTimers({ now, doNotFake: ["nextTick", "queueMicrotask", "setImmediate", "setTimeout"] });
     jest.mocked(prisma.boardSettings.findUnique).mockResolvedValue({ orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) } as never);
