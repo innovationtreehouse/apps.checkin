@@ -1,4 +1,5 @@
 import type { Prisma } from "@/generated/prisma/client";
+import { leadMembersWhere } from "@/lib/household/leads";
 
 /**
  * Shared Household `where` fragments for the "who needs a lead" surfaces (a1:
@@ -13,7 +14,7 @@ import type { Prisma } from "@/generated/prisma/client";
  * members is NOT broken — there is nobody to promote.
  */
 export const BROKEN_HOUSEHOLD_WHERE: Prisma.HouseholdWhereInput = {
-    householdMembers: { some: {}, none: { isHouseholdLead: true } },
+    householdMembers: { some: {}, none: leadMembersWhere() },
 };
 
 /**
@@ -36,8 +37,8 @@ export const BROKEN_HOUSEHOLD_WHERE: Prisma.HouseholdWhereInput = {
 export const UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE: Prisma.HouseholdWhereInput = {
     OR: [
         {
-            householdMembers: { some: { isHouseholdLead: true, email: { not: null } } },
-            NOT: { householdMembers: { some: { isHouseholdLead: true, accounts: { some: { provider: "google" } } } } },
+            householdMembers: { some: { ...leadMembersWhere(), email: { not: null } } },
+            NOT: { householdMembers: { some: { ...leadMembersWhere(), accounts: { some: { provider: "google" } } } } },
         },
         BROKEN_HOUSEHOLD_WHERE,
     ],

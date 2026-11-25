@@ -10,7 +10,6 @@ export const FINANCE_VIEWS_PAGE_SIZE = 50;
 /** Every model a log row can name, for the record type filter. */
 export const FINANCE_VIEW_MODELS = [
   "Benevity.Disbursement",
-  "DonatedCapitalLine",
   "Expense",
   "InKindDonation",
   "ManualInKindDonation",

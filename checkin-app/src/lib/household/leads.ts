@@ -44,12 +44,19 @@ export async function leadHousehold(
 export const MAX_HOUSEHOLD_LEADS = 2;
 
 /**
+ * The person-level "is a household lead" predicate, for filters that already sit
+ * under a household (`householdMembers: { where | some | none }`) or carry their
+ * own `householdId`.
+ */
+export const leadMembersWhere = () => ({ isHouseholdLead: true }) as const;
+
+/**
  * The canonical "leads of household X" Prisma filter. Single source of truth
  * for the `{ householdId, isHouseholdLead: true }` predicate that would otherwise
  * be hand-spelled at every count/list/stamp call site — keeps them from drifting.
  */
 export const householdLeadsWhere = (householdId: number) =>
-    ({ householdId, isHouseholdLead: true }) as const;
+    ({ householdId, ...leadMembersWhere() }) as const;
 
 /** Whether the caller may set ages in this household ({@link mayDeclareAges}). */
 export async function setsHouseholdAges(db: DbClient, callerId: number, householdId: number): Promise<boolean> {

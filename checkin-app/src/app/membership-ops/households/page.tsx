@@ -45,7 +45,8 @@ export default function AdminHouseholdsPage() {
   // Certifying a payment is Board-only (the server 403s a sysadmin), so a Grant that
   // would certify is hidden from anyone else. One that only opens an application stays.
   const isBoard = me?.isBoardMember === true;
-  const { formatDate } = useOrgTime();
+  const { formatDate, today: orgToday } = useOrgTime();
+  const today = orgToday();
   const router = useRouter();
 
   const { data, error, reload } = useLoad<{ households: Household[]; grantYears?: GrantYear[] }>(ready ? '/api/membership-ops/households' : null);
@@ -208,7 +209,7 @@ export default function AdminHouseholdsPage() {
               const settledForComingYear = household.settledForComingYear === true;
               const awaitingPayment = household.awaitingPayment === true;
               const showGrantInProgress = !!yearInProgress && (isBoard || !awaitingPayment) &&
-                (!hasActiveMembership || (!isStaffHousehold && (awaitingPayment || isMembershipLapsed(household.validUntil))));
+                (!hasActiveMembership || (!isStaffHousehold && (awaitingPayment || isMembershipLapsed(household.validUntil, today))));
 
               return (
                 <Table.Tr key={household.id}>
@@ -257,7 +258,7 @@ export default function AdminHouseholdsPage() {
                   <Table.Td>
                     {isDenied ? (
                       <Text c="red" fw={700}>Denied</Text>
-                    ) : hasActiveMembership && isMembershipLapsed(household.validUntil) ? (
+                    ) : hasActiveMembership && isMembershipLapsed(household.validUntil, today) ? (
                       <Tooltip label="Active, but no membership fee for the current membership year is recorded here">
                         <Text c="orange" fw={700} style={{ cursor: "default" }}>Lapsed</Text>
                       </Tooltip>
@@ -269,7 +270,7 @@ export default function AdminHouseholdsPage() {
                   </Table.Td>
                   <Table.Td>{fmtDate(household.orgMembership?.memberSince)}</Table.Td>
                   <Table.Td>
-                    <Text c={isMembershipLapsed(household.validUntil) ? "red" : undefined} fw={isMembershipLapsed(household.validUntil) ? 700 : undefined}>
+                    <Text c={isMembershipLapsed(household.validUntil, today) ? "red" : undefined} fw={isMembershipLapsed(household.validUntil, today) ? 700 : undefined}>
                       {fmtDate(household.validUntil)}
                     </Text>
                   </Table.Td>

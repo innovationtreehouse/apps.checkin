@@ -1,7 +1,7 @@
 import type { Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
-import { orgCalendarDay } from "@/lib/time";
+import { orgToday } from "@/lib/appSettings";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { personOrSystemActor, systemActor } from "@/lib/auditActor";
 import { isAdultAsOf, isMinorAsOf } from "@/lib/household/secondLead";
@@ -21,12 +21,11 @@ export type DayWindow = { start: Date; end: Date };
 const yearsAfter = (d: Date, years: number) => new Date(Date.UTC(d.getUTCFullYear() + years, d.getUTCMonth(), d.getUTCDate()));
 
 /**
- * The membership year in progress on `now`'s calendar day in the org's zone: it starts at
- * the latest boundary on or before that day. Unlike membershipYearCycle, the renewal
- * window does not move it early, so a new year's agreements open on the boundary itself.
+ * The membership year in progress on `today`, an org calendar day: it starts at the latest
+ * boundary on or before that day. Unlike membershipYearCycle, the renewal window does not
+ * move it early, so a new year's agreements open on the boundary itself.
  */
-export function membershipYearAt(configuredBoundary: Date, now: Date): DayWindow {
-    const today = orgCalendarDay(now);
+export function membershipYearAt(configuredBoundary: Date, today: Date): DayWindow {
     let start = new Date(Date.UTC(today.getUTCFullYear(), configuredBoundary.getUTCMonth(), configuredBoundary.getUTCDate()));
     if (start > today) start = yearsAfter(start, -1);
     return { start, end: yearsAfter(start, 1) };
@@ -71,9 +70,9 @@ export function agreementHandledSinceWhere(personId: number, since: Date) {
 }
 
 /** Where a current agreement is counted from: the membership year's start, or the epoch with no boundary set. */
-async function currentAgreementSince(now: Date): Promise<Date> {
+async function currentAgreementSince(today: Date): Promise<Date> {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    return settings?.orgMembershipYearBoundary ? membershipYearAt(settings.orgMembershipYearBoundary, now).start : new Date(0);
+    return settings?.orgMembershipYearBoundary ? membershipYearAt(settings.orgMembershipYearBoundary, today).start : new Date(0);
 }
 
 /**
@@ -85,11 +84,13 @@ async function currentAgreementSince(now: Date): Promise<Date> {
  * Board's open: any non-lead who isn't a known minor. A lead is always refused, since an
  * open PERSON_AGREEMENT on a lead would shadow their household signing.
  *
+ * `today` is the org's calendar day the age rule is judged on.
+ *
  * Returns the created process, or null when skipped.
  */
 export async function openPersonAgreement(
     personId: number,
-    now: Date,
+    today: Date,
     since: Date,
     { manual = false, actorId }: { manual?: boolean; actorId?: number } = {},
 ) {
@@ -105,7 +106,7 @@ export async function openPersonAgreement(
             },
         });
         if (!person || person.isHouseholdLead) return null;
-        if (manual ? isMinorAsOf(person, now) : !(isAdultAsOf(person, now) && person.household.orgMembership?.status === "ACTIVE")) return null;
+        if (manual ? isMinorAsOf(person, today) : !(isAdultAsOf(person, today) && person.household.orgMembership?.status === "ACTIVE")) return null;
 
         const handled = await tx.orgMembershipProcess.findFirst({
             where: agreementHandledSinceWhere(personId, since),
@@ -152,7 +153,8 @@ export async function runPersonAgreementSweep(now: Date) {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     if (!settings?.orgMembershipYearBoundary) return { opened: 0, failed: 0, reason: "no membership-year boundary configured" };
 
-    const year = membershipYearAt(settings.orgMembershipYearBoundary, now);
+    const today = await orgToday(now);
+    const year = membershipYearAt(settings.orgMembershipYearBoundary, today);
     const people = await prisma.person.findMany({
         where: { ...AGREEMENT_OWED_WHERE, ...tookPartWhere(previousMembershipYear(year)) },
         select: { id: true },
@@ -162,7 +164,7 @@ export async function runPersonAgreementSweep(now: Date) {
     let failed = 0;
     for (const p of people) {
         try {
-            if (await openPersonAgreement(p.id, now, year.start)) opened++;
+            if (await openPersonAgreement(p.id, today, year.start)) opened++;
         } catch (err) {
             failed++;
             logger.error(`Failed to open an individual membership agreement for person ${p.id}:`, err);
@@ -178,7 +180,8 @@ export async function runPersonAgreementSweep(now: Date) {
  */
 export async function openPersonAgreementOnEngage(personId: number, now: Date = new Date()) {
     try {
-        return await openPersonAgreement(personId, now, await currentAgreementSince(now));
+        const today = await orgToday(now);
+        return await openPersonAgreement(personId, today, await currentAgreementSince(today));
     } catch (err) {
         logger.error(`Failed to open an individual membership agreement for person ${personId} on taking part:`, err);
         return null;
@@ -194,12 +197,13 @@ export async function openPersonAgreementForNewMember(householdId: number, asOf:
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     if (!settings?.orgMembershipYearBoundary) return;
 
-    const year = membershipYearAt(settings.orgMembershipYearBoundary, asOf);
+    const today = await orgToday(asOf);
+    const year = membershipYearAt(settings.orgMembershipYearBoundary, today);
     const people = await prisma.person.findMany({
         where: { householdId, ...AGREEMENT_OWED_WHERE, ...tookPartWhere(year) },
         select: { id: true },
     });
-    for (const p of people) await openPersonAgreement(p.id, asOf, year.start);
+    for (const p of people) await openPersonAgreement(p.id, today, year.start);
 }
 
 export class PersonAgreementError extends Error {
@@ -222,11 +226,12 @@ export async function openPersonAgreementForBoard(personId: number, actorId: num
     if (person.isHouseholdLead) {
         throw new PersonAgreementError("is_lead", "A household lead signs the household agreement, not an individual one.");
     }
-    if (isMinorAsOf(person, now)) {
+    const today = await orgToday(now);
+    if (isMinorAsOf(person, today)) {
         throw new PersonAgreementError("minor", "This person's date of birth shows they are under 18.");
     }
 
-    await openPersonAgreement(personId, now, await currentAgreementSince(now), { manual: true, actorId });
+    await openPersonAgreement(personId, today, await currentAgreementSince(today), { manual: true, actorId });
     const open = await findOpenPersonAgreement(personId);
     if (!open) throw new PersonAgreementError("not_opened", "This person already signed an individual agreement for this membership year.");
     return open;

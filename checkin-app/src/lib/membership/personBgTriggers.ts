@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { orgToday } from "@/lib/appSettings";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { personBgOpen } from "@/lib/membership/lifecycle";
@@ -73,7 +74,7 @@ export async function openPersonBgForNewMember(householdId: number, asOf: Date) 
     });
     const threshold = (await checkValidForApplication({ appliesToYear: activated?.appliesToYear ?? null, createdAt: asOf })) ?? bgFreshThreshold(asOf, months);
     const people = await prisma.person.findMany({
-        where: { householdId, household: { archivedAt: null }, ...programAttachedWhere(asOf) },
+        where: { householdId, household: { archivedAt: null }, ...programAttachedWhere(await orgToday(asOf)) },
         select: { id: true },
     });
     for (const p of people) await openPersonBg(p.id, asOf, threshold);

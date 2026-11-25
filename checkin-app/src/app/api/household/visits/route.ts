@@ -24,6 +24,7 @@ export const GET = withAuth(
                 // too — getDate/setDate read local fields and skew the bounds by the
                 // server's DST offset across a transition.
                 const baseMs = new Date(filterDateStr).getTime();
+                if (Number.isNaN(baseMs)) return apiError("Invalid date", 400);
                 startDate = new Date(baseMs - 7 * DAY_MS);
                 endDate = new Date(baseMs + 7 * DAY_MS);
             } else {

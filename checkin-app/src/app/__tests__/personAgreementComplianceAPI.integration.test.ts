@@ -9,6 +9,7 @@
 
 import { GET } from '@/app/api/membership-audit/compliance/route';
 import { membershipYearAt } from '@/lib/membership/personAgreementTriggers';
+import { orgToday } from '@/lib/appSettings';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
@@ -18,7 +19,6 @@ jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 const TAG = 'person-agreement-compliance-test';
 const BOUNDARY_SEED = new Date('2000-09-01');
 const NOW = new Date();
-const THIS_YEAR = membershipYearAt(BOUNDARY_SEED, NOW);
 const ADULT_DOB = new Date('1990-01-01');
 const MINOR_DOB = new Date(Date.UTC(NOW.getUTCFullYear() - 10, 0, 1));
 
@@ -93,7 +93,8 @@ describe('GET /api/membership-audit/compliance — free-time check-ins with no a
         id.archived = (await makePerson('archived', archived.id, { isDeclaredAdult: true })).id;
 
         for (const who of ['lead', 'secondLead', 'declared', 'child', 'signed', 'awaiting', 'minor', 'unknownAge', 'archived']) await freeTimeVisit(id[who]);
-        await freeTimeVisit(id.lastYearOnly, new Date(THIS_YEAR.start.getTime() - 30 * 86_400_000));
+        const thisYear = membershipYearAt(BOUNDARY_SEED, await orgToday(NOW));
+        await freeTimeVisit(id.lastYearOnly, new Date(thisYear.start.getTime() - 30 * 86_400_000));
         const event = await prisma.event.create({ data: { name: `${TAG} session`, startAt: NOW, endAt: NOW } });
         await prisma.visit.create({ data: { personId: id.atProgram, arrivedAt: NOW, departedAt: NOW, associatedEventId: event.id } });
         await prisma.orgMembershipProcess.create({

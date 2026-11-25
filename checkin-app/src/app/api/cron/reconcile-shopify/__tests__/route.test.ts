@@ -337,4 +337,16 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
 
         expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: null }) });
     });
+
+    it('skips the Shopify reconcile while the payments page holds its lease, and still runs every other step', async () => {
+        jest.mocked(runReconcile).mockResolvedValue({ configured: true, ordersScanned: 0, reversalsRaised: 0, failed: 0, leaseHeld: true });
+
+        const res = await GET(req());
+
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body).toMatchObject({ leaseHeld: true, failed: 0 });
+        expect(takeInMailbox).toHaveBeenCalledTimes(1);
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ success: true, error: null }) });
+    });
 });

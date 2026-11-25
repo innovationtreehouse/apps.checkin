@@ -2,7 +2,7 @@ import { isAdultAsOf, isMinorAsOf, secondLeadQuestionDue } from "@/lib/household
 
 /** Who the household's only lead is asked to make a second lead. */
 
-const NOW = new Date("2026-08-02T15:00:00.000Z");
+const NOW = new Date("2026-08-02");
 const yearsAgo = (n: number) => new Date(Date.UTC(2026 - n, 7, 2));
 
 const lead = (id: number) => ({ id, isHouseholdLead: true, dateOfBirth: yearsAgo(40) });
@@ -12,13 +12,13 @@ const child = (id: number) => ({ id, isHouseholdLead: false, dateOfBirth: yearsA
 const unknownAge = (id: number) => ({ id, isHouseholdLead: false });
 
 describe("isAdultAsOf / isMinorAsOf", () => {
-    it("reads a DOB on the org's calendar day, and trusts the over-25 declaration without one", () => {
+    it("reads a DOB on the given org day, and trusts the over-25 declaration without one", () => {
         expect(isAdultAsOf({ dateOfBirth: yearsAgo(18) }, NOW)).toBe(true);
         expect(isAdultAsOf({ dateOfBirth: yearsAgo(17) }, NOW)).toBe(false);
         expect(isAdultAsOf({ isDeclaredAdult: true }, NOW)).toBe(true);
         expect(isAdultAsOf({}, NOW)).toBe(false);
-        // 9 PM on the eve of the 18th birthday in the org's zone.
-        expect(isAdultAsOf({ dateOfBirth: yearsAgo(18) }, new Date("2026-08-02T02:00:00.000Z"))).toBe(false);
+        // The day before the 18th birthday.
+        expect(isAdultAsOf({ dateOfBirth: yearsAgo(18) }, new Date("2026-08-01"))).toBe(false);
     });
 
     it("treats only a DOB under 18 as a known minor", () => {

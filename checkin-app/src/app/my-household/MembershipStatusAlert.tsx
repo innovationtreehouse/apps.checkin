@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Alert, Badge, Button, Group, Text } from '@mantine/core';
 import { formatDateOnly } from '@/lib/time';
 import { isMembershipLapsed } from '@/lib/membership/lapsed';
+import { useOrgTime } from '@/components/TimezoneProvider';
 import type { OrgMembership } from './household';
 
 // An existing member — still ACTIVE with an open renewal, or already
@@ -17,6 +18,7 @@ export default function MembershipStatusAlert({ orgMembership, renewalDue, valid
   viewerIsLead: boolean;
 }) {
   const router = useRouter();
+  const lapsed = isMembershipLapsed(validUntil, useOrgTime().today());
 
   if (renewalDue || orgMembership?.status === 'REVOKED') {
     return (
@@ -36,8 +38,8 @@ export default function MembershipStatusAlert({ orgMembership, renewalDue, valid
           {/* memberSince is a calendar date at UTC midnight — getUTCFullYear, or a Jan 1 start reads as the prior year. */}
           <Text fw={600}>✓ Member{orgMembership.memberSince ? ` since ${new Date(orgMembership.memberSince).getUTCFullYear()}` : ''}</Text>
           {validUntil && (
-            <Text c={isMembershipLapsed(validUntil) ? 'red' : 'dimmed'} fw={isMembershipLapsed(validUntil) ? 700 : undefined}>
-              Valid through {formatDateOnly(validUntil, { year: 'numeric', month: 'short', day: 'numeric' })}{isMembershipLapsed(validUntil) ? ' (lapsed)' : ''}
+            <Text c={lapsed ? 'red' : 'dimmed'} fw={lapsed ? 700 : undefined}>
+              Valid through {formatDateOnly(validUntil, { year: 'numeric', month: 'short', day: 'numeric' })}{lapsed ? ' (lapsed)' : ''}
             </Text>
           )}
           {orgMembership.isVolunteerFamily && <Badge variant="light">Volunteer-only family</Badge>}

@@ -10,10 +10,11 @@
  * close leaves the application open.
  *
  * Personas: boardmember@example.com (sysadmin + board), parent.family3@example.com (lead of the
- * non-member Family3 household, the applicant) and keyholder1@example.com (no Board role).
+ * non-member Family3 household, the applicant) and keyholder1@example.com (no Board role). The
+ * compliance check reads the seeded Tool Certifier Household, an ACTIVE member whose lead has no check.
  */
 
-import { loginAs, api, type Session } from "./helpers";
+import { loginAs, api, setBgRecheckMonths, type Session } from "./helpers";
 
 type Application = {
     id: number;
@@ -52,12 +53,19 @@ describe("flow: Board oversight", () => {
         expect(own.json.process?.status).toBe("PENDING_EXTERNAL_ACTION");
         const processId = own.json.process!.id;
 
-        // The compliance dashboard answers with its household and person lists.
-        const compliance = await api<Record<string, unknown>>(board, "/api/membership-audit/compliance");
+        // The compliance dashboard answers with its household and person lists. With a check
+        // window set, the seeded member household whose lead was never checked shows as stale.
+        const restoreRecheck = await setBgRecheckMonths(board, 29);
+        const compliance = await api<Record<string, unknown>>(board, "/api/membership-audit/compliance").finally(restoreRecheck);
         expect(compliance.status).toBe(200);
         for (const list of ["households", "peopleNeedingBgCheck", "peopleMissingDob", "peopleWithDisputedCheck", "positionHolders", "peopleAwaitingAgreement", "peopleFreeTimeWithoutAgreement"]) {
             expect(Array.isArray(compliance.json[list])).toBe(true);
         }
+        expect(compliance.json.households).toContainEqual(expect.objectContaining({
+            name: "Tool Certifier Household",
+            reasons: expect.arrayContaining(["STALE_BG"]),
+            leads: [expect.objectContaining({ name: "Tool Certifier" })],
+        }));
 
         const broken = await api<{ households: unknown[] }>(board, "/api/admin/broken-households");
         expect(broken.status).toBe(200);

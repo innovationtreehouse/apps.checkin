@@ -5,6 +5,7 @@ import { errorMessage, showError, showSuccess } from '@checkin/component-ui';
 import { Button, Card, Checkbox, Group, Modal, Stack, Text, TextInput, Title } from '@mantine/core';
 import { api } from '@/lib/api';
 import { secondLeadQuestionDue } from '@/lib/household/secondLead';
+import { useOrgTime } from '@/components/TimezoneProvider';
 import { validateHouseholdMemberFields, type ContactWarning, type HouseholdMember, type MemberAnswer, type MemberFieldErrors } from './household';
 
 export default function AddMemberForm({ members, onClearMessage, onContactWarning }: {
@@ -12,6 +13,7 @@ export default function AddMemberForm({ members, onClearMessage, onContactWarnin
   onClearMessage: () => void;
   onContactWarning: (warning: ContactWarning) => boolean;
 }) {
+  const orgTime = useOrgTime();
   const [askAbout, setAskAbout] = useState<HouseholdMember | null>(null);
   const [answering, setAnswering] = useState(false);
 
@@ -52,7 +54,7 @@ export default function AddMemberForm({ members, onClearMessage, onContactWarnin
       setAddingHouseholdMember(false);
       if (!onContactWarning(data?.warning)) showSuccess(data?.message || "Household member added successfully!");
       const added = data?.member;
-      if (added && secondLeadQuestionDue([...members.filter((m) => m.id !== added.id), added], added.id)) setAskAbout(added);
+      if (added && secondLeadQuestionDue([...members.filter((m) => m.id !== added.id), added], added.id, orgTime.today())) setAskAbout(added);
     } catch (e) {
       showError(errorMessage(e));
     } finally {

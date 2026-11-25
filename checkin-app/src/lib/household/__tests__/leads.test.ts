@@ -7,7 +7,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import { leadHousehold } from "@/lib/household/leads";
+import { householdLeadsWhere, leadHousehold, leadMembersWhere } from "@/lib/household/leads";
 
 jest.mock("@/lib/prisma", () => ({
     __esModule: true,
@@ -46,5 +46,19 @@ test("no household gets the {error,status} 400 object", async () => {
     expect(await leadHousehold(3)).toEqual({
         error: "You must create a household first.",
         status: 400,
+    });
+});
+
+describe("lead filters", () => {
+    test("leadMembersWhere is exactly the lead predicate", () => {
+        expect(leadMembersWhere()).toStrictEqual({ isHouseholdLead: true });
+    });
+
+    test("leadMembersWhere returns a fresh object per call", () => {
+        expect(leadMembersWhere()).not.toBe(leadMembersWhere());
+    });
+
+    test("householdLeadsWhere is the household id plus the lead predicate", () => {
+        expect(householdLeadsWhere(7)).toStrictEqual({ householdId: 7, isHouseholdLead: true });
     });
 });

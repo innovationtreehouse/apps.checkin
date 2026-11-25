@@ -76,8 +76,7 @@ const API_OWNED = { OR: [{ source: null }, { source: { in: [EventSource.BACKFILL
 
 /**
  * Fixture GIDs that already have an API-owned live row. Projection upserts by GID, so
- * injecting one would overwrite real data — and orders are newest-wins on `updatedAt`, so
- * a fixture stamped later than Shopify's copy would pin itself there. shop_refund has no
+ * injecting one would overwrite real data. shop_refund has no
  * `source`, so any existing refund row counts as API-owned.
  */
 async function apiOwnedGids(
@@ -114,8 +113,8 @@ async function apiOwnedGids(
 }
 
 /**
- * Fixture GIDs stamped later than `now`. Orders are newest-wins on `updatedAt`, so a
- * future-stamped row would block every real update and replay of that GID.
+ * Fixture GIDs stamped later than `now`. Hand-made orders are newest-wins on `updatedAt`
+ * among themselves, so a future-stamped row would block every later hand-made correction.
  */
 export function futureStampedGids(fixtures: Array<{ objectType: ObjectType; node: unknown }>, now: Date): string[] {
   return fixtures

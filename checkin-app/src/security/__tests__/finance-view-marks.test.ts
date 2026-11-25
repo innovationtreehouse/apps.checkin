@@ -510,7 +510,6 @@ describe('routes audited before field marks still log', () => {
     'GET /api/donations/transactions/[id]',
     'GET /api/donations/transactions/unassigned',
     'GET /api/donations/uploaded-files/[id]/blob',
-    'GET /api/expense/donated-capital',
     'GET /api/expense/expense-events',
     'GET /api/expense/expenses',
     'GET /api/expense/expenses/[id]',

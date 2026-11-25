@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { householdLeadsWhere } from "@/lib/household/leads";
+import { householdLeadsWhere, leadMembersWhere } from "@/lib/household/leads";
 import { runPaced } from "@/lib/email";
 import { sendTemplated } from "@/lib/email-templates/send";
 import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
@@ -27,7 +27,7 @@ export async function resolveHouseholdRecipients(
         const people = await prisma.person.findMany({
             where: {
                 householdId,
-                ...(alsoPersonId ? { OR: [{ isHouseholdLead: true }, { id: alsoPersonId }] } : { isHouseholdLead: true }),
+                ...(alsoPersonId ? { OR: [leadMembersWhere(), { id: alsoPersonId }] } : leadMembersWhere()),
             },
             select: { email: true, notificationSettings: true },
         });

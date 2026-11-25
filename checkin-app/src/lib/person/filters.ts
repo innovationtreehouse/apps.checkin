@@ -1,5 +1,4 @@
 import type { Prisma } from "@/generated/prisma/client";
-import { orgCalendarDay } from "@/lib/time";
 
 /** An enrollment that still counts: a WITHDRAWN row is kept for history only. */
 export const ENROLLED_PARTICIPANT: Prisma.ProgramParticipantWhereInput = { status: { not: "WITHDRAWN" } };
@@ -25,9 +24,8 @@ export const ATTACHMENT_LOOKBACK_MONTHS = 12;
  * unbounded "any program ever" predicate would re-ask someone who took one class years
  * ago every cycle forever.
  */
-export function recentProgramWhere(now: Date): Prisma.ProgramWhereInput {
-    // startAt and endAt are calendar days, so the bounds are the org's day, not the UTC instant.
-    const today = orgCalendarDay(now);
+export function recentProgramWhere(today: Date): Prisma.ProgramWhereInput {
+    // startAt and endAt are calendar days, so `today` is the org's calendar day, not an instant.
     const since = new Date(today);
     since.setUTCMonth(since.getUTCMonth() - ATTACHMENT_LOOKBACK_MONTHS);
     return {
@@ -46,8 +44,8 @@ export function recentProgramWhere(now: Date): Prisma.ProgramWhereInput {
  * Lives here rather than in personBgTriggers so its other readers don't import a trigger
  * module, which sits on the renewal → payment import chain.
  */
-export function programAttachedWhere(now: Date): Prisma.PersonWhereInput {
-    const program = recentProgramWhere(now);
+export function programAttachedWhere(today: Date): Prisma.PersonWhereInput {
+    const program = recentProgramWhere(today);
     return {
         OR: [
             { programParticipants: { some: { program, ...ENROLLED_PARTICIPANT } } },
@@ -63,10 +61,10 @@ export function programAttachedWhere(now: Date): Prisma.PersonWhereInput {
  * anyone with a role (the positions `positionHolders` lists). A run counts under the
  * same program window as the program arms.
  */
-export function positionHeldWhere(now: Date): Prisma.PersonWhereInput {
+export function positionHeldWhere(today: Date): Prisma.PersonWhereInput {
     return {
         OR: [
-            { instancesLed: { some: { program: recentProgramWhere(now) } } },
+            { instancesLed: { some: { program: recentProgramWhere(today) } } },
             { budgetOwnersOwned: { some: { archivedAt: null } } },
             { budgetOwnerTreasurerships: { some: { budgetOwner: { archivedAt: null } } } },
             { roles: { some: {} } },
@@ -82,9 +80,9 @@ export function positionHeldWhere(now: Date): Prisma.PersonWhereInput {
  * The board's compliance worklist reads it. The new-member PERSON_BG trigger opens for
  * the program-attached arm only.
  */
-export function bgObligatedWhere(now: Date): Prisma.PersonWhereInput {
+export function bgObligatedWhere(today: Date): Prisma.PersonWhereInput {
     return {
         household: { archivedAt: null },
-        OR: [programAttachedWhere(now), positionHeldWhere(now)],
+        OR: [programAttachedWhere(today), positionHeldWhere(today)],
     };
 }

@@ -18,7 +18,9 @@ import {
     findOpenPersonAgreement,
     membershipYearAt,
     previousMembershipYear,
+    type DayWindow,
 } from '@/lib/membership/personAgreementTriggers';
+import { orgToday } from '@/lib/appSettings';
 import { addHouseholdLead } from '@/lib/household/leads';
 import { markContractSigned } from '@/lib/membership/external';
 import prisma from '@/lib/prisma';
@@ -38,12 +40,13 @@ const AGE_20 = yearsAgo(20);
 const AGE_17 = yearsAgo(17);
 const AGE_30 = yearsAgo(30);
 const NOW = new Date();
-const THIS_YEAR = membershipYearAt(BOUNDARY_SEED, NOW);
-const LAST_YEAR = previousMembershipYear(THIS_YEAR);
 const daysAfter = (d: Date, n: number) => new Date(d.getTime() + n * 86_400_000);
-const IN_LAST_YEAR = { startAt: daysAfter(LAST_YEAR.start, 10), endAt: daysAfter(LAST_YEAR.start, 60) };
-const IN_THIS_YEAR = { startAt: THIS_YEAR.start, endAt: daysAfter(THIS_YEAR.end, -1) };
-const TWO_YEARS_AGO = { startAt: daysAfter(LAST_YEAR.start, -300), endAt: daysAfter(LAST_YEAR.start, -200) };
+type Span = { startAt: Date; endAt: Date };
+// Set in beforeAll from the org's calendar day, which the triggers judge the year on.
+let THIS_YEAR: DayWindow;
+let IN_LAST_YEAR: Span;
+let IN_THIS_YEAR: Span;
+let TWO_YEARS_AGO: Span;
 
 async function makeMemberHousehold(slug: string, membershipStatus: 'ACTIVE' | 'NONE' = 'ACTIVE') {
     const hh = await prisma.household.create({ data: { name: `${TAG} ${slug}` } });
@@ -68,7 +71,7 @@ async function makePerson(
     });
 }
 
-async function attachToProgram(slug: string, personId: number, dates: { startAt: Date; endAt: Date } = IN_LAST_YEAR) {
+async function attachToProgram(slug: string, personId: number, dates: Span = IN_LAST_YEAR) {
     const program = await prisma.program.create({
         data: { appliesToYear: dates.startAt.getUTCFullYear(), name: `${TAG} ${slug} program`, startAt: dates.startAt, endAt: dates.endAt },
     });
@@ -113,6 +116,11 @@ describe('PERSON_AGREEMENT triggers', () => {
     let restoreBoardSettings: () => Promise<void> = async () => {};
 
     beforeAll(async () => {
+        THIS_YEAR = membershipYearAt(BOUNDARY_SEED, await orgToday(NOW));
+        const lastYear = previousMembershipYear(THIS_YEAR);
+        IN_LAST_YEAR = { startAt: daysAfter(lastYear.start, 10), endAt: daysAfter(lastYear.start, 60) };
+        IN_THIS_YEAR = { startAt: THIS_YEAR.start, endAt: daysAfter(THIS_YEAR.end, -1) };
+        TWO_YEARS_AGO = { startAt: daysAfter(lastYear.start, -300), endAt: daysAfter(lastYear.start, -200) };
         await cleanup();
         restoreBoardSettings = await snapshotBoardSettings();
         await setBoundary(BOUNDARY_SEED);

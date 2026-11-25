@@ -2,6 +2,11 @@ import prisma from "@/lib/prisma";
 import type { TxClient } from "@/lib/db-client";
 import { closePersonAgreementOnLead, membershipYearAt, openPersonAgreement, openPersonAgreementOnEngage, previousMembershipYear, runPersonAgreementSweep } from "@/lib/membership/personAgreementTriggers";
 
+let mockOrgZone = "America/Chicago";
+jest.mock("@/lib/appSettings", () => ({
+    orgToday: async (now: Date) => jest.requireActual<typeof import("@/lib/time")>("@/lib/time").calendarDayIn(now, mockOrgZone),
+}));
+
 jest.mock("@/lib/prisma", () => ({
     __esModule: true,
     default: { $transaction: jest.fn(), boardSettings: { findUnique: jest.fn() }, person: { findMany: jest.fn() } },
@@ -13,28 +18,23 @@ jest.mock("@/lib/prisma", () => ({
  */
 
 const BOUNDARY = new Date("2000-09-01"); // anchor day-of-year; the year is irrelevant
-// A real instant on 2 August, mid-morning in the org's zone — the year rule takes an
-// instant and resolves it to the day it falls on there.
+// A real instant on 2 August, mid-morning in the org's zone, and the day it falls on.
 const NOW = new Date("2026-08-02T15:00:00.000Z");
+const TODAY = new Date("2026-08-02T00:00:00.000Z");
 
 describe("membershipYearAt — the year a new agreement is counted from", () => {
     it("starts at the latest boundary on or before today", () => {
-        expect(membershipYearAt(BOUNDARY, NOW)).toEqual({ start: new Date("2025-09-01"), end: new Date("2026-09-01") });
-        expect(membershipYearAt(BOUNDARY, new Date("2026-09-01T16:00:00.000Z"))).toEqual({ start: new Date("2026-09-01"), end: new Date("2027-09-01") });
+        expect(membershipYearAt(BOUNDARY, TODAY)).toEqual({ start: new Date("2025-09-01"), end: new Date("2026-09-01") });
+        expect(membershipYearAt(BOUNDARY, new Date("2026-09-01"))).toEqual({ start: new Date("2026-09-01"), end: new Date("2027-09-01") });
     });
 
     it("does not move early for the renewal window", () => {
         // Two weeks before the boundary, renewals are open, but the year in progress is still the old one.
-        expect(membershipYearAt(BOUNDARY, new Date("2026-08-18T16:00:00.000Z")).start).toEqual(new Date("2025-09-01"));
-    });
-
-    it("turns over at local midnight on the boundary, not UTC midnight", () => {
-        // 9 PM on 31 August in the org's zone — UTC is already on 1 September.
-        expect(membershipYearAt(BOUNDARY, new Date("2026-09-01T02:00:00.000Z")).start).toEqual(new Date("2025-09-01"));
+        expect(membershipYearAt(BOUNDARY, new Date("2026-08-18")).start).toEqual(new Date("2025-09-01"));
     });
 
     it("the previous year ends where this one starts", () => {
-        const year = membershipYearAt(BOUNDARY, NOW);
+        const year = membershipYearAt(BOUNDARY, TODAY);
         expect(previousMembershipYear(year)).toEqual({ start: new Date("2024-09-01"), end: year.start });
     });
 });
@@ -44,7 +44,7 @@ describe("openPersonAgreement — the per-person transaction", () => {
         const transaction = jest.mocked(prisma.$transaction);
         transaction.mockResolvedValue(null as never);
 
-        await openPersonAgreement(1, NOW, NOW);
+        await openPersonAgreement(1, TODAY, NOW);
 
         expect(transaction.mock.calls[0]?.[1]).toEqual({ maxWait: 5_000, timeout: 15_000 });
     });
@@ -108,5 +108,26 @@ describe("closePersonAgreementOnLead — a new lead signs the household agreemen
         await closePersonAgreementOnLead(tx as unknown as TxClient, 5);
 
         expect(tx.auditLog.create).not.toHaveBeenCalled();
+    });
+});
+
+describe("runPersonAgreementSweep — the org zone's day", () => {
+    afterEach(() => { mockOrgZone = "America/Chicago"; });
+
+    it.each([
+        ["America/New_York", "2026-09-01T00:00:00.000Z"],
+        ["America/Chicago", "2025-09-01T00:00:00.000Z"],
+    ])("starts the new membership year as the day turns in %s", async (zone, yearStart) => {
+        mockOrgZone = zone;
+        jest.mocked(prisma.boardSettings.findUnique).mockResolvedValue({ orgMembershipYearBoundary: BOUNDARY } as never);
+        const findMany = jest.mocked(prisma.person.findMany).mockResolvedValue([] as never);
+
+        // 12:30 AM on 1 September in New York, 11:30 PM on 31 August in Chicago.
+        await runPersonAgreementSweep(new Date("2026-09-01T04:30:00.000Z"));
+
+        // The yearly pass reads the year before the one in progress, which ends where it starts.
+        const where = findMany.mock.calls.at(-1)![0]!.where as { OR: { programsLed?: { some: { startAt: { lt: Date } } } }[] };
+        const led = where.OR.find((arm) => arm.programsLed)!.programsLed!;
+        expect(led.some.startAt.lt.toISOString()).toBe(yearStart);
     });
 });

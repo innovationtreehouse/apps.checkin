@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { leadMembersWhere } from "@/lib/household/leads";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
@@ -29,7 +30,7 @@ export const POST = withAuth({}, async (req, auth) => {
 
         const process = await prisma.orgMembershipProcess.findUnique({
             where: { id: processId },
-            include: { orgMembership: { include: { household: { include: { householdMembers: { where: { isHouseholdLead: true }, select: { id: true } } } } } } },
+            include: { orgMembership: { include: { household: { include: { householdMembers: { where: leadMembersWhere(), select: { id: true } } } } } } },
         });
 
         if (!process || !process.orgMembership?.household) {
@@ -53,10 +54,25 @@ export const POST = withAuth({}, async (req, auth) => {
             return apiError("This application is not awaiting payment", 409);
         }
 
+        const base = config.baseUrl();
+        const householdId = process.orgMembership.householdId;
+        const notifyReview = () => notifyReviewTeam(
+            "scholarship.membershipReview",
+            { householdId: String(householdId), requestKind: scholarshipRequestKindLabel(kind), actionLink: `${base}/finance-ops/membership-payment-plan` },
+            "Scholarship review-team notify failed (membership request):",
+        );
+
+        // Responses carry only success, never the process row (internal-tier
+        // zoho/shopify ids and stage timestamps).
         if (process.isPaymentPlanRequested) {
-            // Idempotent re-request: no transition, no emails, still success.
-            // Return only res.ok — never echo the raw process row (internal-tier
-            // zoho/shopify ids and stage timestamps) to the lead.
+            // A repeat with a new kind corrects the kind and tells the review team; anything else changes nothing.
+            if (!kind || kind === process.scholarshipRequestKind) return NextResponse.json({ success: true });
+            // Compare-and-set on the stored kind, so of two concurrent corrections only one notifies.
+            const corrected = await prisma.orgMembershipProcess.updateMany({
+                where: { id: processId, ...fromWhere('PENDING_PAYMENT'), isPaymentPlanRequested: true, scholarshipRequestKind: process.scholarshipRequestKind },
+                data: { scholarshipRequestKind: kind as ScholarshipRequestKind },
+            });
+            if (corrected.count > 0) await notifyReview();
             return NextResponse.json({ success: true });
         }
 
@@ -71,13 +87,7 @@ export const POST = withAuth({}, async (req, auth) => {
         });
         if (flipped.count === 0) return NextResponse.json({ success: true });
 
-        const base = config.baseUrl();
-        const householdId = process.orgMembership.householdId;
-        await notifyReviewTeam(
-            "scholarship.membershipReview",
-            { householdId: String(householdId), requestKind: scholarshipRequestKindLabel(kind), actionLink: `${base}/finance-ops/membership-payment-plan` },
-            "Scholarship review-team notify failed (membership request):",
-        );
+        await notifyReview();
         const recipients = await resolveScholarshipRecipients(householdId);
         await sendScholarshipAck(recipients, "scholarship.ackMembership", {});
 

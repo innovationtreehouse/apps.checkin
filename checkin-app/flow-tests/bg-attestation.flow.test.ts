@@ -25,7 +25,8 @@ import { loginAs, api, setBgRecheckMonths, type Session } from "./helpers";
 type Rows = { rows: { personId: number; name: string | null; state: string }[] };
 type QueueItem = {
     id: number;
-    subjectPerson: { id: number; name: string | null } | null;
+    subjectPerson: { id: number; name: string | null; household: Record<string, unknown> | null } | null;
+    requestedForHousehold: { name: string | null; householdMembers: Record<string, unknown>[] } | null;
     _count: { attestations: number };
 } & Record<string, unknown>;
 type Queue = { queue: QueueItem[] };
@@ -129,6 +130,14 @@ describe("flow: background-check attestation (CUJS B5)", () => {
         // The second reviewer sees one approval, never whose.
         const pending = (await queue(reviewer)).find((q) => q.id === processId);
         expect(pending?._count.attestations).toBe(1);
+        expect(Object.keys(pending!).sort()).toEqual(QUEUE_KEYS);
+        expect(Object.keys(pending!._count)).toEqual(["attestations"]);
+        const requested = pending!.requestedForHousehold!;
+        expect(Object.keys(requested).sort()).toEqual(["householdMembers", "name"]);
+        expect(requested.householdMembers.map((m) => m.id)).toEqual([subject.personaId]);
+        for (const lead of requested.householdMembers) expect(Object.keys(lead).sort()).toEqual(["email", "id", "name"]);
+        expect(Object.keys(pending!.subjectPerson!).sort()).toEqual(SUBJECT_KEYS);
+        expect(Object.keys(pending!.subjectPerson!.household!)).toEqual(["name"]);
         expect(JSON.stringify(pending)).not.toContain("reviewer");
         expect(JSON.stringify(pending)).not.toContain("Board Member");
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { leadMembersWhere } from "@/lib/household/leads";
 import { VALID_CONTACT_WHERE } from "@/lib/emergencyContacts/valid";
 import { logger } from "@/lib/logger";
 import { withAuth, authenticateRequest } from "@/lib/auth";
@@ -182,7 +183,7 @@ const getProgram = handler<{ id: string }>(ENDPOINT, async ({ auth, params, role
                                               // Person their_program_households binding: drop either and a
                                               // lead resolves no scope, so name/email/phone strip away.
                                               householdMembers: {
-                                                  where: { isHouseholdLead: true },
+                                                  where: leadMembersWhere(),
                                                   orderBy: { id: "asc" },
                                                   select: { id: true, householdId: true, isHouseholdLead: true, name: true, email: true, phone: true },
                                               },

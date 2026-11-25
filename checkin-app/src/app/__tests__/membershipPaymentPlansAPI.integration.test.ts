@@ -342,6 +342,30 @@ describe('Membership payment-plan routes', () => {
             expect(proc?.isPaymentPlanRequested).toBe(false);
         });
 
+        it('403 when a lead of another household requests on this household\'s membership', async () => {
+            const fresh = await makeProc('OtherLeadTarget', { requested: false, withLead: true });
+            const elsewhere = await makeProc('OtherLeadHome', { requested: false, withLead: true });
+            mockSession.mockResolvedValue({ user: { id: elsewhere.personId } });
+            const res = await RequestPost(requestReq({ processId: fresh.processId }));
+            expect(res.status).toBe(403);
+
+            const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: fresh.processId } });
+            expect(proc?.isPaymentPlanRequested).toBe(false);
+        });
+
+        it('403 when a non-lead member of the same household requests', async () => {
+            const fresh = await makeProc('NonLeadTarget', { requested: false, withLead: true });
+            const member = await prisma.person.create({
+                data: { email: `member-${seq++}-${TAG}@example.com`, name: 'Member', householdId: fresh.householdId },
+            });
+            mockSession.mockResolvedValue({ user: { id: member.id } });
+            const res = await RequestPost(requestReq({ processId: fresh.processId }));
+            expect(res.status).toBe(403);
+
+            const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: fresh.processId } });
+            expect(proc?.isPaymentPlanRequested).toBe(false);
+        });
+
         it('409 when the process is not awaiting payment', async () => {
             const bg = await makeProc('WrongPhaseReq', { requested: false, status: 'PENDING_BG_REVIEW', withLead: true });
             mockSession.mockResolvedValue({ user: { id: bg.personId } });
@@ -403,6 +427,30 @@ describe('Membership payment-plan routes', () => {
             mockSession.mockResolvedValue({ user: { id: leadId } });
 
             const res = await RequestPost(requestReq({ processId: leadProcessId }));
+            expect(res.status).toBe(200);
+            expect(__getSentEmails()).toHaveLength(0);
+        });
+
+        it('a re-POST with a new kind updates the kind and sends only the review-team notify', async () => {
+            await prisma.orgMembershipProcess.update({ where: { id: leadProcessId }, data: { scholarshipRequestKind: 'PAYMENT_PLAN' } });
+            mockSession.mockResolvedValue({ user: { id: leadId } });
+
+            const res = await RequestPost(requestReq({ processId: leadProcessId, kind: 'SCHOLARSHIP' }));
+            expect(res.status).toBe(200);
+
+            const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: leadProcessId } });
+            expect(proc?.scholarshipRequestKind).toBe('SCHOLARSHIP');
+            expect(proc?.isPaymentPlanRequested).toBe(true);
+            const sent = __getSentEmails();
+            expect(sent.filter((e) => e.subject.includes('New membership scholarship') && e.to === REVIEW_TEAM)).toHaveLength(1);
+            expect(sent.filter((e) => e.subject === 'We received your scholarship / payment-plan request')).toHaveLength(0);
+        });
+
+        it('a re-POST with the same kind sends zero emails', async () => {
+            await prisma.orgMembershipProcess.update({ where: { id: leadProcessId }, data: { scholarshipRequestKind: 'PAYMENT_PLAN' } });
+            mockSession.mockResolvedValue({ user: { id: leadId } });
+
+            const res = await RequestPost(requestReq({ processId: leadProcessId, kind: 'PAYMENT_PLAN' }));
             expect(res.status).toBe(200);
             expect(__getSentEmails()).toHaveLength(0);
         });

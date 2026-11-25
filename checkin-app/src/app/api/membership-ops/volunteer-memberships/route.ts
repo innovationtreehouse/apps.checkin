@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { leadMembersWhere } from "@/lib/household/leads";
 import { handler } from "@/security/handler";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, type ProcessStatus } from "@/lib/membership/lifecycle";
@@ -83,7 +84,7 @@ export const GET = handler("GET /api/membership-ops/volunteer-memberships", asyn
                         id: true,
                         name: true,
                         householdMembers: {
-                            where: { isHouseholdLead: true },
+                            where: leadMembersWhere(),
                             select: { name: true, email: true },
                             orderBy: { id: "asc" },
                         },
@@ -120,7 +121,7 @@ export const GET = handler("GET /api/membership-ops/volunteer-memberships", asyn
                               },
                           },
                           householdMembers: {
-                              where: { isHouseholdLead: true },
+                              where: leadMembersWhere(),
                               select: { name: true },
                               orderBy: { id: "asc" },
                           },

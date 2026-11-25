@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { leadMembersWhere } from "@/lib/household/leads";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { findHouseholdsMissingValidContact } from "@/lib/emergencyContacts/service";
@@ -21,7 +22,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async ()
             id: true,
             name: true,
             householdMembers: {
-                where: { isHouseholdLead: true },
+                where: leadMembersWhere(),
                 select: { id: true, name: true, phone: true, email: true },
             },
         },
