@@ -52,6 +52,7 @@ describeDb("appendRawEvent", () => {
     const second = await appendRawEvent(prisma, args(node("PAID")));
     expect(first.inserted).toBe(true);
     expect(second.inserted).toBe(false);
+    expect(second.payloadChanged).toBe(false);
     expect(second.rawEventId).toBe(first.rawEventId); // points back at the existing row
     expect(await countEvents()).toBe(1);
   });
@@ -60,6 +61,7 @@ describeDb("appendRawEvent", () => {
     await appendRawEvent(prisma, args(node("PAID"), EventSource.BACKFILL));
     const reread = await appendRawEvent(prisma, args(node("PAID"), EventSource.INCREMENTAL));
     expect(reread.inserted).toBe(false);
+    expect(reread.payloadChanged).toBe(false);
     expect(await countEvents()).toBe(1);
   });
 
@@ -82,6 +84,7 @@ describeDb("appendRawEvent", () => {
     await appendRawEvent(prisma, args(node("PAID"), EventSource.HAND_LOADED));
     const reload = await appendRawEvent(prisma, args(node("PAID"), EventSource.TEST_LOADED));
     expect(reload.inserted).toBe(false);
+    expect(reload.payloadChanged).toBe(false);
     expect(await countEvents()).toBe(1);
   });
 
@@ -98,6 +101,7 @@ describeDb("appendRawEvent", () => {
     await appendRawEvent(prisma, args(node("REFUNDED"))); // v2 (latest)
     const revert = await appendRawEvent(prisma, args(node("PAID"))); // back to v1 — differs from v2
     expect(revert.inserted).toBe(true);
+    expect(revert.payloadChanged).toBe(true);
     expect(await countEvents()).toBe(3);
   });
 
@@ -109,6 +113,7 @@ describeDb("appendRawEvent", () => {
     try {
       const [r1, r2] = await Promise.all([appendRawEvent(a, args(node("PAID"))), appendRawEvent(b, args(node("PAID")))]);
       expect([r1.inserted, r2.inserted].filter(Boolean)).toHaveLength(1); // exactly one insert
+      expect([r1.payloadChanged, r2.payloadChanged].filter(Boolean)).toHaveLength(1);
       expect(await countEvents()).toBe(1);
     } finally {
       await a.$disconnect();

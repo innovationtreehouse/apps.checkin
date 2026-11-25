@@ -47,7 +47,8 @@ EventBridge (cron)  ─▶  handler  ─┬─ incremental sync (orders + payout
   payout status change or payout assignment moves neither. So after the forward pull every
   incremental run also re-reads the last 30 days of both (`REREAD_WINDOW_DAYS` in
   `src/sync/streams.ts`). An unchanged node appends nothing; a changed one is appended and
-  projected like any other read. The re-read never moves the watermark, and it stops once the
+  projected like any other read. A read that matches a hand-made version is appended so the
+  store's own read is the latest, but is not counted as a change. The re-read never moves the watermark, and it stops once the
   run has used half of its deadline, leaving the rest of the window to the next run.
 
 ## Where to put credentials
