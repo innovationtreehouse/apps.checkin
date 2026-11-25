@@ -43,8 +43,9 @@ sold the coming year.
   renewal due date read the year stored on the application. They stop shifting
   when the boundary math changes.
 - **Data.** One new column on the application table, `membershipYear`, filled
-  at creation for joining applications and renewals and left empty on the
-  per-person kinds. The existing `appliesToYear` keeps its meaning: the year a
+  at creation for joining applications, renewals and adult children's
+  agreements, and left empty on background-check reviews and key-volunteer
+  agreements. The existing `appliesToYear` keeps its meaning: the year a
   payment settled.
 - **Cost.** Two releases. The first adds the column, fills it, and moves every
   writer and reader. The second, after the first is in production, re-runs the
@@ -92,12 +93,14 @@ against the year it paid for.
 ```prisma
 /// The membership year this joining application or renewal is for, as the year
 /// its boundary opens in (2026 for 2026-2027). Set when the row is created and
-/// never changed. Null on the per-person kinds.
+/// never changed. Also set on an adult child's PERSON_AGREEMENT (§2a). Null on
+/// PERSON_BG and KEY_VOLUNTEER_AGREEMENT.
 /// @sensitivity:public
 membershipYear        Int?
 ```
 
-It is nullable in Prisma because the per-person kinds have no year. The database
+It is nullable in Prisma because a background-check review and a key-volunteer
+agreement have no year. The database
 enforces "set on every joining application and renewal" with a check constraint
 in the second release (§5). A narrowing helper beside `asHouseholdProcess`
 gives household code a `number` rather than `number | null`.
@@ -119,7 +122,7 @@ Every `orgMembershipProcess.create` site, and the one raw SQL insert:
 | `personBgTriggers.ts` `openPersonBg` | PERSON_BG | None |
 | `checkStarted.ts` | PERSON_BG | None |
 | `settleHouseholdBg.ts` `openRequestedReview` | PERSON_BG | None |
-| `personAgreementTriggers.ts` `openPersonAgreement` | PERSON_AGREEMENT | None ([Q6](#q6)) |
+| `personAgreementTriggers.ts` `openPersonAgreement` | PERSON_AGREEMENT | Yes, from its trigger: see [§2a](#q6) |
 | `keyVolunteerProcess.ts` `createKva` | KEY_VOLUNTEER_AGREEMENT | None |
 | migration `20261115130000_key_volunteer_grandfather` | KEY_VOLUNTEER_AGREEMENT | None; already applied |
 
@@ -149,6 +152,103 @@ year, so `membershipYear` stays required and release 2's database check stays.
 - The renewal sweep already returns early with no boundary, and is unchanged.
 - The refusal reaches the family's page and the Board's grant dialog as a red
   error chip that never closes on its own.
+
+<a id="q6"></a>
+## 2a. The adult child's agreement
+
+**Decision: a PERSON_AGREEMENT carries `membershipYear` too.** The owner wants the
+agreement per year. Its year is set where it is created, from a stored value or
+a Board pick, and is never worked out from a date.
+
+Today the agreement has a cycle but no year. Whether a person already has one is
+judged by date: an agreement signed or closed on or after the "cycle floor" (the
+current cycle's renewal-window opening, one year back) covers the cycle.
+
+### Where an agreement is created
+
+All three paths go through `openPersonAgreement`. There is no separate annual
+re-sign: the nightly pass opens a fresh agreement once the last one is older
+than the cycle floor.
+
+| Path | Event | Explicit year available then |
+|---|---|---|
+| `runPersonAgreementSweep`, from the nightly cron | A non-lead aged 18-25 in an ACTIVE member household is recently attached to a program (enrolled participant, volunteer or leader) | The household's paid application's `appliesToYear`, and the `appliesToYear` of each program that attaches them. They can disagree ([Q9](#q9)) |
+| `openPersonAgreementForNewMember`, a clearance step after a joining application goes ACTIVE | The same population, within the household that just joined | The activating application's `appliesToYear` and its `membershipYear`. They differ only after a Board payment for another year ([Q10](#q10)) |
+| `openPersonAgreementForBoard`, the compliance page's manual open | The Board opens one for a person the automatic rule doesn't reach (not in a program, or over 25) | A Board pick. Following the Q4 (ii) ruling, the year is required in the dialog and the route, with no default |
+
+Two more paths touch existing agreements but create none:
+
+- **Reopen** (`archive.ts`) restores an archived agreement to its previous step.
+  The row keeps its stored year ([Q11](#q11)).
+- **Person merge** moves agreements to the kept person. Each keeps its year.
+
+`openPersonAgreement` takes the year as a required argument and writes it in the
+same `create`, and the audit row records it.
+
+### What reads an agreement's year
+
+| Read | Today | After |
+|---|---|---|
+| `openPersonAgreement`'s "already handled" check | Any open agreement, or one ACTIVE or ARCHIVED with `stageEnteredAt` on or after the cycle floor | Any open agreement (unchanged, but see [Q11](#q11)), or one ACTIVE or ARCHIVED whose `membershipYear` is the year being opened |
+| `agreementCycleFloor` | Feeds that check and compliance | Deleted |
+| Compliance "over the age ceiling, not yet asked" list | Settled agreements since the cycle floor count as handled | Settled agreements for the target year count ([Q9](#q9) sets the target) |
+| Compliance "awaiting signature" list | Every open agreement | Unchanged; each row also shows its year |
+| Signing (`external.ts`) | Signs the caller's open agreement | Unchanged; the signing page names the year |
+
+### Open questions on the agreement
+
+<a id="q9"></a>
+**Q9. The nightly pass: which year?** On July 15, 2026 the 2026-2027 window
+is open. A household is ACTIVE on its paid 2025 application and has not renewed.
+Its 19-year-old is enrolled in a summer program for 2025 and a fall program for
+2026. The nightly pass opens an agreement. Which year is it for?
+
+- **a.** The household's paid year (2025). One agreement per membership year
+  the household holds.
+- **b.** Each attaching program's year. The person gets a 2025 agreement and
+  a 2026 agreement.
+- **c.** The latest attaching program's year (2026).
+
+<a id="q10"></a>
+**Q10. New-member activation: which field?** A joining application is for
+2025, and the Board recorded its payment for 2026 with the warning acknowledged.
+The household goes ACTIVE, and the adult child's agreement opens.
+
+- **a.** The year paid for (2026). Recommended: it is the year the household is
+  a member for.
+- **b.** The application's year (2025).
+
+<a id="q11"></a>
+**Q11. An agreement whose year has ended.** A 2025 agreement opened in August
+2026 is still unsigned on September 15, 2026, after 2025-2026 ended. Today an
+open agreement blocks a new one from any cycle, so the 2026 agreement never
+opens, and signing the old one would cover only 2025. The same case arises when
+the Board reopens an archived agreement for an ended year.
+
+- **a.** The nightly pass closes an open agreement once its year ends and opens
+  the current one. Reopen refuses an ended year, as it does for household
+  applications.
+- **b.** An open agreement still blocks a new one. The Board closes it by hand.
+- **c.** Leave it. Signing an old-year agreement also counts for the current
+  year.
+
+<a id="q12"></a>
+**Q12. Existing agreements.** Rows created before this change have no year,
+and no stored value states one. A row signed on August 10, 2025 counts today
+for 2025-2026, because it falls after that cycle's floor of July 1, 2025.
+Backfilling it means working the year out from a date, which the ruling forbids
+at creation.
+
+- **a.** Backfill from today's date rule, once, as history: the cycle its
+  `stageEnteredAt` falls in. The rule is then deleted.
+- **b.** Leave old rows null. The "already handled" check treats a null-year
+  settled agreement by the old date rule until one cycle has passed, then
+  ignores it.
+- **c.** Leave old rows null, and the next nightly pass opens a year-stamped
+  agreement for everyone, so each adult child signs again once.
+
+The database check in release 2 covers PERSON_AGREEMENT only if every row has
+a year, which depends on this answer.
 
 ## 3. Payment
 
@@ -533,23 +633,14 @@ ROLLBACK;
 | # | Question | Section |
 |---|---|---|
 | Q8 | Payment-plan approval of a request with no stored year | [§3](#q8) |
-| Q6 | Should the per-person agreement carry a year? | below |
+| Q9 | The nightly agreement pass: household's paid year, each program's year, or the latest? | [§2a](#q9) |
+| Q10 | Agreement on new-member activation: year paid for or year applied for? | [§2a](#q10) |
+| Q11 | An agreement whose year has ended | [§2a](#q11) |
+| Q12 | Backfilling existing agreements | [§2a](#q12) |
 | Q7 | The renewal due date for a Board-opened out-of-season renewal | below |
 | B1 | Backfill unpaid rows on the org's calendar day, with boundary rows listed for the owner to confirm | [§5](#rows-on-a-boundary) |
 | B2 | Paid rows take `membershipYear` from `appliesToYear` | §5 |
 | B3 | Paid rows with no `appliesToYear` get it from `paidAt`, so the archive fill can go | §5 |
-
-<a id="q6"></a>
-### Q6. The per-person agreement
-
-An adult child's agreement is renewed each cycle. Whether one is already
-handled is judged by its signing date against the start of the current cycle
-less the renewal window. It has a cycle, but nothing reads it as a year.
-
-- **a.** No year; leave it as it is.
-- **b.** Give it `membershipYear` too, and judge "handled this cycle" by year.
-
-Recommendation: a. It is outside this problem.
 
 <a id="q7"></a>
 ### Q7. Due date for an out-of-season renewal
