@@ -349,9 +349,8 @@ certify-payment route sends none.
   preselected value. Confirm stays disabled until a year is picked.
 - When the grant action maps a payment, it already passes the Board's year and
   is unchanged.
-- Payment-plan approval passes the request's stored `paymentPlanYear`. A request
-  stored before that column has no year. Today approval gives it the live year,
-  which is the same kind of guess ([Q8](#q8)).
+- Payment-plan approval passes the request's stored `paymentPlanYear` (see
+  [below](#q8)).
 
 **A payment mapped to a different year (decided).** The application is for
 2025. On July 10 the Board's grant action maps a payment to 2026.
@@ -382,14 +381,21 @@ judged against the 2026 check threshold. Its application still reads as a 2025
 application wherever the question is "which year was this opened for".
 
 <a id="q8"></a>
-**Payment-plan approval of a request with no stored year (open).** A request made
-before `paymentPlanYear` existed has no year. Today approval certifies the live
-year for it.
+**A payment-plan request with no stored year (decided).** Today approval
+certifies the live year for a request whose `paymentPlanYear` is null, which
+covers requests made before that column existed. No open request has a null
+year today, so there is no such case to carry forward.
 
-- **a.** The approval dialog asks the Board for the year, as a manual payment
-  does.
-- **b.** The request's year is the application's `membershipYear`.
-- **c.** Keep the live year for these old requests only.
+**Decision: the year is required, and approval never guesses.**
+
+- Every open request carries `paymentPlanYear`. The request route sets it from
+  the application's `membershipYear`.
+- The live-year fallback at approval is deleted.
+- Approval refuses a request with no year with a 409: "This request has no
+  membership year. Deny it; the family can ask again." Nothing is written.
+- The release-1 migration checks the assumption rather than trusting it (§5).
+- The schema comment on `paymentPlanYear` changes to say it is set on every
+  request.
 
 ## 4. Readers
 
@@ -437,13 +443,29 @@ Migration, in one transaction:
 2. Fill `appliesToYear` on paid household rows that have none, with the live
    year at `paidAt`. This is what the archive fill would do on reopen. It is done
    once here so that fill can go.
-3. Fill `membershipYear` on household rows:
+3. Stop if any open payment-plan request has no year. The migration then fails
+   and nothing applies, so the assumption is checked before any code relies on
+   it. The error gives a count only, because the request is hardship data.
+
+   ```sql
+   DO $$
+   DECLARE n integer;
+   BEGIN
+     SELECT count(*) INTO n FROM "OrgMembershipProcess"
+     WHERE "isPaymentPlanRequested" AND status = 'PENDING_PAYMENT' AND "paymentPlanYear" IS NULL;
+     IF n > 0 THEN
+       RAISE EXCEPTION '% open payment-plan request(s) have no paymentPlanYear', n;
+     END IF;
+   END $$;
+   ```
+
+4. Fill `membershipYear` on household rows:
    - paid rows (`paidAt` set) from `appliesToYear`, which is what the family
      bought;
    - unpaid rows from the live year at `createdAt`, the rule every reader
      applies today.
 
-With no boundary configured, steps 2 and 3 write nothing.
+With no boundary configured, steps 2 and 4 write nothing.
 
 The live year at an instant, in SQL, matching `membershipYearCycle`: the
 renewal window of year `y` opens at the boundary's month and day in `y`, moved
@@ -483,7 +505,7 @@ Only after release 1 is in production. Until then this PR stays in draft.
 
 Migration, in one transaction:
 
-1. Re-run step 3 of release 1 for rows still null: those the previous release
+1. Re-run step 4 of release 1 for rows still null: those the previous release
    created during release 1's drain.
 2. `ALTER TABLE "OrgMembershipProcess" ADD CONSTRAINT "household_process_has_year" CHECK (kind NOT IN ('INITIAL', 'RENEWAL') OR "membershipYear" IS NOT NULL);`
 
@@ -638,7 +660,6 @@ ROLLBACK;
 
 | # | Question | Section |
 |---|---|---|
-| Q8 | Payment-plan approval of a request with no stored year | [§3](#q8) |
 | Q9 | The nightly agreement pass: household's paid year, each program's year, or the latest? | [§2a](#q9) |
 | Q10 | Agreement on new-member activation: year paid for or year applied for? | [§2a](#q10) |
 | Q11 | An agreement whose year has ended | [§2a](#q11) |
