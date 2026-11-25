@@ -72,7 +72,7 @@ would do to it:
 
 | Reader | Filter | Under A |
 |---|---|---|
-| `lifecycle.ts` `settledThisCycleWhere` (households list, valid-through, outreach audience, grant's "already paid", "won't renew" refusal) | ACTIVE or paid-awaiting-check, and `appliesToYear` = year | Still correct: every arm is gated on a paid status |
+| `lifecycle.ts` `settledThisCycleWhere` (households list, valid-through, outreach audience, the grant action's "already paid" check, "won't renew" refusal) | ACTIVE or paid-awaiting-check, and `appliesToYear` = year | Still correct: every arm is gated on a paid status |
 | `lifecycle.ts` `handledThisCycleWhere` (renewal sweep skip) | ACTIVE and `appliesToYear` = year | Still correct |
 | `people/search` year list and badge roster | ACTIVE and `appliesToYear` = year | Still correct |
 | `membership-audit/compliance` | latest ACTIVE row's `appliesToYear` | Still correct |
@@ -116,9 +116,9 @@ Every `orgMembershipProcess.create` site, and the one raw SQL insert:
 | Site | Kind | Year |
 |---|---|---|
 | `intake.ts` `startIntake` | INITIAL | Live year on the org's calendar day at creation |
-| `grant.ts` `openInitial` (Board grant, no application yet) | INITIAL | Live year on the org's calendar day at creation |
+| `grant.ts` `openInitial` (the grant action opens a joining application when the household has none) | INITIAL | Live year on the org's calendar day at creation |
 | `renewal.ts` `createRenewalProcess`, from the sweep | RENEWAL | The sweep's coming year. The sweep runs only in season, when the live year is the coming year, so this equals the live year |
-| `renewal.ts` `createRenewalProcess`, from `grant.ts` `openRenewal` | RENEWAL | The live year, which `openRenewal` already computes to refuse a household that has paid for it. Out of season that is the year in progress, for a lapsed household |
+| `renewal.ts` `createRenewalProcess`, from `grant.ts` `openRenewal` (the grant action opens a renewal) | RENEWAL | The live year, which `openRenewal` already computes to refuse a household that has paid for it. Out of season that is the year in progress, for a lapsed household |
 | `personBgTriggers.ts` `openPersonBg` | PERSON_BG | None |
 | `checkStarted.ts` | PERSON_BG | None |
 | `settleHouseholdBg.ts` `openRequestedReview` | PERSON_BG | None |
@@ -147,8 +147,8 @@ year, so `membershipYear` stays required and release 2's database check stays.
 - `startIntake` refuses with a 409 before its transaction: "Membership year
   isn't set up yet; contact the Board." The "won't renew" note already refuses
   this way.
-- The Board grant refuses with the same text before it opens an application,
-  whether a joining application or a renewal.
+- The Board's grant action refuses with the same text before it opens a
+  joining application or a renewal.
 - The renewal sweep already returns early with no boundary, and is unchanged.
 - The refusal reaches the family's page and the Board's grant dialog as a red
   error chip that never closes on its own.
@@ -344,16 +344,17 @@ certify-payment route sends none.
 - The certify-payment route requires `year` in its body, next to `reason`. A
   body with no year, or a year that isn't a whole number, is refused with a 400:
   "Choose the membership year this payment is for." The route checks the year
-  against the same set of years a Board grant may name.
+  against the same set of years the grant action may map a payment to.
 - The applications page's certify dialog gets a required year field with no
   preselected value. Confirm stays disabled until a year is picked.
-- The grant path already passes its year and is unchanged.
+- When the grant action maps a payment, it already passes the Board's year and
+  is unchanged.
 - Payment-plan approval passes the request's stored `paymentPlanYear`. A request
   stored before that column has no year. Today approval gives it the live year,
   which is the same kind of guess ([Q8](#q8)).
 
-**A Board grant or payment for a different year (decided).** The application is
-for 2025. On July 10 the Board grants 2026.
+**A payment mapped to a different year (decided).** The application is for
+2025. On July 10 the Board's grant action maps a payment to 2026.
 
 **Decision: allowed, with an acknowledged warning.** `appliesToYear` becomes
 2026. `membershipYear` stays 2025. The two fields differ, and neither is
@@ -373,7 +374,7 @@ After such a payment, each field is read by:
 
 | Field | Value in the example | Read by |
 |---|---|---|
-| `appliesToYear`, the year bought | 2026 | Every "settled for this year" query: valid-through and member pricing, the households list, the outreach audience, grant's "already paid", the "won't renew" refusal. The renewal sweep's skip test, so no 2026 renewal opens. The badge roster and the people-search year list. The compliance check threshold. The application's check threshold, which prefers this field. The new-member background-check opener |
+| `appliesToYear`, the year bought | 2026 | Every "settled for this year" query: valid-through and member pricing, the households list, the outreach audience, the grant action's "already paid" check, the "won't renew" refusal. The renewal sweep's skip test, so no 2026 renewal opens. The badge roster and the people-search year list. The compliance check threshold. The application's check threshold, which prefers this field. The new-member background-check opener |
 | `membershipYear`, the year applied for | 2025 | Reopen's year refusal. The "won't renew" marker on a renewal. The renewal banner's due date. The checkout's variant and its ended-year refusal, both of which apply only while unpaid. A payment-plan request's year. The check threshold before payment |
 
 So the household in the example is a member through September 1, 2027, and is
@@ -403,11 +404,16 @@ year. None calls the boundary math on a row instant afterwards.
 | `archive.ts` reopen year fill | paid row with no `appliesToYear` gets the live year at `paidAt` | Removed. The backfill (§5) fills every such row first |
 | `renewal-status` route due date | next boundary on or after `createdAt` | the boundary that opens the renewal's `membershipYear` |
 
-The due date differs from today's for one kind of row: a renewal the Board opens
-out of season for a lapsed household. Its year is the year in progress, which
-began at a boundary already passed. Today the banner shows the next boundary.
-After, it shows the boundary that opened the year, which is in the past
-([Q7](#q7)).
+<a id="q7"></a>
+**A renewal whose year is already under way (decided).** In October 2026 the
+Board's grant action opens a renewal for a lapsed household. The renewal is for
+2026, the year in progress. Today the login banner says it is due September 1,
+2027.
+
+**Decision: the banner shows the past date.** It reads "was due September 1,
+2026": the boundary that opened the renewal's year. The route returns the due
+date as it does now, and the banner says "was due" when that date is before the
+org's today.
 
 The dev mock line in `reconcile/membership.ts` (the year of the mock variant at
 `paidAt`) is dev-only and stays as it is.
@@ -637,23 +643,9 @@ ROLLBACK;
 | Q10 | Agreement on new-member activation: year paid for or year applied for? | [§2a](#q10) |
 | Q11 | An agreement whose year has ended | [§2a](#q11) |
 | Q12 | Backfilling existing agreements | [§2a](#q12) |
-| Q7 | The renewal due date for a Board-opened out-of-season renewal | below |
 | B1 | Backfill unpaid rows on the org's calendar day, with boundary rows listed for the owner to confirm | [§5](#rows-on-a-boundary) |
 | B2 | Paid rows take `membershipYear` from `appliesToYear` | §5 |
 | B3 | Paid rows with no `appliesToYear` get it from `paidAt`, so the archive fill can go | §5 |
-
-<a id="q7"></a>
-### Q7. Due date for an out-of-season renewal
-
-In October 2026 the Board grants a lapsed household, which opens a renewal for
-2026, the year in progress. Today the login banner says the renewal is due
-September 1, 2027. With the stored year, the due date is the boundary that
-opened 2026: September 1, 2026, already past.
-
-- **a.** Show the past date ("was due September 1, 2026").
-- **b.** Show no due date when the year has already begun.
-- **c.** Keep today's rule for this case: the next boundary after the renewal
-  opened.
 
 ---
 
