@@ -286,7 +286,7 @@ function KioskDisplayInner() {
         )}
 
         {/* Main content */}
-        {loading ? (
+        {loading || (load.retrying && !data) ? (
           <Center py="xl"><Loader /></Center>
         ) : error && !kioskStale ? (
           isKioskDisplay
