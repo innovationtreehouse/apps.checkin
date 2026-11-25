@@ -334,56 +334,57 @@ agreement-closed rules also hold: an agreement is signed every year and a
 signature never carries over.
 
 <a id="q12"></a>
-**Q12. Existing agreements: with the Board (B39).** Rows created before this
-change have no year, and no stored value states one. No year is stamped from
-the date rule `agreementCycleFloor` applies today: the owner considers that rule
-wrong. The question needs production data and a Board decision, so it has moved
-to the Board's questions as B39. Its two options are:
+**Q12. Existing agreements' year.** Rows created before this change have no
+year, and no stored value states one. No year is stamped from the date rule
+`agreementCycleFloor` applies today: the owner considers that rule wrong. The
+question went to the Board's questions as B39. The owner has since set a
+cutoff for the backfill ([Q13](#q13)). How that ruling relates to B39 is open
+([G4](#q13-gaps)).
 
-1. The Board assigns each existing agreement its year, from a read-only list.
-2. Everyone the nightly pass covers signs again, once, on a year-stamped
-   agreement.
-
-The design works for either answer:
-
-- From release 1, every new agreement carries a year (§2a above). No migration
-  writes a year on an existing agreement.
-- What a no-year agreement counts as until B39 is answered is open
-  ([Q13](#q13)). Either way the compliance page lists these agreements as "no
-  year recorded", so the Board can see them. That list is the read-only list
-  option 1 works from. Q11's year-end close skips them, since they have no
-  year to end.
-- Answer 1: the Board's year for each row is written to `membershipYear`, by
-  whatever means B39 settles. The usual year comparison then applies.
-- Answer 2: a no-year agreement stops counting as handled. The next nightly pass
-  opens a year-stamped agreement for each person it covers.
+- From release 1, every new agreement carries a year (§2a above).
+- Q11's year-end close skips an agreement with no year, since it has no year to
+  end.
 - Release 2's database check covers joining applications and renewals only. A
-  later check for PERSON_AGREEMENT waits on B39, and ships once no agreement is
-  left without a year.
+  later check for PERSON_AGREEMENT ships once no agreement is left without a
+  year.
 
 <a id="q13"></a>
-**Q13. A no-year agreement until B39 is answered.** An agreement is signed every
-year and a signature never carries over. Until B39 settles the old rows' years,
-the nightly pass still has to decide whether a no-year agreement covers the
-person this year.
+**Q13. The year of an existing agreement (decided).** The owner set a fixed
+cutoff for the backfill:
 
-Example: the boundary is September 1. A daughter signed an agreement in
-October 2025, before this change, so it has no year. Her household renews for
-2026-2027. On September 1, 2026 the nightly pass runs, and B39 is not yet
-answered.
+- An agreement signed before July 15, 2026 is for 2025-2026.
+- An agreement signed on or after July 15, 2026 is for 2026-2027.
 
-- **a.** A no-year agreement counts as handled. She is not asked. She goes
-  without a 2026 agreement until B39 is carried out, which conflicts with
-  signing every year.
-- **b.** A no-year agreement never counts. She is asked to sign a 2026
-  agreement. This works with either B39 answer: under answer 1 her old row
-  later gets 2025, and under answer 2 she has already re-signed. The cost: someone
-  who signed during the 2026 renewal window, before this change shipped, is asked
-  a second time.
-- **c.** A no-year agreement counts if it was signed on or after the current
-  year's start, the date rule #3837 uses. No year is written from it; the rule
-  only decides whether to ask. She is asked, because October 2025 is before
-  September 1, 2026. The rule goes once B39 is carried out.
+This is a one-time owner decision about existing rows. The app keeps no date
+rule: after the backfill it never works out an agreement's year from a date.
+
+Example: a daughter signed an agreement in October 2025, before this change,
+so it has no year. The backfill writes 2025. Her household renews for
+2026-2027, and on September 1, 2026 the nightly pass compares years: she has no
+2026 agreement, so it asks her to sign one. Her brother signed on July 20, 2026.
+The backfill writes 2026, and he is not asked again.
+
+Release 1's migration writes it, after step 4:
+
+```sql
+UPDATE "OrgMembershipProcess"
+SET "membershipYear" = CASE WHEN <signing day> < DATE '2026-07-15' THEN 2025 ELSE 2026 END
+WHERE kind = 'PERSON_AGREEMENT' AND "membershipYear" IS NULL AND "contractSignedAt" IS NOT NULL;
+```
+
+`<signing day>` is the day of `contractSignedAt`. Whether that is the org's
+calendar day or the UTC day is open ([G3](#q13-gaps)).
+
+<a id="q13-gaps"></a>
+**What the cutoff leaves open.** These are listed for the owner, not decided:
+
+| # | Case | Example |
+|---|---|---|
+| G1 | An agreement signed before September 1, 2025, the start of 2025-2026. Read literally, the cutoff makes it a 2025-2026 agreement | Signed March 2025, during 2024-2025. The backfill would write 2025, and she would count as signed for 2025-2026 |
+| G2 | An agreement with no signing date: still open, or closed unsigned. The cutoff has nothing to compare | Opened June 2026, never signed, still open in November 2026. It gets no year, and Q11's year-end close skips it, so it blocks any new agreement for her |
+| G3 | Which day the cutoff compares: the org's calendar day or UTC | Signed 9 PM on July 14, 2026, Chicago time, which is 02:00 on July 15 in UTC. The org's day gives 2025, UTC gives 2026 |
+| G4 | Whether the cutoff answers B39, or B39 still stands for the Board | If B39 stands, a Board assignment could later replace the cutoff's year on some rows |
+| G5 | Agreements the previous release creates during the release-1 drain. They have no year and come after the migration | Opened by the old code on the release day and signed in 2027. Applied again, the cutoff would write 2026 |
 
 ## 3. Payment
 
@@ -847,7 +848,7 @@ ROLLBACK;
 | 0 | The org-day boundary change | Separate design |
 | 1 | Column, backfill, writers, readers with fallbacks, checkout by stamped year, and the payment answers from §3 | Release 0 merged. The owner has run the boundary query and settled any unpaid rows it lists. The order fill has run and the Board has picked a year for every row it listed |
 | 2 | Re-fill, check constraint, fallbacks and archive fill removed, test fixtures | Release 1 in production; the null-count query returns zero |
-| Later | The database check extended to PERSON_AGREEMENT | B39 answered and carried out; no agreement left without a year |
+| Later | The database check extended to PERSON_AGREEMENT | G1-G5 answered; no agreement left without a year |
 
 ---
 
@@ -855,8 +856,7 @@ ROLLBACK;
 
 | # | Question | Section |
 |---|---|---|
-| Q12 | Existing agreements' year: with the Board (B39) | [§2a](#q12) |
-| Q13 | Whether a no-year agreement counts as handled until B39 is answered | [§2a](#q13) |
+| G1-G5 | What the Q13 cutoff leaves open for existing agreements | [§2a](#q13-gaps) |
 
 ---
 
