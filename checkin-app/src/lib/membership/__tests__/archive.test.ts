@@ -39,7 +39,7 @@ const findUnique = jest.mocked(prisma.orgMembershipProcess.findUnique);
 jest.mocked(prisma.$transaction).mockImplementation(((cb: (t: typeof tx) => unknown) => cb(tx)) as unknown as typeof prisma.$transaction);
 
 function row(over: Partial<OrgMembershipProcess>): OrgMembershipProcess {
-    return { id: 1, kind: 'INITIAL', status: 'PENDING_PAYMENT', orgMembershipId: 9, subjectPersonId: null, paidAt: null, archivedFromStatus: null, createdAt: new Date('2026-01-15T12:00:00.000Z'), ...over } as OrgMembershipProcess;
+    return { id: 1, kind: 'INITIAL', status: 'PENDING_PAYMENT', orgMembershipId: 9, subjectPersonId: null, paidAt: null, archivedFromStatus: null, ...over } as OrgMembershipProcess;
 }
 
 describe('archiveApplication (Close application)', () => {
@@ -158,14 +158,14 @@ describe('unarchiveApplication (Reopen) within the membership year', () => {
         row({ kind: 'RENEWAL', status: 'ARCHIVED', archivedFromStatus: 'PENDING_RENEWAL', createdAt: new Date(createdAt) });
 
     it('reopens inside the same year', async () => {
-        at('2026-12-01T12:00:00.000Z');
-        findUnique.mockResolvedValue(renewal('2026-07-01T12:00:00.000Z'));
+        at('2026-12-01T00:00:00.000Z');
+        findUnique.mockResolvedValue(renewal('2026-07-01T00:00:00.000Z'));
         await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'PENDING_RENEWAL' });
     });
 
     it("refuses once the next year's renewal window has opened", async () => {
-        at('2027-06-02T12:00:00.000Z');
-        findUnique.mockResolvedValue(renewal('2026-07-01T12:00:00.000Z'));
+        at('2027-06-02T00:00:00.000Z');
+        findUnique.mockResolvedValue(renewal('2026-07-01T00:00:00.000Z'));
         await expect(unarchiveApplication(1, 2)).rejects.toMatchObject({
             code: 'wrong_phase',
             message: "This application is for 2026-2027. The 2027-2028 renewal period has started, so it can't be reopened; use the new renewal.",
@@ -174,20 +174,20 @@ describe('unarchiveApplication (Reopen) within the membership year', () => {
     });
 
     it('reopens as before when no boundary is configured', async () => {
-        at('2027-06-02T12:00:00.000Z');
+        at('2027-06-02T00:00:00.000Z');
         tx.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: null });
-        findUnique.mockResolvedValue(renewal('2020-07-01T12:00:00.000Z'));
+        findUnique.mockResolvedValue(renewal('2020-07-01T00:00:00.000Z'));
         await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'PENDING_RENEWAL' });
     });
 
     it('dates an off-season joining application to the year live at its creation', async () => {
         tx.orgMembership.findUnique.mockResolvedValue({ status: 'PENDING' });
-        findUnique.mockResolvedValue(row({ kind: 'INITIAL', status: 'ARCHIVED', archivedFromStatus: 'INTAKE', createdAt: new Date('2026-03-01T12:00:00.000Z') }));
+        findUnique.mockResolvedValue(row({ kind: 'INITIAL', status: 'ARCHIVED', archivedFromStatus: 'INTAKE', createdAt: new Date('2026-03-01T00:00:00.000Z') }));
 
-        at('2026-05-31T12:00:00.000Z');
+        at('2026-05-31T00:00:00.000Z');
         await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'INTAKE' });
 
-        at('2026-06-01T12:00:00.000Z');
+        at('2026-06-01T00:00:00.000Z');
         await expect(unarchiveApplication(1, 2)).rejects.toMatchObject({
             message: "This application is for 2025-2026. The 2026-2027 renewal period has started, so it can't be reopened; start a new application.",
         });
@@ -196,12 +196,12 @@ describe('unarchiveApplication (Reopen) within the membership year', () => {
     describe('a paid row closed with no year', () => {
         const paid = (over: Partial<OrgMembershipProcess>) => row({
             kind: 'RENEWAL', status: 'ARCHIVED', archivedFromStatus: 'PENDING_BG_CLEARANCE',
-            createdAt: new Date('2026-06-05T12:00:00.000Z'), paidAt: new Date('2026-06-10T12:00:00.000Z'), appliesToYear: null, ...over,
+            createdAt: new Date('2026-06-05T00:00:00.000Z'), paidAt: new Date('2026-06-10T00:00:00.000Z'), appliesToYear: null, ...over,
         });
         const written = () => tx.orgMembershipProcess.updateMany.mock.calls[0][0].data;
 
         it('reopens with the year its payment falls in, and audits it', async () => {
-            at('2026-12-01T12:00:00.000Z');
+            at('2026-12-01T00:00:00.000Z');
             findUnique.mockResolvedValue(paid({}));
             await unarchiveApplication(1, 2);
             expect(written()).toMatchObject({ status: 'PENDING_BG_CLEARANCE', appliesToYear: 2026 });
@@ -211,8 +211,8 @@ describe('unarchiveApplication (Reopen) within the membership year', () => {
         });
 
         it('places a payment before the window opens in the year before', async () => {
-            at('2026-12-01T12:00:00.000Z');
-            findUnique.mockResolvedValue(paid({ createdAt: new Date('2026-06-01T12:00:00.000Z'), paidAt: new Date('2026-05-31T12:00:00.000Z') }));
+            at('2026-12-01T00:00:00.000Z');
+            findUnique.mockResolvedValue(paid({ createdAt: new Date('2026-06-01T00:00:00.000Z'), paidAt: new Date('2026-05-31T00:00:00.000Z') }));
             await unarchiveApplication(1, 2);
             expect(written()).toMatchObject({ appliesToYear: 2025 });
         });
@@ -221,14 +221,14 @@ describe('unarchiveApplication (Reopen) within the membership year', () => {
             ['a recorded year', { appliesToYear: 2025 }],
             ['no payment', { paidAt: null }],
         ] as const)('leaves the year alone with %s', async (_label, over) => {
-            at('2026-12-01T12:00:00.000Z');
+            at('2026-12-01T00:00:00.000Z');
             findUnique.mockResolvedValue(paid(over));
             await unarchiveApplication(1, 2);
             expect(written()).not.toHaveProperty('appliesToYear');
         });
 
         it('writes no year when no boundary is configured', async () => {
-            at('2026-12-01T12:00:00.000Z');
+            at('2026-12-01T00:00:00.000Z');
             tx.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: null });
             findUnique.mockResolvedValue(paid({}));
             await unarchiveApplication(1, 2);
@@ -237,8 +237,8 @@ describe('unarchiveApplication (Reopen) within the membership year', () => {
     });
 
     it('leaves per-person kinds alone', async () => {
-        at('2027-06-02T12:00:00.000Z');
-        findUnique.mockResolvedValue(row({ kind: 'PERSON_BG', orgMembershipId: null, subjectPersonId: 7, status: 'ARCHIVED', archivedFromStatus: 'PENDING_BG_REVIEW', createdAt: new Date('2020-07-01T12:00:00.000Z') }));
+        at('2027-06-02T00:00:00.000Z');
+        findUnique.mockResolvedValue(row({ kind: 'PERSON_BG', orgMembershipId: null, subjectPersonId: 7, status: 'ARCHIVED', archivedFromStatus: 'PENDING_BG_REVIEW', createdAt: new Date('2020-07-01T00:00:00.000Z') }));
         await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'PENDING_BG_REVIEW' });
     });
 });

@@ -4,7 +4,7 @@ import { ServiceError } from "@checkin/component-kit";
 import { config } from "@/lib/config";
 import { personActor } from "@/lib/auditActor";
 import { emailBoardMembers } from "@/lib/emailRecipients";
-import { calendarDayIn, isYouth } from "@/lib/time";
+import { isYouth } from "@/lib/time";
 import { orgToday } from "@/lib/appSettings";
 import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { RENEWAL_UNDERWAY, settledThisCycleWhere } from "@/lib/membership/lifecycle";
@@ -36,14 +36,13 @@ export function noteStands(notRenewingYear: number | null, boundary: Date | null
     return notRenewingYear !== null && live !== null && notRenewingYear >= live;
 }
 
-/** True when a RENEWAL application was opened, on its creation day in `timeZone`, for the year its household has said it won't renew into. */
+/** True when a RENEWAL application was opened for the year its household has said it won't renew into. */
 export function isNotRenewingRenewal(
     row: { kind: string; createdAt: Date },
     notRenewingYear: number | null,
     boundary: Date | null | undefined,
-    timeZone: string,
 ): boolean {
-    return row.kind === "RENEWAL" && notRenewingYear !== null && liveMembershipYear(boundary, calendarDayIn(row.createdAt, timeZone)) === notRenewingYear;
+    return row.kind === "RENEWAL" && notRenewingYear !== null && liveMembershipYear(boundary, row.createdAt) === notRenewingYear;
 }
 
 const LEAD_SELECT = { name: true, householdId: true, isHouseholdLead: true, dateOfBirth: true } as const;

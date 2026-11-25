@@ -133,14 +133,13 @@ export function liveMembershipYear(configuredBoundary: Date | null | undefined, 
 
 /**
  * Why a closed household application can't be reopened for its year, or null. Its
- * year is the live year on `createdDay`, the org calendar day it was created; once
- * the next year's renewal window opens, Reopen refuses. No boundary set, or a
- * per-person kind: null.
+ * year is the live year when it was created; once the next year's renewal window
+ * opens, Reopen refuses. No boundary set, or a per-person kind: null.
  */
-export function reopenYearRefusal(kind: string, createdDay: Date, boundary: Date | null | undefined, today: Date): string | null {
+export function reopenYearRefusal(kind: string, createdAt: Date, boundary: Date | null | undefined, now: Date): string | null {
     if (kind !== "INITIAL" && kind !== "RENEWAL") return null;
-    const year = liveMembershipYear(boundary, createdDay);
-    const live = liveMembershipYear(boundary, today);
+    const year = liveMembershipYear(boundary, createdAt);
+    const live = liveMembershipYear(boundary, now);
     if (year == null || live == null || live <= year) return null;
     const instead = kind === "RENEWAL" ? "use the new renewal" : "start a new application";
     return `This application is for ${membershipYearLabel(year)}. The ${membershipYearLabel(year + 1)} renewal period has started, so it can't be reopened; ${instead}.`;

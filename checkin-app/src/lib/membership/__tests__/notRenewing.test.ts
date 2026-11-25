@@ -72,24 +72,14 @@ describe('isNotRenewingRenewal', () => {
     const renewal = { kind: 'RENEWAL', createdAt: new Date(Date.UTC(2026, 6, 2)) };
 
     it('flags a renewal opened for the noted year, before or after the boundary passes', () => {
-        expect(isNotRenewingRenewal(renewal, 2026, BOUNDARY, 'America/Chicago')).toBe(true);
+        expect(isNotRenewingRenewal(renewal, 2026, BOUNDARY)).toBe(true);
     });
 
     it('ignores a note for another year, an old renewal, and a non-renewal', () => {
-        expect(isNotRenewingRenewal(renewal, 2025, BOUNDARY, 'America/Chicago')).toBe(false);
-        expect(isNotRenewingRenewal({ ...renewal, createdAt: new Date(Date.UTC(2025, 6, 2)) }, 2026, BOUNDARY, 'America/Chicago')).toBe(false);
-        expect(isNotRenewingRenewal({ ...renewal, kind: 'INITIAL' }, 2026, BOUNDARY, 'America/Chicago')).toBe(false);
-        expect(isNotRenewingRenewal(renewal, null, BOUNDARY, 'America/Chicago')).toBe(false);
-    });
-});
-
-describe('isNotRenewingRenewal on the org calendar day', () => {
-    // 8 PM Chicago on Jun 30, the evening before the window opens: still the 2025 year there.
-    const lateEvening = { kind: 'RENEWAL', createdAt: new Date('2026-07-01T01:00:00Z') };
-
-    it('reads the creation day in the given zone', () => {
-        expect(isNotRenewingRenewal(lateEvening, 2025, BOUNDARY, 'America/Chicago')).toBe(true);
-        expect(isNotRenewingRenewal(lateEvening, 2026, BOUNDARY, 'UTC')).toBe(true);
+        expect(isNotRenewingRenewal(renewal, 2025, BOUNDARY)).toBe(false);
+        expect(isNotRenewingRenewal({ ...renewal, createdAt: new Date(Date.UTC(2025, 6, 2)) }, 2026, BOUNDARY)).toBe(false);
+        expect(isNotRenewingRenewal({ ...renewal, kind: 'INITIAL' }, 2026, BOUNDARY)).toBe(false);
+        expect(isNotRenewingRenewal(renewal, null, BOUNDARY)).toBe(false);
     });
 });
 

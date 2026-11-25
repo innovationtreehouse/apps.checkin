@@ -2,7 +2,6 @@ import prisma from "@/lib/prisma";
 import { handler } from "@/security/handler";
 import { openProcess } from "@/lib/membership/lifecycle";
 import { isNotRenewingRenewal } from "@/lib/membership/notRenewing";
-import { resolveDisplayTimezone } from "@/lib/appSettings";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +56,6 @@ export const GET = handler("GET /api/membership-ops/applications", async ({ req 
     });
 
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-    const timeZone = await resolveDisplayTimezone();
     const noted = await prisma.orgMembership.findMany({
         where: { notRenewingYear: { not: null } },
         select: { householdId: true, notRenewingYear: true },
@@ -67,7 +65,7 @@ export const GET = handler("GET /api/membership-ops/applications", async ({ req 
     const rows = processes.map((p) => ({
         ...p,
         notRenewing: !!p.orgMembership
-            && isNotRenewingRenewal(p, notedYearOf.get(p.orgMembership.householdId) ?? null, settings?.orgMembershipYearBoundary, timeZone),
+            && isNotRenewingRenewal(p, notedYearOf.get(p.orgMembership.householdId) ?? null, settings?.orgMembershipYearBoundary),
     }));
     return { MembershipApplicationRow: rows };
 });

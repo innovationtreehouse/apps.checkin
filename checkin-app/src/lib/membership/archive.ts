@@ -10,8 +10,6 @@ import { personActor, type AuditActor } from "@/lib/auditActor";
 import { type TxClient } from "@/lib/db-client";
 import { lockHouseholdRows } from "@/lib/household/archiveGuard";
 import { liveMembershipYear, reopenYearRefusal } from "@/lib/programYear";
-import { resolveDisplayTimezone } from "@/lib/appSettings";
-import { calendarDayIn } from "@/lib/time";
 
 // Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
 const settleModule = () => import("@/lib/membership/settleHouseholdBg");
@@ -152,8 +150,8 @@ export async function closeForRestore(
  * second joining application; a household application is reopened only within its
  * own membership year. Person-scoped kinds allow one open item per subject.
  */
-async function reopenRefusal(tx: Prisma.TransactionClient, process: OrgMembershipProcess, householdId: number | null, boundary: Date | null | undefined, timeZone: string): Promise<string | null> {
-    const yearRefusal = reopenYearRefusal(process.kind, calendarDayIn(process.createdAt, timeZone), boundary, calendarDayIn(new Date(), timeZone));
+async function reopenRefusal(tx: Prisma.TransactionClient, process: OrgMembershipProcess, householdId: number | null, boundary: Date | null | undefined): Promise<string | null> {
+    const yearRefusal = reopenYearRefusal(process.kind, process.createdAt, boundary, new Date());
     if (yearRefusal) return yearRefusal;
 
     const membership = householdId == null ? null : await tx.orgMembership.findUnique({ where: { householdId }, select: { status: true } });
@@ -231,7 +229,6 @@ export async function unarchiveApplication(processId: number, actorId: number) {
     }
     const householdId = await applicantHousehold(prisma, process);
 
-    const timeZone = await resolveDisplayTimezone();
     let reopened: { forgotRequest: boolean } | null;
     try {
         reopened = await prisma.$transaction(async (tx) => {
@@ -242,13 +239,13 @@ export async function unarchiveApplication(processId: number, actorId: number) {
                 throw new ReviewError("wrong_phase", "The Board closed this check review as opened for the wrong person. Reopen it with a reason instead.");
             }
             const settings = await tx.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-            const refusal = await reopenRefusal(tx, process, householdId, settings?.orgMembershipYearBoundary, timeZone);
+            const refusal = await reopenRefusal(tx, process, householdId, settings?.orgMembershipYearBoundary);
             if (refusal) throw new ReviewError("wrong_phase", refusal);
             const forgotRequest = householdId != null && process.zohoEnvelopeId != null && process.contractSignedAt == null
                 && await deniedSinceClose(tx, processId, householdId);
             // A row closed with a payment and no year gets the year its payment falls in, as a payment stamps it.
             const paidYear = process.paidAt && process.appliesToYear == null && (HOUSEHOLD_KINDS as readonly string[]).includes(process.kind)
-                ? liveMembershipYear(settings?.orgMembershipYearBoundary, calendarDayIn(process.paidAt, timeZone))
+                ? liveMembershipYear(settings?.orgMembershipYearBoundary, process.paidAt)
                 : null;
             const yearFill = paidYear == null ? {} : { appliesToYear: paidYear };
 

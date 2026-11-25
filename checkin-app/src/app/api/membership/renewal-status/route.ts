@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { upcomingBoundary } from "@/lib/membership/renewal";
-import { resolveDisplayTimezone } from "@/lib/appSettings";
-import { calendarDayIn } from "@/lib/time";
+import { nextBoundary } from "@/lib/membership/renewal";
 import { isNotRenewingRenewal } from "@/lib/membership/notRenewing";
 import { apiError } from "@/lib/api-response";
 
@@ -35,9 +33,8 @@ export const GET = withAuth({}, async (_req, auth) => {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
     // Due at the boundary the renewal was opened for, which stays put once it passes.
     const boundary = settings?.orgMembershipYearBoundary;
-    const timeZone = await resolveDisplayTimezone();
-    const dueDate = boundary ? upcomingBoundary(boundary, calendarDayIn(open.createdAt, timeZone)).toISOString().slice(0, 10) : null;
-    const notRenewing = isNotRenewingRenewal(open, open.orgMembership?.notRenewingYear ?? null, boundary, timeZone);
+    const dueDate = boundary ? nextBoundary(boundary, open.createdAt).toISOString().slice(0, 10) : null;
+    const notRenewing = isNotRenewingRenewal(open, open.orgMembership?.notRenewingYear ?? null, boundary);
 
     return NextResponse.json({ renewalDue: true, dueDate, notRenewing });
 });
