@@ -368,7 +368,7 @@ Release 1's migration writes it, after step 4:
 
 ```sql
 UPDATE "OrgMembershipProcess"
-SET "membershipYear" = CASE WHEN <signing day> < DATE '2026-07-15' THEN 2025 ELSE 2026 END
+SET "membershipYear" = CASE WHEN ((("contractSignedAt" AT TIME ZONE 'UTC') AT TIME ZONE tz)::date) < DATE '2026-07-15' THEN 2025 ELSE 2026 END
 WHERE kind = 'PERSON_AGREEMENT' AND "membershipYear" IS NULL AND "contractSignedAt" IS NOT NULL;
 
 UPDATE "OrgMembershipProcess"
@@ -380,16 +380,16 @@ WHERE kind = 'PERSON_AGREEMENT' AND "membershipYear" IS NULL AND "contractSigned
 An open agreement given 2026 follows Q11 from then on: if it is still open
 when 2026-2027 ends, the nightly pass closes it.
 
-`<signing day>` is the day of `contractSignedAt`. Whether that is the org's
-calendar day or the UTC day is open ([G3](#q13-gaps)).
+The cutoff compares the signing time's calendar day in the org's configured
+time zone (decided), the same day `calendarDayIn` gives with `tz` from
+`AppSettings.timezone`. It is never the UTC day or a fixed zone.
 
 <a id="q13-gaps"></a>
-**What the cutoff leaves open.** These are listed for the owner, not decided. G4, whether a Board step still assigns years, is settled: none does. G1, an agreement signed before September 1, 2025, is settled: the owner confirms none exists, so the one cutoff covers every signed agreement.
+**What the cutoff leaves open.** These are listed for the owner, not decided. G4, whether a Board step still assigns years, is settled: none does. G1, an agreement signed before September 1, 2025, is settled: the owner confirms none exists, so the one cutoff covers every signed agreement. G3 is settled: the cutoff compares the org's calendar day.
 
 | # | Case | Example |
 |---|---|---|
 | G2 | An agreement closed unsigned, with no year. It has no signing date to compare, and it isn't open. Open ones are settled: they get 2026 | Opened June 2026 and closed by the Board in October 2026, unsigned. The backfill writes no year. See below for what that affects |
-| G3 | Which day the cutoff compares: the org's calendar day or UTC | Signed 9 PM on July 14, 2026, Chicago time, which is 02:00 on July 15 in UTC. The org's day gives 2025, UTC gives 2026 |
 | G5 | Agreements the previous release creates during the release-1 drain. They have no year and come after the migration | Opened by the old code on the release day and signed in 2027. Applied again, the cutoff would write 2026 |
 
 What a closed, unsigned agreement with no year affects beyond history (G2):
@@ -867,7 +867,7 @@ ROLLBACK;
 | 0 | The org-day boundary change | Separate design |
 | 1 | Column, backfill, writers, readers with fallbacks, checkout by stamped year, and the payment answers from §3 | Release 0 merged. The owner has run the boundary query and settled any unpaid rows it lists. The order fill has run and the Board has picked a year for every row it listed |
 | 2 | Re-fill, check constraint, fallbacks and archive fill removed, test fixtures | Release 1 in production; the null-count query returns zero |
-| Later | The database check extended to PERSON_AGREEMENT | G2, G3 and G5 answered; no agreement left without a year |
+| Later | The database check extended to PERSON_AGREEMENT | G2 and G5 answered; no agreement left without a year |
 
 ---
 
@@ -875,7 +875,7 @@ ROLLBACK;
 
 | # | Question | Section |
 |---|---|---|
-| G2, G3, G5 | What the Q13 cutoff leaves open for existing agreements | [§2a](#q13-gaps) |
+| G2, G5 | What the Q13 cutoff leaves open for existing agreements | [§2a](#q13-gaps) |
 
 ---
 
