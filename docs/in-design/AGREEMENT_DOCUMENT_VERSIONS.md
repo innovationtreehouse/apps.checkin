@@ -24,7 +24,7 @@ Board decides with each adoption how old a signature may be and still count.
 ## Executive summary
 
 - **Versions are whole numbers.** Any change to the text, a typo fix included,
-  is the next number (open question 1: this numbering awaits a Board ruling).
+  is the next number (Board decision, for both agreements).
 - **Each version is its own file, never overwritten**, with a SHA-256
   fingerprint (a hash that changes if a single byte changes) recorded when the
   Board adopts it.
@@ -265,7 +265,8 @@ reporting:
 ### Existing records
 
 The owner decided that existing signatures are recorded at the versions in use
-today: membership 7 and KVA 2 (open question 1 covers the renumbering itself).
+today: membership 7 and KVA 2. The Board decided the renumbering: the current
+membership agreement 6.1.1 becomes 7, and the KVA 1.1.1 becomes 2.
 
 - A sysadmin copies today's fixed-key PDFs to `agreements/membership/7.pdf` and
   `agreements/key-volunteer/2.pdf`. A one-off script, run inside ECS like every
@@ -288,9 +289,10 @@ today: membership 7 and KVA 2 (open question 1 covers the renumbering itself).
 
 ## Open questions
 
-| # | Question | Example | Proposed answer |
-|---|---|---|---|
-| 1 | Board ruling pending: whole-number versions, renumbering the current membership agreement 6.1.1 as 7 and the KVA 1.1.1 as 2. | A typo fix to the membership agreement after the ruling becomes version 8, not 7.0.1. | Adopt whole numbers as written; the owner proposes them to the Board. The rest of this design assumes them. |
+None. The Board decided whole-number versions for the membership agreement
+and the Key Volunteer Agreement, including renumbering the current membership
+agreement 6.1.1 as 7 and the KVA 1.1.1 as 2. A typo fix to the membership
+agreement after that becomes version 8, not 7.0.1.
 
 ## Build: PR split
 
