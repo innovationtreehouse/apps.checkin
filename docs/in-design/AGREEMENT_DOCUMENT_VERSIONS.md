@@ -188,6 +188,10 @@ Board only, for both agreements (owner's decision):
 4. On confirm, one transaction inserts the version row, writes the audit rows,
    and carries out what the new minimum requires (below).
 
+The adopt route's registry entry grants it to `isBoardMember` alone, the same
+grant as today's `POST /api/settings/membership/key-volunteer-version`; no other
+role can adopt or move a minimum.
+
 Every adoption writes an audit row naming the agreement, version, file key,
 fingerprint, minimum, the renewal-or-now choice, and the Board member who
 adopted it. An adoption that changes the minimum writes a second audit row with
@@ -226,29 +230,46 @@ part of that application, which a re-sign must not reopen, and a
 `PERSON_AGREEMENT` on a lead is refused because it would shadow the household's
 signing flow.
 
+`MEMBERSHIP_RESIGN` joins the kinds that settle on the signature alone: the
+per-person check in `markContractSigned`
+(`checkin-app/src/lib/membership/external.ts`) and `SETTLES_ON_SIGNATURE` in
+`checkin-app/src/lib/membership/lifecycle.ts`, with its edges in that file's
+transition table. Left out of either, a signed re-sign would take the household
+path and wait for payment and clearance it never owes.
+
 The `PERSON_AGREEMENT` triggers skip anyone whose agreement was "handled this
-cycle": one still open, or one settled since the cycle's floor
-(`handledThisCycleWhere` in
-`checkin-app/src/lib/membership/personAgreementTriggers.ts`). Left as it is,
-that guard would skip an adult who signed this cycle at a version below the
-new minimum. The guard therefore counts a settled agreement as handled only
-when its `agreementVersion` is at or above the membership minimum. An open one
-still counts: if its request is below the minimum, the adoption has already
-cancelled it. The nightly sweep and the "now" fan-out share that guard, so the
-sweep also catches anyone the fan-out missed.
+cycle": one still open, or one settled since the cycle's floor. That guard is
+the private `handledThisCycleWhere(personId, floor)` in
+`checkin-app/src/lib/membership/personAgreementTriggers.ts`, read by
+`openPersonAgreement`. The exported predicate of the same name in
+`lifecycle.ts` is the household renewal sweep's and is not changed. Left as it
+is, the `PERSON_AGREEMENT` guard would skip an adult who signed this cycle at a
+version below the new minimum. It therefore counts a settled agreement as
+handled only when its `agreementVersion` is at or above the membership minimum.
+An open one still counts: if its request is below the minimum, the adoption has
+already cancelled it. The "now" fan-out opens each adult's agreement through
+`openPersonAgreement`, as the nightly trigger does, so both read the same guard
+under the same `Person` row lock: the two can't open a second agreement for one
+person, and the nightly trigger catches anyone the fan-out missed.
 
 Lowering the minimum opens and cancels nothing; signatures back in range simply
 count again.
 
 ### The nightly check
 
-The nightly cron reads every adopted version's file and compares it with its
-fingerprint. A missing file, or one whose bytes no longer match, becomes a line
-on the Problems list naming the agreement, version and key, and so reaches the
-daily Problems email. Signing never checks the fingerprint and is never stopped
+A step of the `nightly` cron reads every adopted version's file and compares
+it with its fingerprint, and records each result for System status. A missing
+file, or one whose bytes no longer match, becomes a notice on the Problems list,
+built in `checkin-app/src/lib/problems.ts` the way the failed-email count is
+(the agreement libraries are not a Problems source with stuck items to retry).
+The notice names the agreement and version and links to System status, which
+shows the key; it reaches the daily Problems email through the digest's
+notices. Signing never checks the fingerprint and is never stopped
 by a mismatch (owner's decision): the check exists to warn the Board and the
 sysadmin before a signer meets a changed file, and each signature still records
-the fingerprint of what it was actually sent.
+the fingerprint of what it was actually sent. A signer sent an overwritten
+file before the next nightly run is the gap this leaves; their signature's
+fingerprint differs from the version's, which shows what they received.
 
 ### System status
 
@@ -271,14 +292,14 @@ membership agreement 6.1.1 becomes 7, and the KVA 1.1.1 becomes 2.
 - A sysadmin copies today's fixed-key PDFs to `agreements/membership/7.pdf` and
   `agreements/key-volunteer/2.pdf`. A one-off script, run inside ECS like every
   other one-off database task, adopts each with its fingerprint and with the
-  minimum at that version. A migration can't read S3, so the fingerprint can't
-  come from SQL.
+  minimum at that version, in the same transaction as the backfill below. A
+  migration can't read S3, so the fingerprint can't come from SQL.
 - KVA rows from the Key Volunteer build, all at `agreementVersion = 1`, move to 2,
   in the same transaction that moves `BoardSettings.keyVolunteerAgreementVersion`
-  from 1 to 2 and its column default from 1 to 2. Grandfathered rows (no request,
-  created by `migration:key-volunteer-grandfather`) get `GRANDFATHERED`; rows the
-  Board recorded by hand (found by their audit row) get `BOARD_RECORDED`; the
-  rest get `ZOHO` or, on a non-production instance, `MOCK`.
+  from 1 to 2; a migration moves its column default to 2. Grandfathered rows
+  (no request, created by `migration:key-volunteer-grandfather`) get
+  `GRANDFATHERED`; rows the Board recorded by hand (found by their audit row)
+  get `BOARD_RECORDED`; the rest get `ZOHO` or, on a non-production instance, `MOCK`.
 - Membership rows (`INITIAL`, `RENEWAL`, `PERSON_AGREEMENT`) that are signed get
   `agreementVersion = 7` and their source by the same rule.
 - No backfilled row gets a fingerprint: the app never recorded what it sent
@@ -311,11 +332,19 @@ expand/contract order in `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`
 2. **Boundary.** Registry entries for the adopt route, the needs-to-re-sign list
    and the status fields, and the synthetic classification changes for the
    self-status and adoption responses. Boundary only; the routes stay inert.
-3. **Adopt the files in use, and backfill.** The one-off adoption script for
-   membership 7 and KVA 2, then a data migration: KVA rows and the
-   `BoardSettings` value from 1 to 2, the column default to 2, membership rows to
-   7, and `signatureSource` on every signed row. One transaction, so old code
-   reads a consistent pair throughout.
+3. **Adopt the files in use, and backfill.** A migration moves the
+   `BoardSettings.keyVolunteerAgreementVersion` column default to 2 (it applies
+   only to a new row, so it is safe alone). A one-off script, run on each
+   instance after a sysadmin has copied the two files, reads and fingerprints
+   both, then in one transaction inserts membership 7 and KVA 2, moves KVA rows
+   and the `BoardSettings` value from 1 to 2, sets membership rows to 7, and sets
+   `signatureSource` on every signed row. Old code therefore reads a consistent
+   pair throughout, and a failure leaves nothing half done. It refuses if either
+   file is missing, and re-runs as a no-op once both versions exist with the
+   same fingerprints; a version already adopted with a different fingerprint
+   stops it. PR 4 reaches an instance only after the script has run there: it
+   is not merged until the script has run on dev, and not released until it has
+   run on prod.
 4. **Signing records the version.** Load the current version's file by its key;
    write `agreementVersion`, `agreementSha256` and `signatureSource` beside the
    request id; KVA "signed" by the minimum; mirror the KVA minimum into
@@ -327,8 +356,8 @@ expand/contract order in `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`
    fingerprint check and the System status rows. Based on `main` after PR 2
    merges, not stacked on its branch.
 6. **Contract.** In a later release: drop `BoardSettings.keyVolunteerAgreementVersion`,
-   remove the fixed-key environment variables and their status rows. Any boundary
-   removal it needs ships first in its own PR.
+   remove the fixed-key environment variables and their status rows, and delete
+   this doc. Any boundary removal it needs ships first in its own PR.
 
 ## Alternatives considered
 
