@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button, Card, Group, Stack, Text, Textarea, Title } from "@mantine/core";
 import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
 import { api } from "@/lib/api";
-import { APP_TIMEZONE, formatDate } from "@/lib/time";
+import { useOrgTime } from "@/components/TimezoneProvider";
 
 export type Signing = {
   processId: number;
@@ -19,6 +19,7 @@ export function SigningStatusCard({ signing, onChange }: { signing: Signing | nu
   const [resetting, setResetting] = useState(false);
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
+  const { formatDate } = useOrgTime();
 
   if (!signing || (!signing.contractSignedAt && !signing.contractStarted && !signing.signerName)) return null;
 
@@ -47,7 +48,7 @@ export function SigningStatusCard({ signing, onChange }: { signing: Signing | nu
         <Title order={5}>Membership agreement</Title>
         {signing.contractSignedAt ? (
           <Text size="sm">
-            {signing.signerName ? `Signed by ${signing.signerName}` : "Signed"}, {formatDate(signing.contractSignedAt, { year: "numeric", month: "short", day: "numeric", timeZone: APP_TIMEZONE })}
+            {signing.signerName ? `Signed by ${signing.signerName}` : "Signed"}, {formatDate(signing.contractSignedAt, { year: "numeric", month: "short", day: "numeric" })}
           </Text>
         ) : (
           <>

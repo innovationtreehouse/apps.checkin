@@ -8,7 +8,8 @@ import prisma from "@/lib/prisma";
 import { unreadLine } from "@/lib/problemsLines";
 import { currentPostingWarnings } from "@/lib/finance/postingRuns";
 import { checkEmailStuckItems, retryCheckEmail } from "@/lib/membership/positionCheck";
-import { APP_TIMEZONE, formatDate, formatDateTime } from "@/lib/time";
+import { resolveDisplayTimezone } from "@/lib/appSettings";
+import { formatDate, formatDateTime } from "@/lib/time";
 
 /** The name the Problems list gives the receipt library's items. */
 export const RECEIPT_LIBRARY = "receipt";
@@ -141,8 +142,8 @@ export const UNPAID_PAYOUT_LINES_MAX = 5;
 /** A line for each payout the Shopify reader no longer re-reads that is still not paid. */
 async function unpaidPayoutNotices(now: Date): Promise<Notice[]> {
     const { unpaidPayoutsPastRereadWindow, PAYOUT_REREAD_WINDOW_DAYS } = await import("@/lib/shopifyRead/client");
-    const payouts = await unpaidPayoutsPastRereadWindow(now);
-    const day = (at: Date) => formatDate(at, { timeZone: APP_TIMEZONE, dateStyle: "medium" });
+    const [payouts, timeZone] = await Promise.all([unpaidPayoutsPastRereadWindow(now), resolveDisplayTimezone()]);
+    const day = (at: Date) => formatDate(at, { timeZone, dateStyle: "medium" });
     const after = `after ${PAYOUT_REREAD_WINDOW_DAYS} days`;
     const line = (text: string): Notice => ({ text, href: "/income/payouts" });
     if (payouts.length > UNPAID_PAYOUT_LINES_MAX) {
@@ -272,11 +273,12 @@ async function quickBooksPostingLines(): Promise<string[]> {
  */
 export async function sendProblemsDigest(now = new Date(), tonight: string[] = []): Promise<void> {
     try {
-        const [{ items, unread, notices }, jobs, settings, quickBooks] = await Promise.all([
+        const [{ items, unread, notices }, jobs, settings, quickBooks, timeZone] = await Promise.all([
             getProblems(now),
             getCronJobStatuses(),
             prisma.boardSettings.findUnique({ where: { id: 1 }, select: { alertEmailAddress: true, boardEmailAddress: true } }),
             quickBooksPostingLines(),
+            resolveDisplayTimezone(),
         ]);
         const age = (at: Date) => now.getTime() - at.getTime();
         const stuck = items.filter((i) => age(i.failedAt) > DAY_MS);
@@ -284,7 +286,7 @@ export async function sendProblemsDigest(now = new Date(), tonight: string[] = [
         const failing = jobs.filter(failingJob);
         if (stuck.length === 0 && stale.length === 0 && failing.length === 0 && unread.length === 0 && notices.length === 0 && tonight.length === 0 && quickBooks.length === 0) return;
 
-        const when = (at: Date) => formatDateTime(at, { timeZone: APP_TIMEZONE, dateStyle: "medium", timeStyle: "short" });
+        const when = (at: Date) => formatDateTime(at, { timeZone, dateStyle: "medium", timeStyle: "short" });
         const lines = [
             ...tonight,
             ...quickBooks,
