@@ -288,11 +288,11 @@ for 2025-2026, because it falls after that cycle's floor of July 1, 2025.
 Backfilling it means working the year out from a date, which the ruling forbids
 at creation.
 
-- **a.** Backfill from today's date rule, once, as history: the cycle its
-  `stageEnteredAt` falls in. The rule is then deleted.
+- **a.** Rejected. No year is stamped from today's date rule, which the owner
+  considers wrong.
 - **b.** Leave old rows null. The "already handled" check treats a null-year
   settled agreement by the old date rule until one cycle has passed, then
-  ignores it.
+  ignores it. This still leans on the rejected rule for that cycle.
 - **c.** Leave old rows null, and the next nightly pass opens a year-stamped
   agreement for everyone it covers, so each of them signs again once.
 
