@@ -29,6 +29,7 @@ build/
 # misc
 .DS_Store
 *.pem
+.scratch/
 
 # debug / runtime artifacts (never commit these)
 *.log
