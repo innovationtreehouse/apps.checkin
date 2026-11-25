@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
+import { orgToday } from "@/lib/appSettings";
 import { withAuth } from "@/lib/auth";
 import { ACTIVE_ORG_MEMBER_PERSON_WHERE, personRecordIsActiveOrgMember } from "@/lib/orgMembership";
 import { apiError } from "@/lib/api-response";
@@ -121,7 +122,7 @@ export const GET = withAuth(
 
             // The only callers are the lead-mentor pickers, so "adults" means
             // leader-eligible: 23+ by DOB, or isDeclaredAdult (marked 25+).
-            const ageCutoff = leaderAgeCutoff();
+            const ageCutoff = leaderAgeCutoff(await orgToday());
 
             // The Participants directory prints the id column, so a bare number is
             // also an id lookup — OR'd with the text match, since "42" can equally

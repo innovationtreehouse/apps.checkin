@@ -7,7 +7,7 @@ import { createKva, currentKvaVersion, findOpenKva, hasSignedCurrentKva } from "
 import { mintPersonId } from "@/lib/person/mintId";
 import { withTx, type DbClient, type TxClient } from "@/lib/db-client";
 import { nextBoundary, programYearsTouched } from "@/lib/programYear";
-import { orgCalendarDay } from "@/lib/time";
+import { APP_TIMEZONE, calendarDayIn } from "@/lib/time";
 import { normalizePhone } from "@/lib/phone";
 import { householdHasValidContact } from "@/lib/emergencyContacts/valid";
 
@@ -455,9 +455,15 @@ async function seedProgramYear(prisma: DbClient, startAt: Date, endAt: Date): Pr
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** A calendar day `offset` days from today in the org's zone. */
-function day(offset: number): Date {
-    return new Date(orgCalendarDay().getTime() + offset * DAY_MS);
+/** A calendar day `offset` days from `today`. */
+function dayFrom(today: Date, offset: number): Date {
+    return new Date(today.getTime() + offset * DAY_MS);
+}
+
+/** Today's calendar day in the org's configured zone, read through the seed's own client. */
+async function seedToday(prisma: Db): Promise<Date> {
+    const settings = await prisma.appSettings.findUnique({ where: { id: 1 }, select: { timezone: true } });
+    return calendarDayIn(new Date(), settings?.timezone ?? APP_TIMEZONE);
 }
 
 type SeedProgram = {
@@ -482,6 +488,8 @@ type SeedProgram = {
 // hand in the app; enrollment and saleEndedAt are what the sale sweep leaves.
 async function seedProgramSpread(prisma: Db): Promise<void> {
     const settings = await prisma.boardSettings.findUniqueOrThrow({ where: { id: 1 } });
+    const today = await seedToday(prisma);
+    const day = (offset: number) => dayFrom(today, offset);
     const nextYearStart = nextBoundary(settings.orgMembershipYearBoundary!, day(0));
     const nextYearOffset = Math.round((nextYearStart.getTime() - day(0).getTime()) / DAY_MS) + 14;
 
@@ -502,11 +510,11 @@ async function seedProgramSpread(prisma: Db): Promise<void> {
     for (const spec of specs) {
         if (await prisma.program.findFirst({ where: { name: spec.name } })) continue;
         // One transaction per program, so a failed write leaves no half-built program for the next run to skip.
-        await withTx(prisma, (tx) => seedSpreadProgram(tx, spec, leadId, youthIds));
+        await withTx(prisma, (tx) => seedSpreadProgram(tx, spec, leadId, youthIds, today));
     }
 }
 
-async function seedSpreadProgram(tx: TxClient, spec: SeedProgram, leadId: number, youthIds: number[]): Promise<void> {
+async function seedSpreadProgram(tx: TxClient, spec: SeedProgram, leadId: number, youthIds: number[], today: Date): Promise<void> {
     const { events, enroll, saleEnded, ...fields } = spec;
     const program = await tx.program.create({
         data: {
@@ -524,7 +532,7 @@ async function seedSpreadProgram(tx: TxClient, spec: SeedProgram, leadId: number
         });
     }
     for (const offset of events) {
-        const startAt = new Date(day(offset).getTime() + 17 * 60 * 60 * 1000);
+        const startAt = new Date(dayFrom(today, offset).getTime() + 17 * 60 * 60 * 1000);
         const endAt = new Date(startAt.getTime() + 2 * 60 * 60 * 1000);
         const past = endAt.getTime() < Date.now();
         const event = await tx.event.create({

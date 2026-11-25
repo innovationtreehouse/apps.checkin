@@ -10,6 +10,7 @@ import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { formatDateOnly } from "@/lib/time";
 import { isMembershipLapsed } from "@/lib/membership/lapsed";
+import { useOrgTime } from "@/components/TimezoneProvider";
 import { SigningStatusCard, type Signing } from "@/components/membership/SigningStatusCard";
 
 type Enrollment = {
@@ -96,6 +97,7 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
   const { id } = use(params);
   const { ready, loading: authLoading, user } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
   const router = useRouter();
+  const today = useOrgTime().today();
 
   const { data, error, reload } = useLoad<HouseholdDetail>(ready ? `/api/membership-ops/households?id=${id}` : null);
   const household = data?.household ?? null;
@@ -145,7 +147,7 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
           <Badge color="gray" variant="outline">Archived {fmtDate(household.archivedAt)}</Badge>
         ) : status === "DENIED" ? (
           <Badge color="red">Denied</Badge>
-        ) : status === "ACTIVE" && isMembershipLapsed(validUntil) ? (
+        ) : status === "ACTIVE" && isMembershipLapsed(validUntil, today) ? (
           <Badge color="orange">Member (lapsed)</Badge>
         ) : status === "ACTIVE" ? (
           <Badge>Member</Badge>

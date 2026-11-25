@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
-import { calculateAge, orgCalendarDay } from "@/lib/time";
+import { calculateAge } from "@/lib/time";
+import { orgToday } from "@/lib/appSettings";
 import { renewalWindow } from "@/lib/membership/renewal";
 import { ENROLLED_PARTICIPANT, recentProgramWhere } from "@/lib/person/filters";
 import { personOrSystemActor } from "@/lib/auditActor";
@@ -17,7 +18,7 @@ import { personOrSystemActor } from "@/lib/auditActor";
 
 
 /**
- * Automatic-population age rule: a DOB on file and 18–25 as of `now`.
+ * Automatic-population age rule: a DOB on file and 18–25 as of `today`.
  *
  * The band is the spouse guard. `isDeclaredAdult` means "over 25, no DOB" — set by the
  * intake checkbox and stamped by the nightly DOB purge as people cross 26. A non-lead
@@ -29,17 +30,17 @@ import { personOrSystemActor } from "@/lib/auditActor";
  * ≤25), because the implicit version has a reachable hole: a household adds a 30-year-old
  * spouse with a DOB and doesn't mark them a lead — until the next purge runs they'd qualify.
  *
- * Age is as-of `now`, NOT as-of the membership-year boundary. Boundary-relative age (what
+ * Age is as-of today, NOT as-of the membership-year boundary. Boundary-relative age (what
  * personBgVerdict does) evaluated by a nightly job would flag a 17-year-old whose 18th
  * birthday merely falls before the next boundary — asking a minor to sign a contract they
  * can't be bound by, the exact failure this feature exists to prevent.
  *
- * `now` is an instant, so the age is judged on the calendar day it falls on in the org's
- * zone: the band opens at local midnight, not at 7 PM the evening before.
+ * `today` is the org's calendar day (`orgToday`), so the band opens at the org's local
+ * midnight, not at UTC midnight the evening before.
  */
-export function inAgreementAgeBand(person: { dateOfBirth: Date | null; isDeclaredAdult: boolean }, now: Date): boolean {
+export function inAgreementAgeBand(person: { dateOfBirth: Date | null; isDeclaredAdult: boolean }, today: Date): boolean {
     if (!person.dateOfBirth) return false;
-    const age = calculateAge(person.dateOfBirth, orgCalendarDay(now));
+    const age = calculateAge(person.dateOfBirth, today);
     return age >= 18 && age <= 25;
 }
 
@@ -49,9 +50,9 @@ export function inAgreementAgeBand(person: { dateOfBirth: Date | null; isDeclare
  * age is still refused, since we can neither confirm they're 18 nor treat them as adult.
  * Same population the compliance dashboard reports as DOB_MISSING.
  */
-export function hasKnownAdultAge(person: { dateOfBirth: Date | null; isDeclaredAdult: boolean }, now: Date): boolean {
+export function hasKnownAdultAge(person: { dateOfBirth: Date | null; isDeclaredAdult: boolean }, today: Date): boolean {
     if (person.isDeclaredAdult) return true;
-    return !!person.dateOfBirth && calculateAge(person.dateOfBirth, orgCalendarDay(now)) >= 18;
+    return !!person.dateOfBirth && calculateAge(person.dateOfBirth, today) >= 18;
 }
 
 /**
@@ -98,11 +99,13 @@ function handledThisCycleWhere(personId: number, floor: Date) {
  * vs. adult child itself) but keeps the household-lead refusal, which is not cosmetic: an
  * open PERSON_AGREEMENT on a lead would shadow their household signing flow.
  *
+ * `today` is the org's calendar day the age rule is judged on.
+ *
  * Returns the created process, or null when skipped.
  */
 export async function openPersonAgreement(
     personId: number,
-    now: Date,
+    today: Date,
     floor: Date,
     { manual = false, actorId }: { manual?: boolean; actorId?: number } = {},
 ) {
@@ -114,7 +117,7 @@ export async function openPersonAgreement(
         });
         if (!person) return null;
         if (person.isHouseholdLead) return null;
-        if (!(manual ? hasKnownAdultAge(person, now) : inAgreementAgeBand(person, now))) return null;
+        if (!(manual ? hasKnownAdultAge(person, today) : inAgreementAgeBand(person, today))) return null;
 
         const handled = await tx.orgMembershipProcess.findFirst({
             where: handledThisCycleWhere(personId, floor),
@@ -157,8 +160,8 @@ export function findOpenPersonAgreement(personId: number) {
  * (calculateAge is UTC month/day math), so it's applied per-person inside
  * openPersonAgreement.
  */
-export function autoPopulationWhere(now: Date) {
-    const program = recentProgramWhere(now);
+export function autoPopulationWhere(today: Date) {
+    const program = recentProgramWhere(today);
     return {
         isHouseholdLead: false,
         household: { orgMembership: { status: "ACTIVE" as const } },
@@ -184,13 +187,14 @@ export async function runPersonAgreementSweep(now: Date) {
     if (!settings?.orgMembershipYearBoundary) return { opened: 0, failed: 0, reason: "no membership-year boundary configured" };
 
     const floor = agreementCycleFloor(settings.orgMembershipYearBoundary, now);
-    const people = await prisma.person.findMany({ where: { ...autoPopulationWhere(now) }, select: { id: true } });
+    const today = await orgToday(now);
+    const people = await prisma.person.findMany({ where: { ...autoPopulationWhere(today) }, select: { id: true } });
 
     let opened = 0;
     let failed = 0;
     for (const p of people) {
         try {
-            if (await openPersonAgreement(p.id, now, floor)) opened++;
+            if (await openPersonAgreement(p.id, today, floor)) opened++;
         } catch (err) {
             failed++;
             logger.error(`Failed to open an individual membership agreement for person ${p.id}:`, err);
@@ -210,11 +214,12 @@ export async function openPersonAgreementForNewMember(householdId: number, asOf:
     if (!settings?.orgMembershipYearBoundary) return;
 
     const floor = agreementCycleFloor(settings.orgMembershipYearBoundary, asOf);
+    const today = await orgToday(asOf);
     const people = await prisma.person.findMany({
-        where: { householdId, ...autoPopulationWhere(asOf) },
+        where: { householdId, ...autoPopulationWhere(today) },
         select: { id: true },
     });
-    for (const p of people) await openPersonAgreement(p.id, asOf, floor);
+    for (const p of people) await openPersonAgreement(p.id, today, floor);
 }
 
 export class PersonAgreementError extends Error {
@@ -238,7 +243,8 @@ export async function openPersonAgreementForBoard(personId: number, actorId: num
     if (person.isHouseholdLead) {
         throw new PersonAgreementError("is_lead", "A household lead signs the household agreement, not an individual one.");
     }
-    if (!hasKnownAdultAge(person, now)) {
+    const today = await orgToday(now);
+    if (!hasKnownAdultAge(person, today)) {
         throw new PersonAgreementError("age_unknown", "Record this person's date of birth (or mark them over 25) first.");
     }
 
@@ -246,7 +252,7 @@ export async function openPersonAgreementForBoard(personId: number, actorId: num
     // No boundary configured: no cycle to dedup against, so fall back to "one ever".
     const floor = settings?.orgMembershipYearBoundary ? agreementCycleFloor(settings.orgMembershipYearBoundary, now) : new Date(0);
 
-    await openPersonAgreement(personId, now, floor, { manual: true, actorId });
+    await openPersonAgreement(personId, today, floor, { manual: true, actorId });
     const open = await findOpenPersonAgreement(personId);
     if (!open) throw new PersonAgreementError("not_opened", "This person already signed an individual agreement for this cycle.");
     return open;

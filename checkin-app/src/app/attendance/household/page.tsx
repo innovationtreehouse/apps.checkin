@@ -8,7 +8,7 @@ import { PageContainer } from "@/components/ui/PageContainer";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { api, useLoad } from "@/lib/api";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
-import { formatDateOnly, orgCalendarDay, toDatetimeLocal } from "@/lib/time";
+import { formatDateOnly, toDatetimeLocal } from "@/lib/time";
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { AttendanceTabs } from "../AttendanceTabs";
 
@@ -18,7 +18,7 @@ type Visit = { id: number; person?: { name: string }; event?: { name: string }; 
 // A household lead corrects their household members' visits on the same
 // trust-first terms as their own — the server flags significant changes to the board.
 export default function HouseholdCheckins() {
-  const { formatVisitRange, formatDateTime } = useOrgTime();
+  const { formatVisitRange, formatDateTime, today } = useOrgTime();
   const { ready, loading: authLoading, user } = useRequireRole([]);
   const [filterDate, setFilterDate] = useState("");
   // Keeps the rows on screen while another date loads; each row acts on its own id.
@@ -81,7 +81,7 @@ export default function HouseholdCheckins() {
           type="date"
           label="Lookup Date"
           size="xs"
-          value={filterDate || orgCalendarDay().toISOString().slice(0, 10)}
+          value={filterDate || today().toISOString().slice(0, 10)}
           onChange={(e) => setFilterDate(e.currentTarget.value)}
         />
       </Group>

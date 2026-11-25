@@ -3,7 +3,8 @@ import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
-import { orgCalendarDay } from "@/lib/time";
+import { calendarDayIn } from "@/lib/time";
+import { resolveDisplayTimezone } from "@/lib/appSettings";
 
 export const GET = withAuth(
     { roles: ['isSysadmin', 'isBoardMember', 'isKeyholder'] },
@@ -30,7 +31,8 @@ export const GET = withAuth(
 
             const groupedByDay: Record<string, number[]> = {};
             
-            const today = orgCalendarDay();
+            const timeZone = await resolveDisplayTimezone();
+            const today = calendarDayIn(new Date(), timeZone);
             for (let i = 29; i >= 0; i--) {
                 const date = new Date(today);
                 date.setUTCDate(date.getUTCDate() - i);
@@ -39,7 +41,7 @@ export const GET = withAuth(
             }
 
             metrics.forEach((m: { timestamp: Date; value: number }) => {
-                const dateStr = orgCalendarDay(m.timestamp).toISOString().split('T')[0];
+                const dateStr = calendarDayIn(m.timestamp, timeZone).toISOString().split('T')[0];
                 if (groupedByDay[dateStr]) {
                     groupedByDay[dateStr].push(m.value);
                 }

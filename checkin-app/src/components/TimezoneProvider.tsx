@@ -3,6 +3,7 @@
 import { createContext, useContext, useMemo } from 'react';
 import {
     APP_TIMEZONE,
+    calendarDayIn,
     formatDate,
     formatDateTime,
     formatTime,
@@ -51,6 +52,8 @@ export function useOrgTime() {
                 formatDateTime(date, { ...options, timeZone }),
             formatVisitRange: (arrived: DateInput, departed?: DateInput) =>
                 formatVisitRange(arrived, departed, timeZone),
+            /** Today's calendar day in this tree's zone, at UTC midnight (the `@db.Date` shape). */
+            today: () => calendarDayIn(new Date(), timeZone),
         }),
         [timeZone],
     );

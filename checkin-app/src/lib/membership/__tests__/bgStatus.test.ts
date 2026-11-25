@@ -1,10 +1,15 @@
-import { bgStatus } from "@/lib/membership/bgStatus";
+import { bgStatus as bgStatusIn } from "@/lib/membership/bgStatus";
+import { calendarDayIn } from "@/lib/time";
 
 // Boundary 1 Sept, 12-month recheck interval.
 const settings = { orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)), bgRecheckMonths: 12 };
 const day = (y: number, m: number, d: number) => new Date(Date.UTC(y, m - 1, d));
 // Mid-year: the upcoming boundary is 1 Sept 2026, so a check counts there from 1 Sept 2025.
 const MARCH = new Date(Date.UTC(2026, 2, 15, 18));
+
+type Settings = Parameters<typeof bgStatusIn>[1];
+/** bgStatus with today taken in Chicago, the zone these cases were written for. */
+const bgStatus = (check: Date | null, s: Settings, now: Date) => bgStatusIn(check, s, now, calendarDayIn(now, "America/Chicago"));
 
 describe("bgStatus", () => {
     it("is VALID from the upcoming boundary's threshold on", () => {
@@ -26,6 +31,14 @@ describe("bgStatus", () => {
         const check = day(2024, 8, 15);
         expect(bgStatus(check, settings, new Date(Date.UTC(2025, 8, 1, 18)))).toBe("EXPIRES_BEFORE_NEXT_YEAR");
         expect(bgStatus(check, settings, new Date(Date.UTC(2025, 8, 2, 18)))).toBe("EXPIRED");
+    });
+
+    it("expires on the org zone's day, not Chicago's", () => {
+        // Valid until the 1 Sept 2025 boundary; 12:30 AM on 2 Sept in New York, 11:30 PM on 1 Sept in Chicago.
+        const check = day(2024, 8, 15);
+        const instant = new Date("2025-09-02T04:30:00Z");
+        expect(bgStatusIn(check, settings, instant, calendarDayIn(instant, "America/New_York"))).toBe("EXPIRED");
+        expect(bgStatusIn(check, settings, instant, calendarDayIn(instant, "America/Chicago"))).toBe("EXPIRES_BEFORE_NEXT_YEAR");
     });
 
     it("shows nothing with the interval or boundary unset, or no check on file", () => {

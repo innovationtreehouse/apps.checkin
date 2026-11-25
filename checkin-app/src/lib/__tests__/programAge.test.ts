@@ -1,5 +1,5 @@
-import { checkProgramAge, isKnownAdult, isLeaderAgeEligible, LEADER_MIN_AGE, validateProgramAgeBounds, MAX_PROGRAM_AGE } from "@/lib/programAge";
-import { orgCalendarDay } from "@/lib/time";
+import { checkProgramAge, isKnownAdult, isLeaderAgeEligible, leaderAgeCutoff, LEADER_MIN_AGE, validateProgramAgeBounds, MAX_PROGRAM_AGE } from "@/lib/programAge";
+import { calendarDayIn, orgCalendarDay } from "@/lib/time";
 
 // as-of date pins calculateAge so the DOB cases don't drift with wall-clock time.
 const asOf = "2026-01-01";
@@ -133,5 +133,14 @@ describe("validateProgramAgeBounds", () => {
     expect(validateProgramAgeBounds(-1, null)).toBe("minAge cannot be negative");
     expect(validateProgramAgeBounds(null, -1)).toBe("maxAge cannot be negative");
     expect(validateProgramAgeBounds(18, 14)).toBe("minAge cannot exceed maxAge");
+  });
+});
+
+describe("leaderAgeCutoff", () => {
+  it("is the org zone's day, LEADER_MIN_AGE years back", () => {
+    // 12:30 AM on the 12th in New York, 11:30 PM on the 11th in Chicago.
+    const instant = "2026-10-12T04:30:00.000Z";
+    expect(leaderAgeCutoff(calendarDayIn(instant, "America/New_York")).toISOString()).toBe("2003-10-12T00:00:00.000Z");
+    expect(leaderAgeCutoff(calendarDayIn(instant, "America/Chicago")).toISOString()).toBe("2003-10-11T00:00:00.000Z");
   });
 });

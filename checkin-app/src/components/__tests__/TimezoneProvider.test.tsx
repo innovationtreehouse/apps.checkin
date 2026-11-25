@@ -39,6 +39,21 @@ describe('TimezoneProvider', () => {
         expect(Rejected).toBeDefined();
     });
 
+    it("gives today's day in the configured zone", () => {
+        function Today() {
+            const { today } = useOrgTime();
+            return <span data-testid="today">{today().toISOString()}</span>;
+        }
+        // 12:30 AM on the 12th in New York, 11:30 PM on the 11th in Chicago.
+        jest.useFakeTimers({ now: new Date('2026-10-12T04:30:00.000Z') });
+        try {
+            render(<TimezoneProvider value="America/New_York"><Today /></TimezoneProvider>);
+            expect(screen.getByTestId('today').textContent).toBe('2026-10-12T00:00:00.000Z');
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it('falls back to APP_TIMEZONE when the configured zone is missing', () => {
         render(
             <TimezoneProvider value={''}>
