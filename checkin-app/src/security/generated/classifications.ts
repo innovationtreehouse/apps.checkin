@@ -177,6 +177,7 @@ export const classifications = {
         shopifyOrgMembershipProductId: 'internal',
         shopifyPriceSyncedAt: 'internal',
         shopifyReconcileCursorAt: 'internal',
+        shopifyReconcileCursorGid: 'internal',
         shopifyReconcileLeaseUntil: 'internal',
         shopifyReconcileLeaseToken: 'internal',
         releasedLibraries: 'public',

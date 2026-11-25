@@ -50,7 +50,7 @@ function paidOrder(legacyId: string): MirrorOrder {
     return {
         orderGid: `gid://shopify/Order/${legacyId}`, legacyId, customerEmail: null, financialStatus: 'PAID',
         totalCents: 1000, subtotalCents: 1000, totalRefundedCents: 0, discountCents: 0, discountCodes: [],
-        cancelledAt: null, processedAt: null, updatedAt: new Date(), noteAttributes: null,
+        cancelledAt: null, processedAt: null, updatedAt: new Date(), lastSyncedAt: new Date(), noteAttributes: null,
     };
 }
 

@@ -3,11 +3,14 @@
  */
 /**
  * One reconcile pass at a time: a pass that finds the lease held scans nothing, and
- * only the lease holder moves the cursor, in the statement that frees the lease.
+ * only the lease holder moves the cursor, in the statement that frees the lease. The
+ * cursor stays behind the mirror's clock and before the first order that failed.
  */
 const updateMany = jest.fn();
 const findUnique = jest.fn();
-const ordersChangedSince = jest.fn();
+const ordersSyncedAfter = jest.fn();
+const mirrorNow = jest.fn();
+const forwardMembership = jest.fn();
 const reconcileReversals = jest.fn();
 
 jest.mock("@/lib/prisma", () => {
@@ -22,9 +25,11 @@ jest.mock("@/lib/prisma", () => {
 });
 jest.mock("@/lib/shopifyRead/client", () => ({
     isConfigured: () => true,
-    ordersChangedSince: (...a: unknown[]) => ordersChangedSince(...a),
+    ordersSyncedAfter: (...a: unknown[]) => ordersSyncedAfter(...a),
+    mirrorNow: () => mirrorNow(),
 }));
-jest.mock("../reconcile/membership", () => ({ reconcileForwardMembership: jest.fn() }));
+jest.mock("@/lib/logger", () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
+jest.mock("../reconcile/membership", () => ({ reconcileForwardMembership: (...a: unknown[]) => forwardMembership(...a) }));
 jest.mock("../reconcile/program", () => ({ reconcileForwardProgram: jest.fn() }));
 jest.mock("../reconcile/reversals", () => ({ reconcileReversals: (...a: unknown[]) => reconcileReversals(...a) }));
 
@@ -32,14 +37,18 @@ import { runReconcile } from "../reconcile";
 
 const OLD = new Date("2026-11-20T00:00:00Z");
 const NEW = new Date("2026-11-22T00:00:00Z");
+const NOW = new Date("2026-11-24T12:00:00Z");
+const minutesBeforeNow = (m: number) => new Date(NOW.getTime() - m * 60_000);
+const synced = (n: number, lastSyncedAt: Date) => ({ orderGid: `gid://shopify/Order/${n}`, legacyId: String(n), lastSyncedAt });
 
 /** The `data` of the statement that freed the lease. */
 const released = () => updateMany.mock.calls[1][0];
 
 beforeEach(() => {
     jest.clearAllMocks();
-    findUnique.mockResolvedValue({ shopifyReconcileCursorAt: OLD });
-    ordersChangedSince.mockResolvedValue([{ orderGid: "gid://shopify/Order/1", legacyId: "1", updatedAt: NEW }]);
+    findUnique.mockResolvedValue({ shopifyReconcileCursorAt: OLD, shopifyReconcileCursorGid: "gid://shopify/Order/0" });
+    mirrorNow.mockResolvedValue(NOW);
+    ordersSyncedAfter.mockResolvedValue([synced(1, NEW)]);
     reconcileReversals.mockResolvedValue(0);
 });
 
@@ -48,7 +57,7 @@ describe("runReconcile lease", () => {
         updateMany.mockResolvedValueOnce({ count: 0 });
 
         expect(await runReconcile()).toEqual({ configured: true, ordersScanned: 0, reversalsRaised: 0, failed: 0, leaseHeld: true });
-        expect(ordersChangedSince).not.toHaveBeenCalled();
+        expect(ordersSyncedAfter).not.toHaveBeenCalled();
         expect(updateMany).toHaveBeenCalledTimes(1);
     });
 
@@ -61,7 +70,12 @@ describe("runReconcile lease", () => {
         const token = taken.data.shopifyReconcileLeaseToken;
         expect(released()).toEqual({
             where: { id: 1, shopifyReconcileLeaseToken: token },
-            data: { shopifyReconcileLeaseUntil: null, shopifyReconcileLeaseToken: null, shopifyReconcileCursorAt: NEW },
+            data: {
+                shopifyReconcileLeaseUntil: null,
+                shopifyReconcileLeaseToken: null,
+                shopifyReconcileCursorAt: NEW,
+                shopifyReconcileCursorGid: "gid://shopify/Order/1",
+            },
         });
     });
 
@@ -100,5 +114,44 @@ describe("runReconcile lease", () => {
         updateMany.mockResolvedValue({ count: 1 });
         await runReconcile(recordStart);
         expect(recordStart).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("runReconcile cursor", () => {
+    beforeEach(() => updateMany.mockResolvedValue({ count: 1 }));
+
+    it("reads from the stored stamp and GID", async () => {
+        await runReconcile();
+        expect(ordersSyncedAfter).toHaveBeenCalledWith({ syncedAt: OLD, orderGid: "gid://shopify/Order/0" });
+    });
+
+    it("reads every order at a stamp written before the cursor held a GID", async () => {
+        findUnique.mockResolvedValue({ shopifyReconcileCursorAt: OLD, shopifyReconcileCursorGid: null });
+        await runReconcile();
+        expect(ordersSyncedAfter).toHaveBeenCalledWith({ syncedAt: OLD, orderGid: "" });
+    });
+
+    it("reconciles an order synced moments ago but keeps the cursor behind it", async () => {
+        ordersSyncedAfter.mockResolvedValue([synced(1, minutesBeforeNow(10)), synced(2, minutesBeforeNow(1))]);
+
+        await runReconcile();
+        expect(forwardMembership).toHaveBeenCalledTimes(2);
+        expect(released().data).toMatchObject({ shopifyReconcileCursorAt: minutesBeforeNow(10), shopifyReconcileCursorGid: "gid://shopify/Order/1" });
+    });
+
+    it("stops the cursor at the last order before one that failed, even at the same stamp", async () => {
+        const at = minutesBeforeNow(30);
+        ordersSyncedAfter.mockResolvedValue([synced(1, at), synced(2, at), synced(3, at)]);
+        forwardMembership.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("boom"));
+
+        expect((await runReconcile()).failed).toBe(1);
+        expect(forwardMembership).toHaveBeenCalledTimes(3);
+        expect(released().data).toMatchObject({ shopifyReconcileCursorAt: at, shopifyReconcileCursorGid: "gid://shopify/Order/1" });
+    });
+
+    it("leaves the cursor when every order is too recent", async () => {
+        ordersSyncedAfter.mockResolvedValue([synced(1, minutesBeforeNow(1))]);
+        await runReconcile();
+        expect(released().data).toEqual({ shopifyReconcileLeaseUntil: null, shopifyReconcileLeaseToken: null });
     });
 });

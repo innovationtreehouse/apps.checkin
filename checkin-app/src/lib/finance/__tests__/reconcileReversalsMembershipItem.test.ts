@@ -54,6 +54,7 @@ function order(overrides: Partial<MirrorOrder> = {}): MirrorOrder {
         cancelledAt: null,
         processedAt: null,
         updatedAt: new Date(),
+        lastSyncedAt: new Date(),
         noteAttributes: null,
         ...overrides,
     };

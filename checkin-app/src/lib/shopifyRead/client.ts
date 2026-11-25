@@ -113,6 +113,8 @@ export interface MirrorOrder {
     /** When Shopify processed the order; a membership line without its own year row sells the live year at this moment. */
     processedAt: Date | null;
     updatedAt: Date | null;
+    /** When the mirror last wrote this row; the reconciler's cursor reads by it. */
+    lastSyncedAt: Date;
     /**
      * The cart attributes we set on the checkout link (Membership_Process_ID,
      * CheckMeIn_Account_ID, Program_ID), mirrored from Shopify. Null for orders
@@ -134,6 +136,7 @@ const ORDER_SELECT = {
     cancelledAt: true,
     processedAt: true,
     updatedAt: true,
+    lastSyncedAt: true,
     noteAttributes: true,
 } as const;
 
@@ -169,27 +172,39 @@ export function orderAttr(o: MirrorOrder, key: string): string | null {
     return o.noteAttributes?.find((a) => a.key === key)?.value ?? null;
 }
 
+/** A position in the mirror's write order: one order's sync stamp and GID. */
+export interface MirrorCursor {
+    syncedAt: Date;
+    orderGid: string;
+}
+
 /**
- * Orders whose mirror row changed after `since` (the reconciler's high-water mark),
- * excluding Shopify test orders and operator injects. Oldest-first so the caller can
- * advance the cursor to the last row it processed. `since` null → from the beginning.
- *
- * ponytail: the cursor is Shopify's `updated_at`, not the source stamp, so a hand-loaded
- * row the API later restamps with the SAME updated_at stays behind the cursor and is
- * never reconciled. Inject refuses API-owned GIDs, so this needs a pre-cutover order the
- * CSV loaded and Shopify then re-serves unchanged; the board's manual paths cover it.
- * Key the cursor on last_synced_at if that ever matters.
+ * Orders the mirror wrote after `after`, excluding Shopify test orders and operator
+ * injects, in write order (sync stamp, then GID) so the caller can advance the cursor
+ * to the last row it processed. The GID breaks ties between rows sharing a stamp.
+ * `after` null → from the beginning.
  */
-export async function ordersChangedSince(since: Date | null, limit = 1000): Promise<MirrorOrder[]> {
+export async function ordersSyncedAfter(after: MirrorCursor | null, limit = 1000): Promise<MirrorOrder[]> {
     const db = await getClient();
     if (!db) return [];
+    const pastCursor: Prisma.ShopOrderWhereInput = after
+        ? { OR: [{ lastSyncedAt: { gt: after.syncedAt } }, { lastSyncedAt: after.syncedAt, shopifyGid: { gt: after.orderGid } }] }
+        : {};
     const rows = await db.shopOrder.findMany({
-        where: { test: false, ...apiSource(), ...(since ? { updatedAt: { gt: since } } : {}) },
-        orderBy: { updatedAt: { sort: "asc", nulls: "first" } },
+        where: { test: false, AND: [apiSource(), pastCursor] },
+        orderBy: [{ lastSyncedAt: "asc" }, { shopifyGid: "asc" }],
         take: limit,
         select: ORDER_SELECT,
     });
     return rows.map(toMirrorOrder);
+}
+
+/** The mirror database's clock, or null when the mirror isn't wired. */
+export async function mirrorNow(): Promise<Date | null> {
+    const db = await getClient();
+    if (!db) return null;
+    const [row] = await db.$queryRaw<{ now: Date }[]>`SELECT now() AS now`;
+    return row.now;
 }
 
 /**

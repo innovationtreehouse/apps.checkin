@@ -31,7 +31,8 @@ jest.mock("@/lib/email", () => ({
 jest.mock("@/lib/shopifyRead/client", () => ({
     ...jest.requireActual("@/lib/shopifyRead/client"),
     isConfigured: () => true,
-    ordersChangedSince: jest.fn(async () => [] as MirrorOrder[]),
+    ordersSyncedAfter: jest.fn(async () => [] as MirrorOrder[]),
+    mirrorNow: jest.fn(async () => new Date()),
     ordersByLegacyIds: jest.fn(async () => [] as MirrorOrder[]),
     orderDisputeCounts: jest.fn(async () => new Map<string, number>()),
     // Each test starts with the membership variant on the order (see beforeEach).
@@ -52,7 +53,7 @@ const TAG = "reconcile-matrix-test";
 // A membership variant id the board has configured; the mirror copies it onto order lines.
 const MEMBERSHIP_VARIANT = "variant-normal-1";
 const MEMBERSHIP_YEAR = 2042;
-const ordersChangedSince = mirror.ordersChangedSince as jest.Mock;
+const ordersSyncedAfter = mirror.ordersSyncedAfter as jest.Mock;
 const ordersByLegacyIds = mirror.ordersByLegacyIds as jest.Mock;
 const orderDisputeCounts = mirror.orderDisputeCounts as jest.Mock;
 const orderLineVariantIds = mirror.orderLineVariantIds as jest.Mock;
@@ -73,6 +74,7 @@ function order(overrides: Partial<MirrorOrder> & { legacyId: string }): MirrorOr
         cancelledAt: null,
         processedAt: null,
         updatedAt: new Date(),
+        lastSyncedAt: new Date(),
         // Default null = an order with no cart attributes, i.e. the email-fallback path.
         // Tests of the preferred path pass noteAttributes explicitly.
         noteAttributes: null,
@@ -176,7 +178,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-    ordersChangedSince.mockResolvedValue([]);
+    ordersSyncedAfter.mockResolvedValue([]);
     ordersByLegacyIds.mockResolvedValue([]);
     orderDisputeCounts.mockResolvedValue(new Map());
     orderLines.mockResolvedValue([]);
@@ -221,7 +223,7 @@ describe("forward recovery", () => {
         const email = `recover-${TAG}@ex.com`;
         const oid = `${TAG}-100`;
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email, totalCents: 5000 })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, customerEmail: email, totalCents: 5000 })]);
 
         const r1 = await runReconcile();
         expect(r1.configured).toBe(true);
@@ -241,7 +243,7 @@ describe("forward recovery", () => {
         const oid = `${TAG}-blocked`;
         const { processId } = await makeApplicant({ email: `blocked-${TAG}@ex.com`, status: "BLOCKED" });
         orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId) }) })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId) }) })]);
 
         await runReconcile();
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -259,7 +261,7 @@ describe("forward recovery", () => {
         const oid = `${TAG}-nothing-due-${status}`;
         const { processId } = await makeApplicant({ email: `nothing-due-${status}-${TAG}@ex.com`, status, paid, shopifyOrderId: paid ? `${TAG}-first` : undefined });
         orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId) }) })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId) }) })]);
 
         await runReconcile();
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe(status);
@@ -270,7 +272,7 @@ describe("forward recovery", () => {
         const oid = `${TAG}-denied`;
         const { processId, membershipId } = await makeApplicant({ email: `denied-${TAG}@ex.com`, status: "PENDING_PAYMENT", household: "DENIED", bgCleared: true });
         orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId) }) })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId) }) })]);
 
         await runReconcile();
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -283,7 +285,7 @@ describe("forward recovery", () => {
         const oid = `${TAG}-denied-paid`;
         const { processId } = await makeApplicant({ email: `denied-paid-${TAG}@ex.com`, status: "ACTIVE", household: "DENIED", paid: true, shopifyOrderId: `${TAG}-denied-first` });
         orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId) }) })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId) }) })]);
 
         await runReconcile();
         expect(await prisma.paymentException.count({ where: { kind: "DENIED_HOUSEHOLD_ACTIVITY", processId, severity: "CRITICAL" } })).toBe(1);
@@ -308,14 +310,14 @@ describe("forward recovery", () => {
                 newData: { status: "PENDING_PAYMENT", paidAt: null, refundRecorded: true },
             },
         });
-        ordersChangedSince.mockResolvedValue([
+        ordersSyncedAfter.mockResolvedValue([
             order({ ...refundedOrder, noteAttributes: attrs({ Membership_Process_ID: String(recorded.processId) }) }),
         ]);
         await runReconcile();
         expect(await prisma.paymentException.count({ where: { processId: recorded.processId } })).toBe(0);
 
         // The same order id attributed to another process is not covered by that row.
-        ordersChangedSince.mockResolvedValue([
+        ordersSyncedAfter.mockResolvedValue([
             order({ ...refundedOrder, noteAttributes: attrs({ Membership_Process_ID: String(other.processId) }) }),
         ]);
         await runReconcile();
@@ -327,7 +329,7 @@ describe("forward recovery", () => {
     it("counts an order whose forward pass throws", async () => {
         const email = `boom-${TAG}@ex.com`;
         await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
-        ordersChangedSince.mockResolvedValue([order({ legacyId: `${TAG}-boom`, customerEmail: email })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: `${TAG}-boom`, customerEmail: email })]);
         orderLineVariantIds.mockRejectedValue(new Error("mirror read failed"));
 
         const logged = jest.spyOn(console, "error").mockImplementation(() => {});
@@ -344,7 +346,7 @@ describe("forward recovery", () => {
     it("holds at PENDING_BG_CLEARANCE when bg not cleared", async () => {
         const email = `hold-${TAG}@ex.com`;
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: false });
-        ordersChangedSince.mockResolvedValue([order({ legacyId: `${TAG}-101`, customerEmail: email })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: `${TAG}-101`, customerEmail: email })]);
         await runReconcile();
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect(proc?.status).toBe("PENDING_BG_CLEARANCE");
@@ -355,7 +357,7 @@ describe("forward recovery", () => {
         const email = `short-${TAG}@ex.com`;
         const oid = `${TAG}-102`;
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email, totalCents: 1000 })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, customerEmail: email, totalCents: 1000 })]);
         await runReconcile();
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe("ACTIVE");
         expect(await prisma.paymentException.count({ where: { processId } })).toBe(0);
@@ -368,7 +370,7 @@ describe("forward recovery", () => {
         const oid = `${TAG}-120`;
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
         orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
-        ordersChangedSince.mockResolvedValue([
+        ordersSyncedAfter.mockResolvedValue([
             order({ legacyId: oid, customerEmail: email, totalCents: 2000, discountCents: 3000, discountCodes: ["VOLUNTEER50"] }),
         ]);
         await runReconcile();
@@ -385,7 +387,7 @@ describe("forward recovery", () => {
         const oid = `${TAG}-123`;
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true, isVolunteerFamily: false });
         orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
-        ordersChangedSince.mockResolvedValue([
+        ordersSyncedAfter.mockResolvedValue([
             // Lowercase on the order — Shopify codes are case-insensitive.
             order({ legacyId: oid, customerEmail: email, totalCents: 2000, discountCents: 3000, discountCodes: ["volfam"] }),
         ]);
@@ -403,7 +405,7 @@ describe("forward recovery", () => {
         const oid = `${TAG}-124`;
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true, isVolunteerFamily: true });
         orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
-        ordersChangedSince.mockResolvedValue([
+        ordersSyncedAfter.mockResolvedValue([
             order({ legacyId: oid, customerEmail: email, totalCents: 2000, discountCents: 3000, discountCodes: [VOLUNTEER_CODE] }),
         ]);
         await runReconcile();
@@ -417,7 +419,7 @@ describe("forward recovery", () => {
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
         await prisma.membershipYearVariant.create({ data: { membershipYear: 2031, shopifyVariantId: `${TAG}-v2031` } });
         orderLineVariantIds.mockResolvedValue([`${TAG}-v2031`]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
         try {
             await runReconcile();
         } finally {
@@ -432,7 +434,7 @@ describe("forward recovery", () => {
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
         // Order lines are mirrored, but none is a membership variant (e.g. a t-shirt).
         orderLineVariantIds.mockResolvedValue(["variant-tshirt-99"]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email, totalCents: 5000 })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, customerEmail: email, totalCents: 5000 })]);
         await runReconcile();
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe("PENDING_PAYMENT");
         expect(await prisma.paymentException.findFirst({ where: { kind: "NO_ITEM", shopifyOrderId: oid } })).toBeTruthy();
@@ -444,7 +446,7 @@ describe("forward recovery", () => {
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
         // Custom and deleted-product lines carry no variant id, so none is mirrored.
         orderLineVariantIds.mockResolvedValue([]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email, totalCents: 5000 })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, customerEmail: email, totalCents: 5000 })]);
         await runReconcile();
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect(proc?.status).toBe("PENDING_PAYMENT");
@@ -457,7 +459,7 @@ describe("forward recovery", () => {
         const oid = `${TAG}-110`;
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
         // No customer email on the order at all — the attribute alone must carry it.
-        ordersChangedSince.mockResolvedValue([
+        ordersSyncedAfter.mockResolvedValue([
             order({ legacyId: oid, customerEmail: null, noteAttributes: attrs({ Membership_Process_ID: String(processId) }) }),
         ]);
         await runReconcile();
@@ -474,7 +476,7 @@ describe("forward recovery", () => {
             data: { orgMembershipId: a.membershipId, kind: "RENEWAL", status: "PENDING_PAYMENT", contractSignedAt: new Date(), bgClearedAt: new Date() },
         });
         // Email-only would raise UNMATCHED_ORDER here; the attribute names the process.
-        ordersChangedSince.mockResolvedValue([
+        ordersSyncedAfter.mockResolvedValue([
             order({ legacyId: oid, customerEmail: email, noteAttributes: attrs({ Membership_Process_ID: String(second.id) }) }),
         ]);
         await runReconcile();
@@ -486,7 +488,7 @@ describe("forward recovery", () => {
 
     it("raises UNMATCHED_ORDER when the attribute names a process that does not exist", async () => {
         const oid = `${TAG}-112`;
-        ordersChangedSince.mockResolvedValue([
+        ordersSyncedAfter.mockResolvedValue([
             order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: "99999999" }) }),
         ]);
         await runReconcile();
@@ -502,7 +504,7 @@ describe("forward recovery", () => {
         await prisma.orgMembershipProcess.create({
             data: { orgMembershipId: a.membershipId, kind: "RENEWAL", status: "PENDING_PAYMENT", contractSignedAt: new Date(), bgClearedAt: new Date() },
         });
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
         await runReconcile();
         expect(await prisma.paymentException.findFirst({ where: { kind: "UNMATCHED_ORDER", shopifyOrderId: oid } })).toBeTruthy();
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: a.processId } });
@@ -510,7 +512,7 @@ describe("forward recovery", () => {
     });
 
     it("ignores a paid order from an email with no pending membership (normal purchase)", async () => {
-        ordersChangedSince.mockResolvedValue([order({ legacyId: `${TAG}-104`, customerEmail: `nobody-${TAG}@ex.com` })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: `${TAG}-104`, customerEmail: `nobody-${TAG}@ex.com` })]);
         const before = await prisma.paymentException.count();
         await runReconcile();
         expect(await prisma.paymentException.count()).toBe(before);
@@ -520,7 +522,7 @@ describe("forward recovery", () => {
         const email = `prerev-${TAG}@ex.com`;
         const oid = `${TAG}-105`;
         const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email, financialStatus: "REFUNDED", totalRefundedCents: 5000 })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, customerEmail: email, financialStatus: "REFUNDED", totalRefundedCents: 5000 })]);
         await runReconcile();
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect(proc?.status).toBe("PENDING_PAYMENT");
@@ -679,7 +681,7 @@ describe("program member-code entitlement (judged at the money event)", () => {
         const oid = `${TAG}-502`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `prgent-${TAG}@ex.com`, status: "PENDING", membership: "ACTIVE" });
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([
+        ordersSyncedAfter.mockResolvedValue([
             order({
                 legacyId: oid,
                 customerEmail: null,
@@ -701,7 +703,7 @@ describe("program member-code entitlement (judged at the money event)", () => {
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
         // Preferred attribute path (mirrors the enroll checkout link) — no customer
         // email on the order at all, so the attribute alone must carry it.
-        ordersChangedSince.mockResolvedValue([
+        ordersSyncedAfter.mockResolvedValue([
             order({
                 legacyId: oid,
                 customerEmail: null,
@@ -739,7 +741,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const oid = `${TAG}-600`;
         const { personId, programId } = await makeProgramEnrollment({ email: `ent-noitem-${TAG}@ex.com`, status: "PENDING" });
         orderLines.mockResolvedValue([{ variantId: "variant-tshirt-99", quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: await signedAttrs(programId, String(personId)) })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, noteAttributes: await signedAttrs(programId, String(personId)) })]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
@@ -754,7 +756,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
         const sibId = await addSibling(householdId, programId, email);
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: await signedAttrs(programId, `${personId},${sibId}`) })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, noteAttributes: await signedAttrs(programId, `${personId},${sibId}`) })]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
@@ -772,7 +774,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const other = await prisma.person.create({ data: { email: `other-${email}`, name: `Other ${email}`, householdId: otherHh.id } });
         await prisma.programParticipant.create({ data: { programId, personId: other.id, status: "PENDING" } });
         orderLines.mockResolvedValue([{ variantId, quantity: 2, currentQuantity: 2 }]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: await signedAttrs(programId, `${personId},${other.id}`) })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, noteAttributes: await signedAttrs(programId, `${personId},${other.id}`) })]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
@@ -787,7 +789,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
         const sibId = await addSibling(householdId, programId, email);
         orderLines.mockResolvedValue([{ variantId, quantity: 2, currentQuantity: 2 }]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, noteAttributes: await signedAttrs(programId, `${personId},${sibId}`) })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, noteAttributes: await signedAttrs(programId, `${personId},${sibId}`) })]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("ACTIVE");
@@ -802,7 +804,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const sibId = await addSibling(householdId, programId, email);
         const o = order({ legacyId: oid, noteAttributes: await signedAttrs(programId, `${personId},${sibId}`) });
         orderLines.mockResolvedValue([{ variantId, quantity: 2, currentQuantity: 2 }]);
-        ordersChangedSince.mockResolvedValue([o]);
+        ordersSyncedAfter.mockResolvedValue([o]);
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("ACTIVE");
         expect(await statusOf(programId, sibId)).toBe("ACTIVE");
@@ -812,7 +814,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const line: IncomeMirrorLineRow = { orderGid: o.orderGid, variantId, title: null, sku: null, quantity: 2, currentQuantity: 1, priceCents: 5000, discountCents: 0 };
         orderLines.mockResolvedValue([{ variantId, quantity: 2, currentQuantity: 1 }]);
         incomeOrderLines.mockResolvedValue([line]);
-        ordersChangedSince.mockResolvedValue([edited]);
+        ordersSyncedAfter.mockResolvedValue([edited]);
         ordersByLegacyIds.mockResolvedValue([edited]);
 
         await runReconcile();
@@ -861,7 +863,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const oid = `${TAG}-603-${label}`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-rev-${label}-${TAG}@ex.com`, status: "PENDING" });
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, ...over, noteAttributes: await signedAttrs(programId, String(personId)) })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, ...over, noteAttributes: await signedAttrs(programId, String(personId)) })]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
@@ -878,7 +880,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const oid = `${TAG}-607-${priorOrder ? "paid" : "comp"}`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-dup-${priorOrder ? "paid" : "comp"}-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: priorOrder });
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([await attributed(oid, programId, String(personId))]);
+        ordersSyncedAfter.mockResolvedValue([await attributed(oid, programId, String(personId))]);
 
         await runReconcile();
         const row = await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId } } });
@@ -894,7 +896,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-gone-${TAG}@ex.com`, status: "PENDING" });
         await prisma.programParticipant.delete({ where: { programId_personId: { programId, personId } } });
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([await attributed(oid, programId, String(personId))]);
+        ordersSyncedAfter.mockResolvedValue([await attributed(oid, programId, String(personId))]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBeUndefined();
@@ -909,7 +911,7 @@ describe("program order entitlement (same check as the webhook)", () => {
             data: { actorId: personId, action: "DELETE", tableName: "ProgramParticipant", affectedEntityId: personId, secondaryAffectedEntity: programId, oldData: enrollment },
         });
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([await attributed(oid, programId, String(personId))]);
+        ordersSyncedAfter.mockResolvedValue([await attributed(oid, programId, String(personId))]);
 
         try {
             await runReconcile();
@@ -930,7 +932,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         // Re-enrolment clears the old order from the row.
         await prisma.programParticipant.update({ where, data: { status: "ACTIVE", endedAt: null, shopifyOrderId: null } });
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([await attributed(oid, programId, String(personId))]);
+        ordersSyncedAfter.mockResolvedValue([await attributed(oid, programId, String(personId))]);
 
         try {
             await runReconcile();
@@ -944,7 +946,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const oid = `${TAG}-609`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-extra-${TAG}@ex.com`, status: "PENDING" });
         orderLines.mockResolvedValue([{ variantId, quantity: 3, currentQuantity: 3 }]);
-        ordersChangedSince.mockResolvedValue([await attributed(oid, programId, String(personId))]);
+        ordersSyncedAfter.mockResolvedValue([await attributed(oid, programId, String(personId))]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("ACTIVE");
@@ -956,7 +958,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const { householdId, personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
         const sibId = await addSibling(householdId, programId, email);
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([await attributed(`${TAG}-610a`, programId, String(personId)), await attributed(`${TAG}-610b`, programId, String(sibId))]);
+        ordersSyncedAfter.mockResolvedValue([await attributed(`${TAG}-610a`, programId, String(personId)), await attributed(`${TAG}-610b`, programId, String(sibId))]);
 
         await runReconcile();
         await runReconcile();
@@ -997,7 +999,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-spent-${label.replace(/ /g, "-")}-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
         const auditId = await leave(programId, personId);
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([await attributed(oid, programId, String(personId))]);
+        ordersSyncedAfter.mockResolvedValue([await attributed(oid, programId, String(personId))]);
 
         try {
             await runReconcile();
@@ -1099,7 +1101,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const oid = `${TAG}-604`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-unpaid-${TAG}@ex.com`, status: "PENDING" });
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, financialStatus: "PARTIALLY_PAID", noteAttributes: await signedAttrs(programId, String(personId)) })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, financialStatus: "PARTIALLY_PAID", noteAttributes: await signedAttrs(programId, String(personId)) })]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
@@ -1111,7 +1113,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const email = `ent-merch-${TAG}@ex.com`;
         const { personId, programId } = await makeProgramEnrollment({ email, status: "PENDING" });
         orderLines.mockResolvedValue([{ variantId: "variant-tshirt-99", quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
@@ -1124,7 +1126,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `mixed-prg-${TAG}@ex.com`, status: "PENDING" });
         orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT, variantId]);
         orderLines.mockResolvedValue([{ variantId: MEMBERSHIP_VARIANT, quantity: 1, currentQuantity: 1 }, { variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([
+        ordersSyncedAfter.mockResolvedValue([
             order({ legacyId: oid, noteAttributes: [...attrs({ Membership_Process_ID: String(processId) }), ...await signedAttrs(programId, String(personId))] }),
         ]);
 
@@ -1142,7 +1144,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const email = `ent-fallback-${TAG}@ex.com`;
         const { personId, programId, variantId } = await makeProgramEnrollment({ email, status: "PENDING" });
         orderLines.mockResolvedValue([{ variantId, quantity: 1, currentQuantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
+        ordersSyncedAfter.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
 
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
@@ -1154,7 +1156,7 @@ describe("program order entitlement (same check as the webhook)", () => {
         const { personId, programId, variantId } = await makeProgramEnrollment({ email: `ent-foreign-${TAG}@ex.com`, status: "PENDING" });
         const foreignHh = await prisma.household.create({ data: { name: `HH ${TAG} foreign` } });
         orderLines.mockResolvedValue([{ variantId, quantity: 1 }]);
-        ordersChangedSince.mockResolvedValue([order({
+        ordersSyncedAfter.mockResolvedValue([order({
             legacyId: oid,
             noteAttributes: attrs({ Program_ID: String(programId), CheckMeIn_Account_ID: String(personId), CheckMeIn_Checkout_Sig: signCheckout(programId, [personId], foreignHh.id) }),
         })]);
