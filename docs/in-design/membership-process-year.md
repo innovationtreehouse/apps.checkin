@@ -179,7 +179,8 @@ than the cycle floor.
 Two more paths touch existing agreements but create none:
 
 - **Reopen** (`archive.ts`) restores an archived agreement to its previous step.
-  The row keeps its stored year ([Q11](#q11)).
+  The row keeps its stored year. Reopen refuses an agreement whose year has
+  ended ([below](#q11)).
 - **Person merge** moves agreements to the kept person. Each keeps its year.
 
 `openPersonAgreement` takes the year as a required argument and writes it in the
@@ -189,7 +190,7 @@ same `create`, and the audit row records it.
 
 | Read | Today | After |
 |---|---|---|
-| `openPersonAgreement`'s "already handled" check | Any open agreement, or one ACTIVE or ARCHIVED with `stageEnteredAt` on or after the cycle floor | Any open agreement (unchanged, but see [Q11](#q11)), or one ACTIVE or ARCHIVED whose `membershipYear` is the year being opened |
+| `openPersonAgreement`'s "already handled" check | Any open agreement, or one ACTIVE or ARCHIVED with `stageEnteredAt` on or after the cycle floor | Any open agreement (see [Q11](#q11)), or one ACTIVE or ARCHIVED whose `membershipYear` is the year being opened |
 | `agreementCycleFloor` | Feeds that check and compliance | Deleted |
 | Compliance "over the age ceiling, not yet asked" list | Settled agreements since the cycle floor count as handled | Settled agreements for the household's latest paid year count |
 | Compliance "awaiting signature" list | Every open agreement | Unchanged; each row also shows its year |
@@ -216,18 +217,69 @@ The household goes ACTIVE. For each person in it who passes
 (`appliesToYear`). The application's own year, 2025, is not used.
 
 <a id="q11"></a>
-**Q11. An agreement whose year has ended.** A 2025 agreement opened in August
-2026 is still unsigned on September 15, 2026, after 2025-2026 ended. Today an
-open agreement blocks a new one from any cycle, so the 2026 agreement never
-opens, and signing the old one would cover only 2025. The same case arises when
-the Board reopens an archived agreement for an ended year.
+### An unsigned agreement: expiry and year end
 
-- **a.** The nightly pass closes an open agreement once its year ends and opens
-  the current one. Reopen refuses an ended year, as it does for household
-  applications.
-- **b.** An open agreement still blocks a new one. The Board closes it by hand.
-- **c.** Leave it. Signing an old-year agreement also counts for the current
-  year.
+**How it works today.** Opening an agreement creates no Zoho Sign request. The
+request is created on the person's first click on "Sign", and it expires after
+15 days unsigned. The app finds out only when the person comes back: their
+return from signing, or their next click, asks Zoho for the request's state. A
+declined, expired, recalled or deleted request is then forgotten, and that
+click creates a fresh one. The Zoho webhook acts only on completed signings and
+ignores every other event. The agreement stays open throughout. The Board sees
+it only as a row in the compliance page's "awaiting signature" list, the same as
+any other open agreement, and nothing marks it as expired. An agreement nobody
+ever clicked has no request, so it never expires in Zoho.
+
+**The owner's direction.** An expired request needs the Board's attention, and
+should get it before the agreement's year ends.
+
+**Proposed: expiry surfaces to the Board.**
+
+- The nightly pass checks every open agreement with a stored request older than
+  the 15-day expiry. It asks Zoho for each one's state, as the signing page
+  does today. A dead request is forgotten as today, and the agreement is marked
+  as needing the Board.
+- An open agreement with no request, opened more than 15 days ago, is marked
+  the same way: the person has not started signing.
+- The mark is a new nullable column on the agreement, set by the nightly pass.
+  It is cleared when a fresh request is created, the agreement is signed, or the
+  Board closes it.
+- While the mark is set, the compliance page shows a red error chip that never
+  closes on its own, with specific text. For example: "The signing request for
+  <name>'s 2026-2027 agreement expired on March 3, 2027. Reset signing or close
+  the agreement." Or: "<name> has not started signing their 2026-2027 agreement,
+  opened February 1, 2027." Each such agreement also counts toward the
+  compliance badge in the nav.
+- A failed Zoho lookup is logged and retried the next night. It never sets the
+  mark.
+- The person can still sign: a click creates a fresh request, as today.
+
+**Proposed guard for the residual case.** The year can still end with the
+agreement open. Two parts need no choice:
+
+- Signing a 2025 agreement records a 2025 agreement. It never counts as the
+  2026 one, because "already handled" compares years.
+- Reopen refuses an archived agreement whose year has ended, the same rule
+  household applications follow.
+
+What remains is whether the old open agreement blocks the new year's:
+
+**Q11. An open agreement when its year ends.** A household renews for
+2026-2027. Its daughter's 2025 agreement was opened in August 2026. Her request
+expired in Zoho, the compliance chip has shown since, and the Board hasn't acted.
+On September 1, 2026 the 2025-2026 year ends. Today any open agreement blocks a
+new one, so no 2026 agreement opens while the 2025 one stays open.
+
+- **a.** The nightly pass closes the 2025 agreement on the day its year ends,
+  recalling any live request and recording the reason. The next pass opens a
+  2026 agreement. The chip changes to say that the 2025 agreement was closed
+  unsigned.
+- **b.** The 2025 agreement stays open, and keeps blocking, until the Board
+  closes it. The chip changes to "2025-2026 has ended; close this agreement to
+  open the 2026-2027 one". Signing the old one is refused once its year has
+  ended.
+- **c.** Only an open agreement for the same year blocks. The 2026 agreement
+  opens beside the old one, and the Board closes the old one when it chooses.
 
 <a id="q12"></a>
 **Q12. Existing agreements.** Rows created before this change have no year,
@@ -657,7 +709,7 @@ ROLLBACK;
 
 | # | Question | Section |
 |---|---|---|
-| Q11 | An agreement whose year has ended | [§2a](#q11) |
+| Q11 | Whether an open agreement blocks the next year's once its own year ends | [§2a](#q11) |
 | Q12 | Backfilling existing agreements | [§2a](#q12) |
 | B1 | Backfill unpaid rows on the org's calendar day, with boundary rows listed for the owner to confirm | [§5](#rows-on-a-boundary) |
 | B2 | Paid rows take `membershipYear` from `appliesToYear` | §5 |
