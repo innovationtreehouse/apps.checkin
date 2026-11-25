@@ -663,8 +663,10 @@ What the rules and the owner say about the backfill:
 <a id="paid-rows-with-no-year"></a>
 #### The order fill: paid rows with no year
 
-A migration can't read the store, so a one-off script fills these rows before
-release 1 ships. It is read-only against Shopify and writes only
+A migration can't read the store, so a one-off script,
+`checkin-app/scripts/membership-year-order-fill.ts`, fills these rows before
+release 1 ships. Everything it needs lives in the script itself, so it adds no
+helper to the app. Release 2 deletes it ([cleanup](#release-2-cleanup)). It is read-only against Shopify and writes only
 `appliesToYear` on paid INITIAL and RENEWAL rows where it is null.
 
 1. For each such row with a `shopifyOrderId`, the script reads the order through
@@ -744,8 +746,8 @@ Migration, in one transaction:
 2. `ALTER TABLE "OrgMembershipProcess" ADD CONSTRAINT "process_has_year" CHECK (kind NOT IN ('INITIAL', 'RENEWAL', 'PERSON_AGREEMENT') OR "membershipYear" IS NOT NULL);`
 
 This is safe against old code: the code serving during release 2's drain is
-release 1, which stamps every household row and every agreement. The fallbacks and the archive fill
-are deleted. The migration fails, and wedges the deploy, if any household row is
+release 1, which stamps every household row and every agreement. The
+migration fails, and wedges the deploy, if any household row is
 still null, which happens only with no boundary configured. The owner runs the
 query below before release 2 ships. It counts rows with no year that step 1
 cannot fill, and it must return zero.
@@ -761,6 +763,29 @@ ROLLBACK;
 Release 2 also updates the integration-test fixtures. About 80 test files
 create joining applications or renewals directly. Those that run against a real
 database must set `membershipYear` once the constraint exists.
+
+<a id="release-2-cleanup"></a>
+#### Cleanup: everything one-time goes
+
+Release 2 deletes every transitional and one-time piece release 1 adds:
+
+| Piece | Added in | Deleted in release 2 |
+|---|---|---|
+| The order-fill script, `scripts/membership-year-order-fill.ts`, and its Board-pick input format | Before release 1 | The script, its input-file format, and any test or doc line naming them. If the script registers a system audit actor string in `auditActor.ts`, that entry goes too |
+| The reader fallbacks: each §4 read falls back to today's derivation when `membershipYear` is null | Release 1 | Each read takes `membershipYear` only. The narrowing helper's type becomes `number` with no null branch, and the tests of the fallback go |
+| The checkout's null-year derivation: a null row is sold the year today's derivation gives it | Release 1 | The checkout reads `membershipYear` only |
+| The archive fill: reopen writes the live year at `paidAt` on a paid row with no `appliesToYear` | Before this design; kept through release 1 | `archive.ts`'s fill and its tests |
+| Any code helper that derives a year from a row's `createdAt` or `paidAt`, used only by the fallbacks above | Before this design | Deleted once nothing calls it. `liveMembershipYear` itself stays: writers use it on the org's today |
+
+Nothing one-time stays in the app after release 2. Two kinds of record stay,
+because they are history rather than app code:
+
+- **Applied migrations.** Release 1's guards and fills, the live-year SQL inside
+  them, and release 2's fixed-2026 refill stay in `prisma/migrations/`. Prisma's
+  migration history needs them, and no app code calls them. The live-year SQL
+  exists only there.
+- **Audit rows** written by the backfill and the order-fill script stay in
+  the audit log.
 
 ### Rows on a boundary
 
@@ -888,7 +913,7 @@ ROLLBACK;
 |---|---|---|
 | 0 | The org-day boundary change | Separate design |
 | 1 | Column, backfill, writers, readers with fallbacks, checkout by stamped year, and the payment answers from §3 | Release 0 merged. The owner has run the boundary query and settled any unpaid rows it lists. The order fill has run and the Board has picked a year for every row it listed |
-| 2 | Re-fill, check constraint, fallbacks and archive fill removed, test fixtures | Release 1 in production; the null-count query returns zero |
+| 2 | Re-fill, check constraint, test fixtures, and the [cleanup](#release-2-cleanup): order-fill script, reader fallbacks, checkout null-year derivation and archive fill deleted | Release 1 in production; the null-count query returns zero |
 
 ---
 
