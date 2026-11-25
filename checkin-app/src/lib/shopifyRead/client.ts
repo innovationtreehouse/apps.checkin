@@ -172,7 +172,7 @@ export function orderAttr(o: MirrorOrder, key: string): string | null {
     return o.noteAttributes?.find((a) => a.key === key)?.value ?? null;
 }
 
-/** A position in the mirror's write order: one order's sync stamp and GID. */
+/** A position in the reconciler's read order: one order's sync stamp and GID. */
 export interface MirrorCursor {
     syncedAt: Date;
     orderGid: string;
@@ -180,8 +180,9 @@ export interface MirrorCursor {
 
 /**
  * Orders the mirror wrote after `after`, excluding Shopify test orders and operator
- * injects, in write order (sync stamp, then GID) so the caller can advance the cursor
- * to the last row it processed. The GID breaks ties between rows sharing a stamp.
+ * injects, ordered by sync stamp then GID so the caller can advance the cursor to the
+ * last row it processed. The GID gives rows sharing a stamp a fixed order; the WHERE
+ * and ORDER BY compare it under the same collation, so no row falls between batches.
  * `after` null → from the beginning.
  */
 export async function ordersSyncedAfter(after: MirrorCursor | null, limit = 1000): Promise<MirrorOrder[]> {

@@ -156,8 +156,9 @@ async function reconcilePass(): Promise<{ result: ReconcileResult; advanceTo: mi
     const settledBy = now ? new Date(now.getTime() - CURSOR_HOLD_BACK_MS) : null;
     const orders = await mirror.ordersSyncedAfter(cursor);
     let advanceTo: mirror.MirrorCursor | null = null;
-    // The cursor stops before the first order whose pass throws, so the next run
-    // retries it. Later orders are still processed; re-reading them is harmless.
+    // Orders arrive in cursor order, so the cursor stops at the last order before the
+    // first one whose pass throws, and the next run retries from there. Later orders
+    // are still processed; re-reading them is harmless.
     let cursorFrozen = false;
     let failed = 0;
     for (const order of orders) {

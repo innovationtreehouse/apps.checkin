@@ -168,7 +168,7 @@ beforeAll(async () => {
     await prisma.boardSettings.upsert({
         where: { id: 1 },
         create: { id: 1, standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, volunteerFamilyDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null },
-        update: { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, volunteerFamilyDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null },
+        update: { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, volunteerFamilyDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null, shopifyReconcileCursorGid: null },
     });
     await prisma.membershipYearVariant.create({ data: { membershipYear: MEMBERSHIP_YEAR, shopifyVariantId: MEMBERSHIP_VARIANT } });
 });
@@ -185,7 +185,10 @@ afterEach(async () => {
     incomeOrderLines.mockResolvedValue([]);
     adjustInventory.mockClear();
     // Reset cursor so each test scans its own fixtures from scratch.
-    await prisma.boardSettings.update({ where: { id: 1 }, data: { shopifyReconcileCursorAt: null, shopifyReconcileLeaseUntil: null, shopifyReconcileLeaseToken: null } });
+    await prisma.boardSettings.update({
+        where: { id: 1 },
+        data: { shopifyReconcileCursorAt: null, shopifyReconcileCursorGid: null, shopifyReconcileLeaseUntil: null, shopifyReconcileLeaseToken: null },
+    });
 });
 
 afterAll(async () => {

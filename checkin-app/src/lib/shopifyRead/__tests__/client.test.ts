@@ -259,7 +259,7 @@ describe('order reads', () => {
         expect((await freshClient().ordersByLegacyIds(['1']))[0].noteAttributes).toBeNull();
     });
 
-    it('ordersSyncedAfter skips test and injected orders and reads past the cursor in write order', async () => {
+    it('ordersSyncedAfter skips test and injected orders and reads past the cursor by sync stamp then GID', async () => {
         const syncedAt = new Date('2026-07-01T00:00:00Z');
         await freshClient().ordersSyncedAfter({ syncedAt, orderGid: 'gid://shopify/Order/5' }, 50);
         const args = db.shopOrder.findMany.mock.calls[0][0];
