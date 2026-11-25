@@ -5,7 +5,7 @@
  *
  *   SHOPIFY_READ_DATABASE_URL=postgresql://... npm test
  */
-import { it, expect, beforeEach, afterAll } from "vitest";
+import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { prisma } from "../../src/db/client.js";
 import { injectFixtures } from "../../src/ingest/inject.js";
 import { ingestNode } from "../../src/ingest/ingestNode.js";
@@ -213,5 +213,52 @@ describeDb("projection into live tables (real Postgres)", () => {
       injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node: orderNode({ name: "#fixed" }) }], { storeId: STORE }),
     ).resolves.toHaveLength(1);
     expect((await orderRow())?.name).toBe("#fixed");
+  });
+
+  describe("the store's copy outranks a hand-made one", () => {
+    const storeRead = (node: unknown, source: EventSource = EventSource.INCREMENTAL) =>
+      ingestNode(prisma, { storeId: STORE, objectType: ObjectType.ORDER, node, source });
+    const handProject = (node: unknown) =>
+      prisma.$transaction((tx) => projectNode(tx, STORE, ObjectType.ORDER, node, EventSource.HAND_LOADED, 1n));
+
+    it("a store version replaces a hand-made one stamped later", async () => {
+      await injectFixtures(
+        prisma,
+        [{ objectType: ObjectType.ORDER, node: orderNode({ email: "fixture@example.com", updatedAt: "2026-02-01T11:00:00Z" }) }],
+        { storeId: STORE },
+      );
+      await storeRead(orderNode({ updatedAt: "2026-02-01T10:00:00Z", displayFinancialStatus: "REFUNDED" }));
+
+      const row = await orderRow();
+      expect(row).toMatchObject({ source: EventSource.INCREMENTAL, customerEmail: "buyer@example.com", financialStatus: "REFUNDED" });
+      expect(row?.updatedAt?.toISOString()).toBe("2026-02-01T10:00:00.000Z");
+    });
+
+    it("an older store snapshot still loses to the store version that replaced the hand-made one", async () => {
+      await injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node: orderNode({ updatedAt: "2026-02-01T11:00:00Z" }) }], {
+        storeId: STORE,
+      });
+      await storeRead(orderNode({ updatedAt: "2026-02-01T10:00:00Z", displayFinancialStatus: "REFUNDED" }));
+      await storeRead(orderNode({ updatedAt: "2026-01-15T00:00:00Z", displayFinancialStatus: "PAID" }), EventSource.BACKFILL);
+
+      expect(await orderRow()).toMatchObject({ source: EventSource.INCREMENTAL, financialStatus: "REFUNDED" });
+    });
+
+    it("a hand-made version never replaces a row the store wrote, even stamped later", async () => {
+      await storeRead(orderNode(), EventSource.BACKFILL);
+      await handProject(orderNode({ email: "fixture@example.com", updatedAt: "2026-02-01T11:00:00Z" }));
+      expect(await orderRow()).toMatchObject({ source: EventSource.BACKFILL, customerEmail: "buyer@example.com" });
+
+      await prisma.shopOrder.updateMany({ where: { storeId: STORE }, data: { source: null } });
+      await handProject(orderNode({ email: "fixture@example.com", updatedAt: "2026-02-01T11:00:00Z" }));
+      expect(await orderRow()).toMatchObject({ source: null, customerEmail: "buyer@example.com" });
+    });
+
+    it("a hand-made order with no store version still projects as hand-loaded", async () => {
+      await injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node: orderNode({ email: "fixture@example.com" }) }], {
+        storeId: STORE,
+      });
+      expect(await orderRow()).toMatchObject({ source: EventSource.HAND_LOADED, customerEmail: "fixture@example.com" });
+    });
   });
 });

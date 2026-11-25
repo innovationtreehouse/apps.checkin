@@ -1,6 +1,6 @@
 /**
  * futureStampedGids: the inject guard that refuses a fixture stamped later than now, since
- * a future `updatedAt` would win newest-wins against every real update of that GID.
+ * a future `updatedAt` would win newest-wins against every later hand-made correction of that GID.
  */
 import { it, expect } from "vitest";
 import { futureStampedGids } from "../../src/ingest/inject.js";
