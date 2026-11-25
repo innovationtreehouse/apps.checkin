@@ -37,8 +37,8 @@ sold the coming year.
 
 - **Families.** Nothing changes for a family that applies and pays inside one
   membership year. A family that applies before the renewal window opens and
-  pays after it is sold the year it applied for, not the coming one. What
-  happens next for that family is an open question ([Q1](#q1)).
+  pays after it is sold the year it applied for, not the coming one, and then
+  renews ([§3](#q1)). The store discounts that first payment.
 - **The Board.** Reopen, the "won't renew" marker, the check threshold and the
   renewal due date read the year stored on the application. They stop shifting
   when the boundary math changes.
@@ -84,7 +84,7 @@ Every current filter happens to pair the year with a paid status, so option A
 would mostly still give the right answers. It would do so by accident. The
 natural reading of the column, "has a year, so it's settled", becomes wrong, and
 the next reader written against it inherits the trap. Option A also loses the
-one comparison the payment questions in §3 need: the year the family applied for
+one comparison the payment cases in §3 need: the year the family applied for
 against the year it paid for.
 
 **Recommendation: B.**
@@ -149,85 +149,86 @@ guard keeps asking for the coming year's variant.
 year, or the Board's year on a manual activation. It never writes
 `membershipYear`.
 
-The rest of this section is undecided. Each case below is a question for the
-owner. The examples use a boundary of September 1 and a renewal window that
+The examples below use a boundary of September 1 and a renewal window that
 opens July 1.
 
 <a id="q1"></a>
-### Q1. Paying after the application's year is no longer live
+### Paying after the application's year is no longer live (decided)
 
 A family applies on June 20. The live year is 2025-2026, so the application is
 for 2025. They pay on July 10. The 2026-2027 window opened on July 1.
 
-With the checkout selling the stamped year, the family buys 2025-2026, which
-ends on September 1, seven weeks later. The household is now ACTIVE, has not
-paid for 2026, and the next renewal sweep opens a 2026 renewal for it. The family
-pays twice in two months.
+The family buys 2025-2026, which ends on September 1, seven weeks later. The
+household is now ACTIVE, has not paid for 2026, and the next renewal sweep opens
+a 2026 renewal for it. The family pays twice in about two months.
 
-Options:
+**Decision: accept it.** The application is for 2025, and the renewal follows.
 
-- **a.** Accept it. The application is for 2025, as decided, and the renewal
-  follows.
-- **b.** Accept it, and the payment page tells the family before checkout:
-  "This pays for 2025-2026, which ends September 1. Your 2026-2027 renewal opens
-  once this is paid."
-- **c.** The Board moves the application to the live year on request (a new
-  Board action that re-stamps an unpaid application, with a reason).
+The first of the two payments is not full price: the store carries a discount
+for it. That discount is set up in the Shopify store, not in the app. This
+design adds no pricing logic for it.
 
-Which one?
+<a id="q2"></a>
+### The stamped year's product is missing or retired (decided)
 
-### Q2. The stamped year's variant is missing or retired
+**Missing.** No `MembershipYearVariant` row exists for the application's year.
+Example: an application for 2026 opened on July 2, before the Board has entered
+a 2026 variant.
 
-**Missing.** The application is for 2026, opened on July 2, and the Board has
-not yet entered a 2026 variant. Today the payment page shows no checkout link in
-this case too, because the live year is also 2026. A difference arises only for
-an old year: an application for 2025 still unpaid in October 2026. The 2025 row
-still exists, since rows are never deleted, but the settings page no longer
-shows it.
+**Retired.** The row exists, but in Shopify the product is archived or the
+variant is deleted. Example: the 2025 product is archived in August 2026, and a
+2025 application is still unpaid.
 
-**Retired.** The 2025 row exists, but the product in Shopify has been archived
-or its variant deleted. The checkout link is built and fails at Shopify. The app
-cannot tell without asking Shopify.
+**Decision: no silent fallback.** The checkout never sells the live year's
+variant in place of the application's.
 
-Options:
+- The family gets no checkout link. The payment page says: "Payment for
+  2025-2026 isn't available right now. Please contact the Board."
+- The Board sees a red error chip until the product is fixed. It never closes
+  on its own, and its text names the year and the cause, for example: "The
+  2025-2026 membership product is archived in Shopify. Families with a
+  2025-2026 application can't pay until it is restored." The chip appears on
+  the applications page and the membership settings page while any unpaid
+  application is for that year.
+- Telling "retired" from "missing" needs a Shopify Admin lookup of the variant
+  when the link is built. A failed lookup (Shopify unreachable) is a different
+  error with its own text. It is never reported as a retired product, and never
+  yields a link to another year.
+- While the Shopify mock is active, the mock variant stands in and no lookup
+  runs.
 
-- **a.** No link. The page says "Payment for 2025-2026 isn't available. Please
-  contact the Board", and the Board grants or closes the application.
-- **b.** Fall back to the live year's variant. The family pays for 2026; the
-  application says 2025 and `appliesToYear` records 2026.
-- **c.** As (a), and the checkout also refuses once the stamped year has ended
-  (see Q3), so a retired variant matters only during the year itself.
-
-Which one?
-
-### Q3. Paying for a year that has ended
+<a id="q3"></a>
+### Paying for a year that has ended (decided)
 
 An application for 2025 is still unpaid on September 15, 2026. The 2025-2026
-year ended on September 1. Selling the 2025 variant now buys nothing usable.
-Payment-plan approval already refuses an ended year.
+year ended on September 1.
 
-Should the checkout refuse too ("This application is for 2025-2026, which has
-ended. Please contact the Board"), or keep selling it?
+**Decision: refuse.** No link. The payment page says: "This application is for
+2025-2026, which has ended. Please contact the Board." This matches
+payment-plan approval, which already refuses an ended year. Missing or retired
+products therefore matter only while their year is running.
 
-### Q4. Payment-plan requests and Board-picked years
+<a id="q4"></a>
+### Payment-plan requests and Board-picked years
 
-**Payment-plan request.** The family applies on June 20 (application for 2025)
-and asks for a payment plan on July 5. Today `paymentPlanYear` is the live year
-when they ask: 2026. Approval then certifies 2026.
+**Payment-plan request (decided).** The family applies on June 20 (application
+for 2025) and asks for a payment plan on July 5. Today `paymentPlanYear` is the
+live year when they ask: 2026.
 
-- **a.** `paymentPlanYear` is set from the application's year, 2025. The
-  column could later be dropped, since it always equals `membershipYear`.
-- **b.** Keep today's rule: the request is for the year live when asked.
+**Decision: the request's year follows the application.** The request route sets
+`paymentPlanYear` from `membershipYear`, here 2025. Approval certifies that year
+and refuses it once ended, as today. A request stored before this change keeps
+the year it holds.
 
-**Manual activation with no year given.** `certifyPaymentPlan` records the live
-year today.
+**Manual activation with no year given (open).** `certifyPaymentPlan` records the
+live year today.
 
 - **a.** It records the application's year.
 - **b.** Keep the live year.
 
-**Board grant for a different year.** The application is for 2025. On July 10
-the Board grants 2026. `appliesToYear` becomes 2026 and `membershipYear` stays
-2025.
+**Board grant for a different year (open).** The application is for 2025. On
+July 10 the Board grants 2026. `appliesToYear` becomes 2026 and
+`membershipYear` stays 2025.
 
 - **a.** Allow it. The two columns show the grant.
 - **b.** Refuse. The Board grants only the application's year.
@@ -309,8 +310,8 @@ The code in this release:
   when it is null. Only rows the previous release created during the drain have
   a null.
 - The archive fill stays for this release, for the same reason.
-- The checkout sells `membershipYear`'s variant (§3), falling back to the live
-  year's when it is null.
+- The checkout sells `membershipYear`'s variant (§3). For a row with a null
+  year it uses the year today's derivation gives that row, never the live year.
 
 Nothing is destructive. The previous release never selects the new column and
 inserts without it. Its reads of `appliesToYear` see what they saw before, plus
@@ -477,13 +478,13 @@ ROLLBACK;
 
 | # | Question | Section |
 |---|---|---|
-| Q1 | A family that applies before the window and pays after it: accept, warn, or let the Board re-stamp? | [§3](#q1) |
-| Q2 | The stamped year's variant is missing or retired: no link, fall back to the live year, or refuse? | §3 |
-| Q3 | Should the checkout refuse a year that has ended? | §3 |
-| Q4 | Payment-plan year, the default certify year, and a Board grant for a different year | §3 |
+| Q4 | The default certify year, and a Board grant for a different year | [§3](#q4) |
 | Q5 | No boundary configured: refuse to open an application, or allow a null year? | below |
 | Q6 | Should the per-person agreement carry a year? | below |
 | Q7 | The renewal due date for a Board-opened out-of-season renewal | below |
+| B1 | Backfill unpaid rows on the org's calendar day, with boundary rows listed for the owner to confirm | [§5](#rows-on-a-boundary) |
+| B2 | Paid rows take `membershipYear` from `appliesToYear` | §5 |
+| B3 | Paid rows with no `appliesToYear` get it from `paidAt`, so the archive fill can go | §5 |
 
 <a id="q5"></a>
 ### Q5. No boundary configured
