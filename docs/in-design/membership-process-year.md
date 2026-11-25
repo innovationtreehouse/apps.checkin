@@ -337,9 +337,8 @@ signature never carries over.
 **Q12. Existing agreements' year.** Rows created before this change have no
 year, and no stored value states one. No year is stamped from the date rule
 `agreementCycleFloor` applies today: the owner considers that rule wrong. The
-question went to the Board's questions as B39. The owner has since set a
-cutoff for the backfill ([Q13](#q13)). How that ruling relates to B39 is open
-([G4](#q13-gaps)).
+owner set a fixed cutoff instead ([Q13](#q13)). It is the final rule for
+existing agreements, and no Board step assigns their years.
 
 - From release 1, every new agreement carries a year (§2a above).
 - Q11's year-end close skips an agreement with no year, since it has no year to
@@ -376,14 +375,13 @@ WHERE kind = 'PERSON_AGREEMENT' AND "membershipYear" IS NULL AND "contractSigned
 calendar day or the UTC day is open ([G3](#q13-gaps)).
 
 <a id="q13-gaps"></a>
-**What the cutoff leaves open.** These are listed for the owner, not decided:
+**What the cutoff leaves open.** These are listed for the owner, not decided. G4, whether a Board step still assigns years, is settled: none does.
 
 | # | Case | Example |
 |---|---|---|
 | G1 | An agreement signed before September 1, 2025, the start of 2025-2026. Read literally, the cutoff makes it a 2025-2026 agreement | Signed March 2025, during 2024-2025. The backfill would write 2025, and she would count as signed for 2025-2026 |
 | G2 | An agreement with no signing date: still open, or closed unsigned. The cutoff has nothing to compare | Opened June 2026, never signed, still open in November 2026. It gets no year, and Q11's year-end close skips it, so it blocks any new agreement for her |
 | G3 | Which day the cutoff compares: the org's calendar day or UTC | Signed 9 PM on July 14, 2026, Chicago time, which is 02:00 on July 15 in UTC. The org's day gives 2025, UTC gives 2026 |
-| G4 | Whether the cutoff answers B39, or B39 still stands for the Board | If B39 stands, a Board assignment could later replace the cutoff's year on some rows |
 | G5 | Agreements the previous release creates during the release-1 drain. They have no year and come after the migration | Opened by the old code on the release day and signed in 2027. Applied again, the cutoff would write 2026 |
 
 ## 3. Payment
@@ -848,7 +846,7 @@ ROLLBACK;
 | 0 | The org-day boundary change | Separate design |
 | 1 | Column, backfill, writers, readers with fallbacks, checkout by stamped year, and the payment answers from §3 | Release 0 merged. The owner has run the boundary query and settled any unpaid rows it lists. The order fill has run and the Board has picked a year for every row it listed |
 | 2 | Re-fill, check constraint, fallbacks and archive fill removed, test fixtures | Release 1 in production; the null-count query returns zero |
-| Later | The database check extended to PERSON_AGREEMENT | G1-G5 answered; no agreement left without a year |
+| Later | The database check extended to PERSON_AGREEMENT | G1, G2, G3 and G5 answered; no agreement left without a year |
 
 ---
 
@@ -856,7 +854,7 @@ ROLLBACK;
 
 | # | Question | Section |
 |---|---|---|
-| G1-G5 | What the Q13 cutoff leaves open for existing agreements | [§2a](#q13-gaps) |
+| G1, G2, G3, G5 | What the Q13 cutoff leaves open for existing agreements | [§2a](#q13-gaps) |
 
 ---
 
