@@ -115,9 +115,9 @@ describe("runPersonAgreementSweep — the org zone's day", () => {
     afterEach(() => { mockOrgZone = "America/Chicago"; });
 
     it.each([
-        ["America/New_York", "2026-09-01T00:00:00.000Z"],
-        ["America/Chicago", "2025-09-01T00:00:00.000Z"],
-    ])("starts the new membership year as the day turns in %s", async (zone, yearStart) => {
+        ["America/New_York", "2025-09-01T00:00:00.000Z", "2027-09-01T00:00:00.000Z"],
+        ["America/Chicago", "2024-09-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z"],
+    ])("starts the new membership year as the day turns in %s", async (zone, previousStart, thisEnd) => {
         mockOrgZone = zone;
         jest.mocked(prisma.boardSettings.findUnique).mockResolvedValue({ orgMembershipYearBoundary: BOUNDARY } as never);
         const findMany = jest.mocked(prisma.person.findMany).mockResolvedValue([] as never);
@@ -125,9 +125,10 @@ describe("runPersonAgreementSweep — the org zone's day", () => {
         // 12:30 AM on 1 September in New York, 11:30 PM on 31 August in Chicago.
         await runPersonAgreementSweep(new Date("2026-09-01T04:30:00.000Z"));
 
-        // The yearly pass reads the year before the one in progress, which ends where it starts.
-        const where = findMany.mock.calls.at(-1)![0]!.where as { OR: { programsLed?: { some: { startAt: { lt: Date } } } }[] };
+        // The pass reads the previous membership year and the one in progress.
+        const where = findMany.mock.calls.at(-1)![0]!.where as { OR: { programsLed?: { some: { startAt: { lt: Date }; endAt: { gte: Date } } } }[] };
         const led = where.OR.find((arm) => arm.programsLed)!.programsLed!;
-        expect(led.some.startAt.lt.toISOString()).toBe(yearStart);
+        expect(led.some.endAt.gte.toISOString()).toBe(previousStart);
+        expect(led.some.startAt.lt.toISOString()).toBe(thisEnd);
     });
 });

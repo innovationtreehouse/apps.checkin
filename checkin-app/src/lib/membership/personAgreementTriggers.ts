@@ -144,10 +144,11 @@ export function findOpenPersonAgreement(personId: number) {
 }
 
 /**
- * The yearly re-sign, run nightly. Once a membership year has started, opens a new agreement
- * for each adult non-lead who took part in the year before it and has none
- * opened or signed since this year's start. Idempotent, so each person is asked once a year.
- * No boundary configured: there is no year, and it does nothing.
+ * The yearly re-sign, run nightly. Opens an agreement for each adult non-lead who took part in
+ * the previous membership year or this one and has none opened or signed since this year's
+ * start: the new year's re-sign once a year has started, and a retry for anyone whose open on
+ * taking part failed. Idempotent, so each person is asked once a year. No boundary
+ * configured: there is no year, and it does nothing.
  */
 export async function runPersonAgreementSweep(now: Date) {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
@@ -156,7 +157,7 @@ export async function runPersonAgreementSweep(now: Date) {
     const today = await orgToday(now);
     const year = membershipYearAt(settings.orgMembershipYearBoundary, today);
     const people = await prisma.person.findMany({
-        where: { ...AGREEMENT_OWED_WHERE, ...tookPartWhere(previousMembershipYear(year)) },
+        where: { ...AGREEMENT_OWED_WHERE, ...tookPartWhere({ start: previousMembershipYear(year).start, end: year.end }) },
         select: { id: true },
     });
 
@@ -170,13 +171,14 @@ export async function runPersonAgreementSweep(now: Date) {
             logger.error(`Failed to open an individual membership agreement for person ${p.id}:`, err);
         }
     }
-    return { opened, failed, floor: year.start.toISOString() };
+    return { opened, failed, yearStart: year.start.toISOString() };
 }
 
 /**
  * A person just took part: enrolled in a program, was made a volunteer, or was named its
  * leader. Opens their agreement when they owe one and have none for the current year.
- * Never throws: taking part must not fail because the agreement couldn't open.
+ * Never throws: taking part must not fail because the agreement couldn't open, and the
+ * nightly sweep opens it instead.
  */
 export async function openPersonAgreementOnEngage(personId: number, now: Date = new Date()) {
     try {

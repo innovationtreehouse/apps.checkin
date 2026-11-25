@@ -176,6 +176,16 @@ describe('PERSON_AGREEMENT triggers', () => {
             expect(await agreementCountFor(leader.id)).toBe(1);
         });
 
+        it('opens for someone taking part this year whose open on taking part was missed', async () => {
+            const hh = await makeMemberHousehold('retry');
+            const person = await makePerson('retry-child', hh.id, CHILD);
+            await attachToProgram('retry', person.id, IN_THIS_YEAR);
+
+            await runPersonAgreementSweep(NOW);
+
+            expect(await agreementCountFor(person.id)).toBe(1);
+        });
+
         it('skips someone whose only program was before last year', async () => {
             const hh = await makeMemberHousehold('lapsed');
             const person = await makePerson('lapsed-child', hh.id, CHILD);

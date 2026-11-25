@@ -413,14 +413,14 @@ export default function CompliancePage() {
 
       <PersonSection
         title="Individual agreement outstanding"
-        description="Adults 18 or older who sign their own membership agreement rather than being covered by their household's, and haven't signed it yet. Warn-only — nothing is blocked. They sign it themselves from their membership page."
+        description="Adults who aren't a household lead and have an individual membership agreement open and unsigned, whether it opened on its own or the Board opened it. Warn-only — nothing is blocked. They sign it themselves from their membership page."
         color="blue"
         people={peopleAwaitingAgreement}
       />
 
       <PersonSection
         title="Free-time check-in, no agreement"
-        description="Adults who aren't a household lead, checked in outside any program this membership year, and have no individual agreement signed this year or waiting for their signature. Nothing opens at the door and entry is never blocked; request an agreement here if one is owed."
+        description="Adults in member households who aren't a lead, checked in outside any program this membership year, and have no individual agreement signed this year or waiting for their signature. Nothing opens at the door and entry is never blocked; request an agreement here if one is owed."
         color="orange"
         people={peopleFreeTime}
         renderAction={requestAction}

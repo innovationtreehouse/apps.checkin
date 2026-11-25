@@ -4,12 +4,12 @@ import prisma from "@/lib/prisma";
 import { orgToday } from "@/lib/appSettings";
 import { withAuth } from "@/lib/auth";
 import { bgThresholdForYear, liveMembershipYear } from "@/lib/membership/renewal";
-import { membershipYearStart, monthsBefore } from "@/lib/programYear";
+import { membershipYearStart } from "@/lib/programYear";
 import { disputingReviews, householdCheckStandings, householdQualifies, loadCheckReviews } from "@/lib/membership/checkStanding";
 import { fromWhere, personBgOpen } from "@/lib/membership/lifecycle";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
-import { membershipYearAt } from "@/lib/membership/personAgreementTriggers";
+import { AGREEMENT_OWED_WHERE, membershipYearAt } from "@/lib/membership/personAgreementTriggers";
 import { isAdultAsOf } from "@/lib/household/secondLead";
 import { LIVE_VISIT } from "@/lib/visit/filters";
 import { bgObligatedWhere, ENROLLED_PARTICIPANT, recentProgramWhere } from "@/lib/person/filters";
@@ -357,8 +357,8 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     // 7. Individual membership agreements. Independent of the BG recheck policy —
     //    this is a signature obligation, not a check.
     //    - awaiting: opened and not yet signed. The board's chase list.
-    //    - freeTimeWithoutAgreement: adults who aren't a household lead and checked in
-    //      outside any program this year with no agreement signed this year and none
+    //    - freeTimeWithoutAgreement: adults who aren't a household lead, in a member
+    //      household, and checked in outside any program this year with no agreement signed this year and none
     //      open (an open one is on the awaiting list). Nothing opens at the door; the
     //      board decides.
     const openAgreements = await prisma.orgMembershipProcess.findMany({
@@ -376,21 +376,24 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             reason: "AGREEMENT_OUTSTANDING",
         }));
 
-    const adultNonLead = { isHouseholdLead: false, household: { archivedAt: null }, OR: [{ isDeclaredAdult: true }, { dateOfBirth: { not: null } }] };
-    const agreementSince = boundary ? membershipYearAt(boundary, today).start : monthsBefore(today, 12);
-    const freeTimeVisits = await prisma.visit.findMany({
+    // The people the automatic rule asks to sign, over the year the yearly pass uses. With no
+    // boundary configured there is no membership year, and the list is empty, as the pass is.
+    const agreementSince = boundary ? membershipYearAt(boundary, today).start : null;
+    const freeTimeVisits = agreementSince ? await prisma.visit.findMany({
         where: {
             ...LIVE_VISIT,
             associatedEventId: null,
             arrivedAt: { gte: agreementSince },
             person: {
-                ...adultNonLead,
+                ...AGREEMENT_OWED_WHERE,
+                household: { ...AGREEMENT_OWED_WHERE.household, archivedAt: null },
+                OR: [{ isDeclaredAdult: true }, { dateOfBirth: { not: null } }],
                 personBgProcesses: { none: { kind: "PERSON_AGREEMENT", OR: [{ contractSignedAt: { gte: agreementSince } }, fromWhere("PENDING_EXTERNAL_ACTION")] } },
             },
         },
         select: { arrivedAt: true, person: { select: { id: true, name: true, householdId: true, dateOfBirth: true, isDeclaredAdult: true } } },
         orderBy: { arrivedAt: "desc" },
-    });
+    }) : [];
     const lastFreeVisit = new Map<number, (typeof freeTimeVisits)[number]>();
     for (const v of freeTimeVisits) if (!lastFreeVisit.has(v.person.id) && isAdultAsOf(v.person, today)) lastFreeVisit.set(v.person.id, v);
     const peopleFreeTimeWithoutAgreement = [...lastFreeVisit.values()].map((v) => ({

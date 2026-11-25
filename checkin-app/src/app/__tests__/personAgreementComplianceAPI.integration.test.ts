@@ -3,7 +3,7 @@
  */
 /**
  * Integration test for the Board's free-time concern on GET /api/membership-audit/compliance:
- * adults who aren't a household lead and checked in outside any program this membership
+ * adults in member households who aren't a lead and checked in outside any program this membership
  * year with no agreement signed this year and none open.
  */
 
@@ -57,6 +57,7 @@ async function cleanup() {
     await prisma.event.deleteMany({ where: { name: { contains: TAG } } });
     await prisma.orgMembershipProcess.deleteMany({ where: { subjectPersonId: { in: pids } } });
     await prisma.person.deleteMany({ where: { id: { in: pids } } });
+    await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids } } });
     await prisma.household.deleteMany({ where: { id: { in: ids } } });
 }
 
@@ -74,8 +75,9 @@ describe('GET /api/membership-audit/compliance — free-time check-ins with no a
             update: { orgMembershipYearBoundary: BOUNDARY_SEED },
         });
 
-        const hh = await prisma.household.create({ data: { name: `${TAG} family` } });
-        const archived = await prisma.household.create({ data: { name: `${TAG} archived`, archivedAt: NOW } });
+        const hh = await prisma.household.create({ data: { name: `${TAG} family`, orgMembership: { create: { status: 'ACTIVE' } } } });
+        const archived = await prisma.household.create({ data: { name: `${TAG} archived`, archivedAt: NOW, orgMembership: { create: { status: 'ACTIVE' } } } });
+        const nonMember = await prisma.household.create({ data: { name: `${TAG} non-member` } });
         const board = await makePerson('board', hh.id, { dateOfBirth: ADULT_DOB });
         await prisma.person.update({ where: { id: board.id }, data: { isBoardMember: true } });
         id.board = board.id;
@@ -91,8 +93,9 @@ describe('GET /api/membership-audit/compliance — free-time check-ins with no a
         id.minor = (await makePerson('minor', hh.id, { dateOfBirth: MINOR_DOB })).id;
         id.unknownAge = (await makePerson('unknown-age', hh.id)).id;
         id.archived = (await makePerson('archived', archived.id, { isDeclaredAdult: true })).id;
+        id.nonMember = (await makePerson('non-member', nonMember.id, { isDeclaredAdult: true })).id;
 
-        for (const who of ['lead', 'secondLead', 'declared', 'child', 'signed', 'awaiting', 'minor', 'unknownAge', 'archived']) await freeTimeVisit(id[who]);
+        for (const who of ['lead', 'secondLead', 'declared', 'child', 'signed', 'awaiting', 'minor', 'unknownAge', 'archived', 'nonMember']) await freeTimeVisit(id[who]);
         const thisYear = membershipYearAt(BOUNDARY_SEED, await orgToday(NOW));
         await freeTimeVisit(id.lastYearOnly, new Date(thisYear.start.getTime() - 30 * 86_400_000));
         const event = await prisma.event.create({ data: { name: `${TAG} session`, startAt: NOW, endAt: NOW } });
@@ -125,6 +128,7 @@ describe('GET /api/membership-audit/compliance — free-time check-ins with no a
         expect(listed.has(id.secondLead)).toBe(false); // a partner made a lead
         expect(listed.has(id.unknownAge)).toBe(false);
         expect(listed.has(id.archived)).toBe(false);
+        expect(listed.has(id.nonMember)).toBe(false); // owes no individual agreement
         expect(listed.has(id.signed)).toBe(false); // signed this year
         expect(listed.has(id.awaiting)).toBe(false); // open, so on the awaiting-signature list instead
         expect(listed.has(id.lastYearOnly)).toBe(false); // no free-time visit this year
@@ -133,5 +137,12 @@ describe('GET /api/membership-audit/compliance — free-time check-ins with no a
         const row = freeTime.find((r) => r.personId === id.child);
         expect(row?.reason).toBe('FREE_TIME_WITHOUT_AGREEMENT');
         expect(row?.lastVisitAt).toBeDefined();
+    });
+
+    it('is empty with no membership-year boundary, as the yearly pass does nothing then', async () => {
+        await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: null } });
+        const body = await (await get()).json();
+        await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: BOUNDARY_SEED } });
+        expect(body.peopleFreeTimeWithoutAgreement).toEqual([]);
     });
 });
