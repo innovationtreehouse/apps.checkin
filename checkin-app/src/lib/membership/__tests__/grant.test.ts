@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 import prisma from '@/lib/prisma';
-import { grantMembership, refuseGrantIfDenied } from '@/lib/membership/grant';
+import { grantMembership, grantMessage, refuseGrantIfDenied, type GrantResult } from '@/lib/membership/grant';
 import { raiseDeniedHouseholdActivity } from '@/lib/membership/householdStatus';
 import { createRenewalProcess } from '@/lib/membership/renewal';
 
@@ -128,5 +128,20 @@ describe('grantMembership on a lapsed ACTIVE household with nothing open', () =>
 
         await expect(grantMembership(7, { actorId: 99, reason: 'check' }, 2026)).rejects.toThrow(/already paid for the current membership year/);
         expect(createRenewalProcess).not.toHaveBeenCalled();
+    });
+});
+
+describe('grantMessage', () => {
+    const process = (kind: 'INITIAL' | 'RENEWAL', status: string) => ({ kind, status }) as GrantResult['process'];
+
+    it('says Granted only when a payment was mapped', () => {
+        expect(grantMessage({ paid: true, process: process('RENEWAL', 'ACTIVE') })).toBe('Granted: the membership is active.');
+        expect(grantMessage({ paid: true, process: process('INITIAL', 'PENDING_BG_CLEARANCE') })).toBe('Granted: the membership activates once the background check clears.');
+    });
+
+    it('names an opened renewal or application, never Granted', () => {
+        expect(grantMessage({ paid: false, opened: true, process: process('RENEWAL', 'PENDING_RENEWAL') })).toBe('Renewal opened: the family completes it, then grant once it reaches payment.');
+        expect(grantMessage({ paid: false, opened: true, process: process('INITIAL', 'INTAKE') })).toBe('Application opened: the family completes it, then grant once it reaches payment.');
+        expect(grantMessage({ paid: false, opened: false, process: process('INITIAL', 'INTAKE') })).toBe('Application already open: the family completes it, then grant once it reaches payment.');
     });
 });

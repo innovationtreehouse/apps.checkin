@@ -9,9 +9,10 @@ import { ensureHouseholdMembership, type HouseholdStatus } from "@/lib/membershi
 import { householdApplicationOpenOrBlockedWhere, createRenewalProcess, liveMembershipYear } from "@/lib/membership/renewal";
 
 /**
- * Board grant of one membership year: money only.
+ * The Board's grant control for one membership year: it either maps a payment
+ * or opens an application, never both.
  *
- * Pays the household's in-flight application through the same certify path a
+ * Mapping a payment certifies the household's in-flight application through the same certify path a
  * board-recorded payment takes, so the household goes ACTIVE only when that
  * application converges — paid AND background check cleared. It never writes the
  * household's status itself and never skips the check.
@@ -21,7 +22,7 @@ import { householdApplicationOpenOrBlockedWhere, createRenewalProcess, liveMembe
  * - An in-flight application at an earlier step can't be paid yet (the family still
  *   owes details, the signature or the check consent): refused with the step.
  * - No in-flight application: one is opened for the family to complete, and the
- *   board grants again once it reaches payment. An ACTIVE household that hasn't
+ *   board grants once it reaches payment. An ACTIVE household that hasn't
  *   paid for the live year gets a renewal, in or out of renewal season; any other
  *   household gets an INITIAL at INTAKE.
  * - A BLOCKED application: refused. Only a board reset or override moves it on.
@@ -30,6 +31,15 @@ import { householdApplicationOpenOrBlockedWhere, createRenewalProcess, liveMembe
 export type GrantResult =
     | { paid: true; process: OrgMembershipProcess }
     | { paid: false; process: OrgMembershipProcess; opened: boolean };
+
+/** Names the effect a grant took; only a mapped payment says "Granted". */
+export function grantMessage(result: GrantResult): string {
+    if (result.paid) {
+        return result.process.status === "ACTIVE" ? "Granted: the membership is active." : "Granted: the membership activates once the background check clears.";
+    }
+    const what = result.process.kind === "RENEWAL" ? "Renewal" : "Application";
+    return `${what} ${result.opened ? "opened" : "already open"}: the family completes it, then grant once it reaches payment.`;
+}
 
 const IN_FLIGHT_WHERE: Prisma.OrgMembershipProcessWhereInput = {
     OR: [
