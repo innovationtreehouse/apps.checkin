@@ -354,6 +354,7 @@ cutoff for the backfill:
 - An agreement signed before July 15, 2026 is for 2025-2026.
 - An agreement signed on or after July 15, 2026 is for 2026-2027.
 - An agreement still open, whenever it was opened, is for 2026-2027.
+- An agreement closed unsigned is for 2025-2026.
 
 This is a one-time owner decision about existing rows. The app keeps no date
 rule: after the backfill it never works out an agreement's year from a date.
@@ -375,6 +376,11 @@ UPDATE "OrgMembershipProcess"
 SET "membershipYear" = 2026
 WHERE kind = 'PERSON_AGREEMENT' AND "membershipYear" IS NULL AND "contractSignedAt" IS NULL
   AND status = 'PENDING_EXTERNAL_ACTION';
+
+UPDATE "OrgMembershipProcess"
+SET "membershipYear" = 2025
+WHERE kind = 'PERSON_AGREEMENT' AND "membershipYear" IS NULL AND "contractSignedAt" IS NULL
+  AND status = 'ARCHIVED';
 ```
 
 An open agreement given 2026 follows Q11 from then on: if it is still open
@@ -385,29 +391,24 @@ time zone (decided), the same day `calendarDayIn` gives with `tz` from
 `AppSettings.timezone`. It is never the UTC day or a fixed zone.
 
 <a id="q13-gaps"></a>
-**What the cutoff leaves open.** These are listed for the owner, not decided. G4, whether a Board step still assigns years, is settled: none does. G1, an agreement signed before September 1, 2025, is settled: the owner confirms none exists, so the one cutoff covers every signed agreement. G3 is settled: the cutoff compares the org's calendar day. G2 is settled: a closed, unsigned agreement keeps no year ([below](#g2)).
+**What the cutoff leaves open.** These are listed for the owner, not decided. G4, whether a Board step still assigns years, is settled: none does. G1, an agreement signed before September 1, 2025, is settled: the owner confirms none exists, so the one cutoff covers every signed agreement. G3 is settled: the cutoff compares the org's calendar day. G2 is settled: a closed, unsigned agreement gets 2025 ([below](#g2)).
 
 | # | Case | Example |
 |---|---|---|
-| G6 | What reopen does with a closed, unsigned agreement that has no year. Reopen refuses an agreement whose year has ended, and with no year it can't tell | The Board closed her agreement in October 2026, unsigned, and the backfill left it with no year. In 2027 the Board clicks reopen on it. Refuse, or allow? |
 | G5 | Agreements the previous release creates during the release-1 drain. They have no year and come after the migration | Opened by the old code on the release day and signed in 2027. Applied again, the cutoff would write 2026 |
 
 <a id="g2"></a>
-**A closed, unsigned agreement with no year (G2, decided).** It keeps no year.
-The open ones get 2026 (above); these are left as they are. What follows:
+**A closed, unsigned agreement (G2, decided).** The backfill gives every one
+2025, whenever it was opened or closed. What follows:
 
-- **The "already handled" check.** Today a closed agreement counts as handled
-  if it was closed since the cycle floor. After this change it counts only when
-  its `membershipYear` is the year being opened. With no year it never counts,
-  so the nightly pass asks the person to sign again. Example: the Board closed
-  her agreement in October 2026, unsigned. Today she is not asked again this
-  year. After this change, the next pass opens a 2026 agreement for her, if the
-  rule covers her.
-- **The database check.** These rows have no year for good, so a later
-  PERSON_AGREEMENT check can't require a year on every agreement while they
-  exist.
-- **Reopen.** Reopen refuses an agreement whose year has ended. With no year it
-  can't tell, so it needs a rule for these rows. That is open ([G6](#q13-gaps)).
+- **It never counts for 2026.** The nightly pass asks the person to sign a 2026
+  agreement, if the rule covers them. Example: the Board closed her agreement
+  in October 2026, unsigned. The backfill writes 2025. Today she is not asked
+  again this year. After this change, the next pass opens a 2026 agreement for
+  her.
+- **Reopen refuses it**, because 2025-2026 has ended.
+- **No agreement is left without a year** by the backfill, so these rows don't
+  block a later PERSON_AGREEMENT database check.
 
 ## 3. Payment
 
@@ -871,7 +872,7 @@ ROLLBACK;
 | 0 | The org-day boundary change | Separate design |
 | 1 | Column, backfill, writers, readers with fallbacks, checkout by stamped year, and the payment answers from §3 | Release 0 merged. The owner has run the boundary query and settled any unpaid rows it lists. The order fill has run and the Board has picked a year for every row it listed |
 | 2 | Re-fill, check constraint, fallbacks and archive fill removed, test fixtures | Release 1 in production; the null-count query returns zero |
-| Later | The database check extended to PERSON_AGREEMENT | G5 answered. It can't require a year on every agreement while closed, unsigned agreements with no year exist ([G2](#g2)) |
+| Later | The database check extended to PERSON_AGREEMENT | G5 answered; no agreement left without a year |
 
 ---
 
@@ -879,7 +880,7 @@ ROLLBACK;
 
 | # | Question | Section |
 |---|---|---|
-| G5, G6 | What the Q13 cutoff leaves open: rows the old code creates during the rollout, and reopen of a closed, unsigned agreement with no year | [§2a](#q13-gaps) |
+| G5 | Agreements the old code creates during release 1's rollout, which come after the backfill | [§2a](#q13-gaps) |
 
 ---
 
