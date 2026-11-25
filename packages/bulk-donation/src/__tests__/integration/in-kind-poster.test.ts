@@ -1122,6 +1122,26 @@ describeDb("in-kind drain settings", () => {
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, capped: true });
   });
 
+  it("under the per-run limit, books the gift held longest first, across receipt gifts and gifts without one", async () => {
+    await switchOn();
+    await set({ qbMaxCreatesPerRun: 1 });
+    const later = await acceptedGift();
+    const earlier = await acceptedGift();
+    const manual = await zeroLineManualGift([3000]);
+    const ago = (seconds: number) => new Date(Date.now() - seconds * 1000);
+    await db.inKindDonation.update({ where: { id: later }, data: { moneyReceivedAt: ago(10) } });
+    await db.inKindDonation.update({ where: { id: earlier }, data: { moneyReceivedAt: ago(20) } });
+    await db.manualInKindDonation.update({ where: { id: manual }, data: { recordedAt: ago(30) } });
+    const booked = async () => (await db.inKindBooking.findMany({ where: { orgId }, select: { source: true, giftId: true }, distinct: ["source", "giftId"] })).map((b) => `${b.source}:${b.giftId}`);
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, capped: true });
+    expect(await booked()).toEqual([`manual:${manual}`]);
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, capped: true });
+    expect((await booked()).sort()).toEqual([`manual:${manual}`, `receipt:${earlier}`].sort());
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, capped: false });
+    expect(await booked()).toHaveLength(3);
+  });
+
   it("looks for finance's pair only within the org's match window", async () => {
     await switchOn();
     await set({ qbMatchWindowDays: 1 });

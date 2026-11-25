@@ -245,6 +245,69 @@ describeDb("upload runs the owner-assigned cycle per new disbursement", () => {
   });
 });
 
+/** Benevity's Donations Report: a preamble carrying the disbursement, the gift table, then a footer; CRLF. */
+describeDb("a Donations Report upload", () => {
+  const REPORT_HEADER = [
+    "Company", "Project", "Donation Date", "Donor First Name", "Donor Last Name", "Email", "Address", "City",
+    "State/Province", "Postal Code", "Activity", "Comment", "Transaction ID", "Donation Frequency", "Currency",
+    "Project Remote ID", "Source", "Reason", "Total Donation to be Acknowledged", "Match Amount",
+    "Cause Support Fee", "Merchant Fee", "Fee Comment",
+  ].join(",");
+  const gift = (txn: string, comment: string, gross: string, match: string) =>
+    `Example Co,Example Nonprofit,2026-02-06T15:03:38Z,Pat,Example,Not shared by donor,Not shared by donor,Not shared by donor,` +
+    `Not shared by donor,00000,,${comment},${txn},One Time,USD,,Donation,User Donation,${gross},${match},0.00,0.00,`;
+  const REPORT = Buffer.from([
+    "Donations Report,",
+    '"#-------------------------------------------",',
+    "Charity Name,Example Nonprofit",
+    "Charity ID,000-000000000",
+    "Period Ending,Thu 16 Apr 2026 0:00:00",
+    "Currency,USD",
+    "Payment Method,EFT",
+    "Disbursement ID,DISB0000AA",
+    '"#-------------------------------------------",',
+    "",
+    REPORT_HEADER,
+    gift("TXNR1", "Robotics team", '"1,200.00"', "300.00"),
+    gift("TXNR2", "Robotics team", "50.00", "0.00"),
+    gift("TXNR3", "", "25.00", "0.00"),
+    'Totals,,,,,,,,,,,,,,,,,,"1,275.00",300.00,0.00,0.00',
+    'Total Donations (Gross),"1,575.00"',
+    "Check Fee,0.00",
+    'Net Total Payment,"1,575.00"',
+    "",
+  ].join("\r\n"));
+  const uploadReport = () =>
+    uploadedFileService.processUpload(orgId, 1, "testfinance", "donations-report.csv", REPORT, parseBenevityCsv(REPORT), "corr-intake");
+
+  it("stores each gift under the preamble's disbursement, and a re-upload is a no-op", async () => {
+    expect(await uploadReport()).toMatchObject({ rowCount: 3, newRowCount: 3, duplicateRowCount: 0, allDuplicate: false });
+    const rows = await db.transaction.findMany({ where: { orgId }, orderBy: { transactionId: "asc" } });
+    expect(rows.map((r) => r.transactionId)).toEqual(["TXNR1", "TXNR2", "TXNR3"]);
+    for (const r of rows) {
+      expect(r).toMatchObject({ disbursementId: "DISB0000AA", disbursementDate: "2026-04-16", companyName: "Example Co", donationMethod: null, donationType: null });
+    }
+    expect(rows[0]).toMatchObject({ donationAmountCents: 120000, matchAmountCents: 30000, isOrganizationalLevel: false });
+    expect(rows[2].isOrganizationalLevel).toBe(true);
+
+    expect(await uploadReport()).toMatchObject({ rowCount: 3, newRowCount: 0, duplicateRowCount: 3, allDuplicate: true });
+    expect(await db.transaction.count({ where: { orgId } })).toBe(3);
+  });
+
+  it("an owner assigned with a comment rule covers the matching gift, and the disbursement completes", async () => {
+    await makeAccountMapRule(orgId, { companyName: "Example Co", donationMethod: null, donationType: null });
+    await uploadReport();
+    expect(await getNavCounts(orgId)).toEqual({ unassignedQueue: 2, disbursementHolds: 0 });
+
+    const r1 = await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: "TXNR1" } });
+    await transactionService.assignOwner(orgId, r1.id, 201, true, AUDIT);
+
+    expect((await db.transaction.findFirstOrThrow({ where: { orgId, transactionId: "TXNR2" } })).ownerId).toBe(201);
+    await db.disbursementEvent.findFirstOrThrow({ where: { orgId, disbursementId: "DISB0000AA" } });
+    expect(await getNavCounts(orgId)).toEqual({ unassignedQueue: 0, disbursementHolds: 0 });
+  });
+});
+
 describeDb("donor data stays out of the workflow log", () => {
   it("no workflow event payload carries a donor field", async () => {
     await makeAccountMapRule(orgId);
