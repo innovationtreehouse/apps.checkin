@@ -7,7 +7,8 @@ import { isConfigured } from "@/lib/shopifyRead/client";
 /**
  * POST /api/finance-ops/payments/reconcile — the board re-runs the Shopify payment
  * check after "Sync now" refreshes the mirror, so the problem list matches the live
- * amounts beside it.
+ * amounts beside it. The page's "Run the payment check" retries one the daily run's
+ * lease blocked.
  *
  * Runs only the reconcile (lib/finance/reconcile), never the daily cron's other steps
  * such as the receipt mail run. The reconcile also recovers missed orders/paid
