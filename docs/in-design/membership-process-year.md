@@ -239,15 +239,33 @@ certify-payment route sends none.
   stored before that column has no year. Today approval gives it the live year,
   which is the same kind of guess ([Q8](#q8)).
 
-**Board grant for a different year (open).** The application is for 2025. On
-July 10 the Board grants 2026. `appliesToYear` becomes 2026 and
-`membershipYear` stays 2025.
+**A Board grant or payment for a different year (decided).** The application is
+for 2025. On July 10 the Board grants 2026.
 
-- **a.** Allow it. The two columns show the grant.
-- **b.** Refuse. The Board grants only the application's year.
-- **c.** Allow it, and re-stamp `membershipYear` to the granted year.
+**Decision: allowed, with an acknowledged warning.** `appliesToYear` becomes
+2026. `membershipYear` stays 2025. The two fields differ, and neither is
+rewritten to match.
 
-Which one?
+- When the year the Board picks differs from the application's, the grant and
+  certify dialogs show a warning before Confirm. For example: "This application
+  is for 2025-2026. You are recording a payment for 2026-2027." Confirm stays
+  disabled until the Board member ticks "I understand the year doesn't match the
+  application".
+- The server enforces the same rule. The grant route and the certify-payment
+  route take `acknowledgeYearMismatch: true`. A year that differs without it is
+  refused with a 409 naming both years, and nothing is written.
+- The audit row records both years and the acknowledgement.
+
+After such a payment, each field is read by:
+
+| Field | Value in the example | Read by |
+|---|---|---|
+| `appliesToYear`, the year bought | 2026 | Every "settled for this year" query: valid-through and member pricing, the households list, the outreach audience, grant's "already paid", the "won't renew" refusal. The renewal sweep's skip test, so no 2026 renewal opens. The badge roster and the people-search year list. The compliance check threshold. The application's check threshold, which prefers this field. The new-member background-check opener |
+| `membershipYear`, the year applied for | 2025 | Reopen's year refusal. The "won't renew" marker on a renewal. The renewal banner's due date. The checkout's variant and its ended-year refusal, both of which apply only while unpaid. A payment-plan request's year. The check threshold before payment |
+
+So the household in the example is a member through September 1, 2027, and is
+judged against the 2026 check threshold. Its application still reads as a 2025
+application wherever the question is "which year was this opened for".
 
 <a id="q8"></a>
 **Payment-plan approval of a request with no stored year (open).** A request made
@@ -501,7 +519,6 @@ ROLLBACK;
 
 | # | Question | Section |
 |---|---|---|
-| Q4 | A Board grant for a different year than the application's | [§3](#q4) |
 | Q8 | Payment-plan approval of a request with no stored year | [§3](#q8) |
 | Q5 | No boundary configured: refuse to open an application, or allow a null year? | below |
 | Q6 | Should the per-person agreement carry a year? | below |
