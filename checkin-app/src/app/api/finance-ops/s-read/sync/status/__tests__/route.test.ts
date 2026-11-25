@@ -24,7 +24,7 @@ const repair = { status: 'COMPLETED', kind: 'ADMIN', startedAt: '2026-11-23T08:0
 beforeEach(() => {
     jest.clearAllMocks();
     isConfiguredMock.mockReturnValue(true);
-    syncStatusMock.mockResolvedValue({ scheduled: null, laterRepair: null });
+    syncStatusMock.mockResolvedValue({ scheduled: null, running: null, laterRepair: null });
 });
 
 describe('GET /api/finance-ops/s-read/sync/status', () => {
@@ -43,19 +43,28 @@ describe('GET /api/finance-ops/s-read/sync/status', () => {
     });
 
     it('returns the daily read and the later repair for a board member', async () => {
-        syncStatusMock.mockResolvedValue({ scheduled: daily, laterRepair: repair });
+        syncStatusMock.mockResolvedValue({ scheduled: daily, running: null, laterRepair: repair });
         mockSession.mockResolvedValue(board);
 
         const res = await GET(getReq());
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ scheduled: daily, laterRepair: repair });
+        expect(await res.json()).toEqual({ scheduled: daily, running: null, laterRepair: repair });
+    });
+
+    it('returns a daily read still running alongside the last finished one', async () => {
+        const inFlight = { status: 'RUNNING', kind: 'INCREMENTAL', startedAt: '2026-11-24T06:00:00.000Z', finishedAt: null, counts: null, error: null };
+        syncStatusMock.mockResolvedValue({ scheduled: daily, running: inFlight, laterRepair: null });
+        mockSession.mockResolvedValue(board);
+
+        const res = await GET(getReq());
+        expect(await res.json()).toEqual({ scheduled: daily, running: inFlight, laterRepair: null });
     });
 
     it('returns nulls when no daily read has finished', async () => {
         mockSession.mockResolvedValue(board);
 
         const res = await GET(getReq());
-        expect(await res.json()).toEqual({ scheduled: null, laterRepair: null });
+        expect(await res.json()).toEqual({ scheduled: null, running: null, laterRepair: null });
     });
 
     it('503 when the mirror is not wired here', async () => {
