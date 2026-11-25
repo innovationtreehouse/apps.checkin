@@ -196,6 +196,53 @@ same `create`, and the audit row records it.
 | Compliance "awaiting signature" list | Every open agreement | Unchanged; each row also shows its year |
 | Signing (`external.ts`) | Signs the caller's open agreement | Unchanged; the signing page names the year |
 
+### With #3837: an agreement for every adult non-lead
+
+The tables above describe `main` today. #3837, open, changes who is asked to
+sign and when. The stored year works with it. Whichever of the two merges
+second carries these changes:
+
+- **Who is asked.** The 18-25 band goes. The automatic rule covers any adult
+  non-lead in an ACTIVE member household who took part (enrolled, volunteered
+  or led a program) in the previous membership year or this one. Which people
+  are asked is a date window on program dates. It decides nobody's agreement
+  year.
+- **A fourth create path.** `openPersonAgreementOnEngage` opens an agreement
+  when a person enrolls, volunteers, or is named a program's leader. Its year is
+  the household's latest paid year, as for the nightly pass ([Q9](#q9)).
+- **New-member activation.** Under #3837 it covers the household's adult
+  non-leads who take part this year. The year is still the activating
+  application's `appliesToYear` ([Q10](#q10)).
+- **The Board's open.** #3837 widens it to any adult non-lead and leaves the
+  route's request unchanged. This design adds the required Board-picked year to
+  that request.
+- **Becoming a lead.** #3837 archives the person's unsigned agreement. The row
+  keeps its year.
+- **Readers.** #3837 removes the over-25 list. It adds a list of adults who
+  visited outside any program with "no agreement signed this year and none
+  open", and a yellow "unsigned" warning on `/membership`. The list compares
+  `membershipYear` with the household's latest paid year. The warning names the
+  agreement's year.
+
+**Where they disagree: what counts as this year's agreement.** #3837 judges by
+date. An agreement opened or signed on or after the membership year's start
+counts, and #3837 takes that start as the boundary itself
+(`membershipYearAt`). This design judges by the stored year: the agreement
+counts if its `membershipYear` is the household's latest paid year, as the
+owner decided in Q9. The two give different answers between the renewal
+window and the boundary.
+
+Example: the boundary is September 1. A household pays its 2026-2027 renewal
+on July 10, 2026. Its son enrolls in a program on July 20 and signs on July 25.
+
+- Under #3837, on September 1 his signature predates the new year's start, so
+  the nightly pass asks him to sign again.
+- Under this design his agreement is for 2026, so nobody asks him again.
+
+With the stored year, `membershipYearAt` stops deciding which agreement is
+current, and the "already handled" check compares years instead of
+`stageEnteredAt`. `membershipYearAt` still sets the window for who took part.
+
 ### Open questions on the agreement
 
 <a id="q9"></a>
@@ -259,27 +306,32 @@ agreement open. Two parts need no choice:
 
 - Signing a 2025 agreement records a 2025 agreement. It never counts as the
   2026 one, because "already handled" compares years.
-- Reopen refuses an archived agreement whose year has ended, the same rule
-  household applications follow.
+- Reopen refuses an archived agreement whose year has ended (decided). It is
+  the same rule household applications already follow, extended to agreements.
 
-What remains is whether the old open agreement blocks the new year's:
+**Q11. An open agreement when its year ends (decided).** At year end the
+nightly pass closes every agreement for that year that is still open.
 
-**Q11. An open agreement when its year ends.** A household renews for
-2026-2027. Its daughter's 2025 agreement was opened in August 2026. Her request
-expired in Zoho, the compliance chip has shown since, and the Board hasn't acted.
-On September 1, 2026 the 2025-2026 year ends. Today any open agreement blocks a
-new one, so no 2026 agreement opens while the 2025 one stays open.
+Example: a household renews for 2026-2027. Its daughter's 2025 agreement was
+opened in August 2026. Her request expired in Zoho, the compliance chip has
+shown since, and the Board hasn't acted. On September 1, 2026 the 2025-2026 year
+ends:
 
-- **a.** The nightly pass closes the 2025 agreement on the day its year ends,
-  recalling any live request and recording the reason. The next pass opens a
-  2026 agreement. The chip changes to say that the 2025 agreement was closed
-  unsigned.
-- **b.** The 2025 agreement stays open, and keeps blocking, until the Board
-  closes it. The chip changes to "2025-2026 has ended; close this agreement to
-  open the 2026-2027 one". Signing the old one is refused once its year has
-  ended.
-- **c.** Only an open agreement for the same year blocks. The 2026 agreement
-  opens beside the old one, and the Board closes the old one when it chooses.
+- The nightly pass asks Zoho for the request's state. If she signed at the last
+  moment, the signature is recorded as today, on her 2025 agreement.
+- Otherwise a live request is recalled (`zohoSign.recallRequest`, as the
+  Board's reset does), and the agreement is closed unsigned. The close and its
+  reason, "closed unsigned at the end of 2025-2026", go in the audit log.
+- A failed Zoho call leaves the agreement open. It is logged and retried the
+  next night, so no live request is left behind a closed agreement.
+- The chip changes to say the 2025 agreement was closed unsigned. The next pass
+  opens her 2026 agreement, if the rule still covers her.
+
+The close is a new lifecycle edge, PENDING_EXTERNAL_ACTION to ARCHIVED, guarded
+on `contractSignedAt` being null. Signing a 2025 agreement records a 2025
+agreement and never counts as the 2026 one. The signature and the
+agreement-closed rules also hold: an agreement is signed every year and a
+signature never carries over.
 
 <a id="q12"></a>
 **Q12. Existing agreements: with the Board (B39).** Rows created before this
@@ -296,11 +348,11 @@ The design works for either answer:
 
 - From release 1, every new agreement carries a year (§2a above). No migration
   writes a year on an existing agreement.
-- Until B39 is answered, an existing agreement with no year still counts as
-  handled. The nightly pass opens no new agreement for that person, and no
-  agreement is judged by the date rule. The compliance page lists these
-  agreements as "no year recorded", so the Board can see them. That list is the
-  read-only list option 1 works from.
+- What a no-year agreement counts as until B39 is answered is open
+  ([Q13](#q13)). Either way the compliance page lists these agreements as "no
+  year recorded", so the Board can see them. That list is the read-only list
+  option 1 works from. Q11's year-end close skips them, since they have no
+  year to end.
 - Answer 1: the Board's year for each row is written to `membershipYear`, by
   whatever means B39 settles. The usual year comparison then applies.
 - Answer 2: a no-year agreement stops counting as handled. The next nightly pass
@@ -308,6 +360,30 @@ The design works for either answer:
 - Release 2's database check covers joining applications and renewals only. A
   later check for PERSON_AGREEMENT waits on B39, and ships once no agreement is
   left without a year.
+
+<a id="q13"></a>
+**Q13. A no-year agreement until B39 is answered.** An agreement is signed every
+year and a signature never carries over. Until B39 settles the old rows' years,
+the nightly pass still has to decide whether a no-year agreement covers the
+person this year.
+
+Example: the boundary is September 1. A daughter signed an agreement in
+October 2025, before this change, so it has no year. Her household renews for
+2026-2027. On September 1, 2026 the nightly pass runs, and B39 is not yet
+answered.
+
+- **a.** A no-year agreement counts as handled. She is not asked. She goes
+  without a 2026 agreement until B39 is carried out, which conflicts with
+  signing every year.
+- **b.** A no-year agreement never counts. She is asked to sign a 2026
+  agreement. This works with either B39 answer: under answer 1 her old row
+  later gets 2025, and under answer 2 she has already re-signed. The cost: someone
+  who signed during the 2026 renewal window, before this change shipped, is asked
+  a second time.
+- **c.** A no-year agreement counts if it was signed on or after the current
+  year's start, the date rule #3837 uses. No year is written from it; the rule
+  only decides whether to ask. She is asked, because October 2025 is before
+  September 1, 2026. The rule goes once B39 is carried out.
 
 ## 3. Payment
 
@@ -484,8 +560,8 @@ The dev mock line in `reconcile/membership.ts` (the year of the mock variant at
 `paidAt`) is dev-only and stays as it is.
 
 Not in this design: the renewal sweep's "closed this cycle" arm still uses the
-archive date against the window start, and the per-person agreement still uses
-its signing date against a cycle floor. Neither re-derives an application's year.
+archive date against the window start. It does not re-derive an application's
+year. The per-person agreement's reads are in §2a.
 
 ## 5. Migration and backfill
 
@@ -525,6 +601,25 @@ Migration, in one transaction:
      applies today.
 
 With no boundary configured, steps 2 and 4 write nothing.
+
+What the rules already say about steps 2 and 4:
+
+- **Unpaid rows (B1).** Before payment, an application is for the membership
+  year live when it was created, so a join made in renewal season is for the
+  coming year. Step 4 follows that rule. The rule names no list for the owner to
+  check, so the boundary-rows list below is this design's proposal. An older
+  fee-help request follows the same precedent: it is for the year its
+  application reached the payment step.
+- **Paid rows (B2).** The year is the year paid for, the cart item's year. The
+  rules don't name `appliesToYear`, but Shopify settlement writes it from the
+  variant's year, so step 4 reads the year paid for.
+- **Paid rows with no `appliesToYear` (B3).** No rule covers filling it from
+  `paidAt`. There is a known gap: a checkout opened before the renewal window
+  and paid after it buys the ending year. So near the window, the live year at
+  `paidAt` can be one year late. Each such row keeps its `shopifyOrderId`, so
+  its order's line item names the year bought. The question for the owner:
+  fill step 2 from `paidAt` anyway, or first count these rows and settle any
+  near a window from their orders before release 1.
 
 The live year at an instant, in SQL, matching `membershipYearCycle`: the
 renewal window of year `y` opens at the boundary's month and day in `y`, moved
@@ -720,11 +815,11 @@ ROLLBACK;
 
 | # | Question | Section |
 |---|---|---|
-| Q11 | Whether an open agreement blocks the next year's once its own year ends | [§2a](#q11) |
 | Q12 | Existing agreements' year: with the Board (B39) | [§2a](#q12) |
+| Q13 | Whether a no-year agreement counts as handled until B39 is answered | [§2a](#q13) |
 | B1 | Backfill unpaid rows on the org's calendar day, with boundary rows listed for the owner to confirm | [§5](#rows-on-a-boundary) |
 | B2 | Paid rows take `membershipYear` from `appliesToYear` | §5 |
-| B3 | Paid rows with no `appliesToYear` get it from `paidAt`, so the archive fill can go | §5 |
+| B3 | Paid rows with no `appliesToYear`: fill from `paidAt`, or settle rows near a window from their Shopify orders first | §5 |
 
 ---
 
