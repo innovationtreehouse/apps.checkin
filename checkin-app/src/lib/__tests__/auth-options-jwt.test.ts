@@ -55,6 +55,11 @@ jest.mock('@/lib/prisma', () => ({
 }));
 
 jest.mock('@/lib/household/leads', () => ({ addHouseholdLead: jest.fn() }));
+jest.mock('@/lib/household/archiveAction', () => ({ unarchiveOnSignIn: jest.fn() }));
+jest.mock('@/lib/household/archived', () => ({
+    ...jest.requireActual('@/lib/household/archived'),
+    householdWithMembership: jest.fn(),
+}));
 
 // setRoleFlag's write-choke-point plumbing (matrix + last-board guard + the PersonRole
 // upsert/mirror dual-write) has its own integration coverage (adminRolesAPI.integration.test.ts);
@@ -70,6 +75,8 @@ jest.unmock('@/lib/auth-options');
 
 import { authOptions, PERSONA_MINT_PROVIDER_ID, SESSION_EXPIRED, SESSION_MAX_AGE_SECONDS } from '@/lib/auth-options';
 import { FLAG_TO_KIND, type RoleFlag } from '@/lib/roles';
+import { unarchiveOnSignIn } from '@/lib/household/archiveAction';
+import { householdWithMembership } from '@/lib/household/archived';
 
 const mockFindUnique = (prisma as unknown as { person: { findUnique: jest.Mock } })
     .person.findUnique;
@@ -574,5 +581,80 @@ describe('adapter — createUser / getUser (Participant.id is an Int, NextAuth I
         });
 
         expect((created as { email: string }).email).toBe('');
+    });
+});
+
+describe('jwt() callback — a sign-in unarchives the household', () => {
+    const mockUnarchive = unarchiveOnSignIn as jest.Mock;
+    const mockHouseholdWithMembership = householdWithMembership as jest.Mock;
+
+    async function signIn(provider = 'google', impersonatedBy?: string) {
+        return (await jwt({
+            token: {},
+            user: { email: 'p@example.com', impersonatedBy },
+            account: { provider },
+            profile: { email_verified: true },
+        } as unknown as Parameters<JwtCallback>[0])) as Record<string, unknown>;
+    }
+
+    it('unarchives an archived household (read as null) before stamping claims', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant({ household: null }));
+        mockUnarchive.mockResolvedValue(true);
+        mockHouseholdWithMembership.mockResolvedValue({ orgMembership: { status: 'ACTIVE' } });
+
+        const result = await signIn();
+
+        expect(mockUnarchive).toHaveBeenCalledWith(99, 7);
+        expect(mockUnarchive.mock.invocationCallOrder[0]).toBeLessThan(mockHouseholdWithMembership.mock.invocationCallOrder[0]);
+        expect(result.id).toBe(7);
+        expect(result.denied).toBe(false);
+    });
+
+    it('a first sign-in into an archived household unarchives it and keeps the join question open', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant({ household: null, householdJoinPending: true, roles: [] }));
+        mockUnarchive.mockResolvedValue(true);
+        mockHouseholdWithMembership.mockResolvedValue({ orgMembership: null });
+
+        const result = await signIn();
+
+        expect(mockUnarchive).toHaveBeenCalledWith(99, 7);
+        expect(result.householdJoinPending).toBe(true);
+    });
+
+    it('a denied, archived household stays locked out', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant({ household: null }));
+        mockUnarchive.mockResolvedValue(false);
+        mockHouseholdWithMembership.mockResolvedValue({ orgMembership: { status: 'DENIED' } });
+
+        const result = await signIn();
+
+        expect(result.denied).toBe(true);
+        expect(result.isSysadmin).toBe(false);
+    });
+
+    it('leaves a live household alone', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant());
+
+        await signIn();
+
+        expect(mockUnarchive).not.toHaveBeenCalled();
+    });
+
+    it('does not unarchive on a token refresh', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant({ household: null }));
+        mockHouseholdWithMembership.mockResolvedValue({ orgMembership: { status: 'ACTIVE' } });
+
+        await callRefresh({ id: 7 });
+
+        expect(mockUnarchive).not.toHaveBeenCalled();
+    });
+
+    it('does not unarchive when a dev impersonates the member', async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant({ household: null }));
+        mockHouseholdWithMembership.mockResolvedValue({ orgMembership: { status: 'ACTIVE' } });
+
+        await signIn(PERSONA_MINT_PROVIDER_ID, 'dev@example.org');
+
+        expect(mockUnarchive).not.toHaveBeenCalled();
     });
 });

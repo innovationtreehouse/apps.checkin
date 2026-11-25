@@ -29,6 +29,7 @@ export const SYSTEM_ACTORS = [
     "cron:trusted-adult-expiry",
     "cron:lifecycle-reconcile",
     "system:google-sign-in",
+    "system:sign-in",
     "system:renewal-open",
     "system:membership-renewal-advance",
     "system:membership-external-advance",
