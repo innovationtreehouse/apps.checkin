@@ -4,7 +4,7 @@
 /**
  * Integration test for the Board's free-time concern on GET /api/membership-audit/compliance:
  * adults who aren't a household lead and checked in outside any program this membership
- * year with no agreement signed this year.
+ * year with no agreement signed this year and none open.
  */
 
 import { GET } from '@/app/api/membership-audit/compliance/route';
@@ -85,18 +85,22 @@ describe('GET /api/membership-audit/compliance — free-time check-ins with no a
         id.secondLead = (await makePerson('second-lead', hh.id, { dateOfBirth: ADULT_DOB, isHouseholdLead: true })).id;
         id.child = (await makePerson('child', hh.id, { dateOfBirth: ADULT_DOB })).id;
         id.signed = (await makePerson('signed', hh.id, { dateOfBirth: ADULT_DOB })).id;
+        id.awaiting = (await makePerson('awaiting', hh.id, { dateOfBirth: ADULT_DOB })).id;
         id.lastYearOnly = (await makePerson('last-year-only', hh.id, { dateOfBirth: ADULT_DOB })).id;
         id.atProgram = (await makePerson('at-program', hh.id, { dateOfBirth: ADULT_DOB })).id;
         id.minor = (await makePerson('minor', hh.id, { dateOfBirth: MINOR_DOB })).id;
         id.unknownAge = (await makePerson('unknown-age', hh.id)).id;
         id.archived = (await makePerson('archived', archived.id, { isDeclaredAdult: true })).id;
 
-        for (const who of ['lead', 'secondLead', 'declared', 'child', 'signed', 'minor', 'unknownAge', 'archived']) await freeTimeVisit(id[who]);
+        for (const who of ['lead', 'secondLead', 'declared', 'child', 'signed', 'awaiting', 'minor', 'unknownAge', 'archived']) await freeTimeVisit(id[who]);
         await freeTimeVisit(id.lastYearOnly, new Date(THIS_YEAR.start.getTime() - 30 * 86_400_000));
         const event = await prisma.event.create({ data: { name: `${TAG} session`, startAt: NOW, endAt: NOW } });
         await prisma.visit.create({ data: { personId: id.atProgram, arrivedAt: NOW, departedAt: NOW, associatedEventId: event.id } });
         await prisma.orgMembershipProcess.create({
             data: { kind: 'PERSON_AGREEMENT', subjectPersonId: id.signed, status: 'ACTIVE', contractSignedAt: NOW, stageEnteredAt: NOW },
+        });
+        await prisma.orgMembershipProcess.create({
+            data: { kind: 'PERSON_AGREEMENT', subjectPersonId: id.awaiting, status: 'PENDING_EXTERNAL_ACTION' },
         });
 
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: id.board, isBoardMember: true } });
@@ -112,7 +116,7 @@ describe('GET /api/membership-audit/compliance — free-time check-ins with no a
 
     const ids = (rows: Row[]) => new Set(rows.map((r) => r.personId));
 
-    it('lists adults who are not a lead and checked in during free time with no agreement signed this year', () => {
+    it('lists adults who are not a lead and checked in during free time with no agreement signed this year or open', () => {
         const listed = ids(freeTime);
         expect(listed.has(id.child)).toBe(true);
         expect(listed.has(id.declared)).toBe(true);
@@ -121,6 +125,7 @@ describe('GET /api/membership-audit/compliance — free-time check-ins with no a
         expect(listed.has(id.unknownAge)).toBe(false);
         expect(listed.has(id.archived)).toBe(false);
         expect(listed.has(id.signed)).toBe(false); // signed this year
+        expect(listed.has(id.awaiting)).toBe(false); // open, so on the awaiting-signature list instead
         expect(listed.has(id.lastYearOnly)).toBe(false); // no free-time visit this year
         expect(listed.has(id.atProgram)).toBe(false); // the visit was for a program session
         expect(listed.has(id.minor)).toBe(false);

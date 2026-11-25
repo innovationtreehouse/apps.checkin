@@ -4,7 +4,7 @@ import { withAuth } from "@/lib/auth";
 import { bgThresholdForYear, liveMembershipYear } from "@/lib/membership/renewal";
 import { membershipYearStart, monthsBefore } from "@/lib/programYear";
 import { disputingReviews, householdCheckStandings, householdQualifies, loadCheckReviews } from "@/lib/membership/checkStanding";
-import { personBgOpen } from "@/lib/membership/lifecycle";
+import { fromWhere, personBgOpen } from "@/lib/membership/lifecycle";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
 import { membershipYearAt } from "@/lib/membership/personAgreementTriggers";
@@ -355,8 +355,9 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     //    this is a signature obligation, not a check.
     //    - awaiting: opened and not yet signed. The board's chase list.
     //    - freeTimeWithoutAgreement: adults who aren't a household lead and checked in
-    //      outside any program this year with no agreement signed this year. Nothing
-    //      opens at the door; the board decides.
+    //      outside any program this year with no agreement signed this year and none
+    //      open (an open one is on the awaiting list). Nothing opens at the door; the
+    //      board decides.
     const openAgreements = await prisma.orgMembershipProcess.findMany({
         where: { kind: "PERSON_AGREEMENT", status: "PENDING_EXTERNAL_ACTION" },
         select: { subjectPerson: { select: { id: true, name: true, householdId: true } } },
@@ -381,7 +382,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             arrivedAt: { gte: agreementSince },
             person: {
                 ...adultNonLead,
-                personBgProcesses: { none: { kind: "PERSON_AGREEMENT", contractSignedAt: { gte: agreementSince } } },
+                personBgProcesses: { none: { kind: "PERSON_AGREEMENT", OR: [{ contractSignedAt: { gte: agreementSince } }, fromWhere("PENDING_EXTERNAL_ACTION")] } },
             },
         },
         select: { arrivedAt: true, person: { select: { id: true, name: true, householdId: true, dateOfBirth: true, isDeclaredAdult: true } } },

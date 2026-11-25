@@ -420,7 +420,7 @@ export default function CompliancePage() {
 
       <PersonSection
         title="Free-time check-in, no agreement"
-        description="Adults who aren't a household lead, checked in outside any program this membership year and haven't signed an individual agreement this year. Nothing opens at the door and entry is never blocked; request an agreement here if one is owed."
+        description="Adults who aren't a household lead, checked in outside any program this membership year, and have no individual agreement signed this year or waiting for their signature. Nothing opens at the door and entry is never blocked; request an agreement here if one is owed."
         color="orange"
         people={peopleFreeTime}
         renderAction={requestAction}
