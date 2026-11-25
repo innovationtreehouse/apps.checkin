@@ -220,11 +220,24 @@ live year when they ask: 2026.
 and refuses it once ended, as today. A request stored before this change keeps
 the year it holds.
 
-**Manual activation with no year given (open).** `certifyPaymentPlan` records the
-live year today.
+**Manual payment or certify: the Board names the year (decided).** Today
+`certifyPaymentPlan` records the live year when no year is given, and the
+certify-payment route sends none.
 
-- **a.** It records the application's year.
-- **b.** Keep the live year.
+**Decision: the year is required.** There is no default and nothing is inferred.
+
+- `certifyPaymentPlan` takes `year: number` as a required argument. The
+  fallback to the live year is deleted.
+- The certify-payment route requires `year` in its body, next to `reason`. A
+  body with no year, or a year that isn't a whole number, is refused with a 400:
+  "Choose the membership year this payment is for." The route checks the year
+  against the same set of years a Board grant may name.
+- The applications page's certify dialog gets a required year field with no
+  preselected value. Confirm stays disabled until a year is picked.
+- The grant path already passes its year and is unchanged.
+- Payment-plan approval passes the request's stored `paymentPlanYear`. A request
+  stored before that column has no year. Today approval gives it the live year,
+  which is the same kind of guess ([Q8](#q8)).
 
 **Board grant for a different year (open).** The application is for 2025. On
 July 10 the Board grants 2026. `appliesToYear` becomes 2026 and
@@ -234,7 +247,17 @@ July 10 the Board grants 2026. `appliesToYear` becomes 2026 and
 - **b.** Refuse. The Board grants only the application's year.
 - **c.** Allow it, and re-stamp `membershipYear` to the granted year.
 
-Which, for each?
+Which one?
+
+<a id="q8"></a>
+**Payment-plan approval of a request with no stored year (open).** A request made
+before `paymentPlanYear` existed has no year. Today approval certifies the live
+year for it.
+
+- **a.** The approval dialog asks the Board for the year, as a manual payment
+  does.
+- **b.** The request's year is the application's `membershipYear`.
+- **c.** Keep the live year for these old requests only.
 
 ## 4. Readers
 
@@ -478,7 +501,8 @@ ROLLBACK;
 
 | # | Question | Section |
 |---|---|---|
-| Q4 | The default certify year, and a Board grant for a different year | [§3](#q4) |
+| Q4 | A Board grant for a different year than the application's | [§3](#q4) |
+| Q8 | Payment-plan approval of a request with no stored year | [§3](#q8) |
 | Q5 | No boundary configured: refuse to open an application, or allow a null year? | below |
 | Q6 | Should the per-person agreement carry a year? | below |
 | Q7 | The renewal due date for a Board-opened out-of-season renewal | below |
