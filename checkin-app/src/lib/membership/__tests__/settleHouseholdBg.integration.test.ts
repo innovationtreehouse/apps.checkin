@@ -12,14 +12,15 @@ import { boardResetReview } from '@/lib/membership/review';
 import { markContractSigned } from '@/lib/membership/external';
 import { SELF_GRANT_REFUSAL_TABLE } from '@/lib/membership/selfGrantGuard';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
-import { notifyBoardPaidReject } from '@/lib/membership/boardAlerts';
+import { notifyBoardPaidReject, notifyBoardSettleStuck } from '@/lib/membership/boardAlerts';
+import { recordUnreportedReversalOnProcess } from '@/lib/finance/reconcile/liveOrder';
 
 jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
 jest.mock('@/lib/finance/reconcile/liveOrder', () => ({
     recordUnreportedReversal: jest.fn().mockResolvedValue(undefined),
     recordUnreportedReversalOnProcess: jest.fn().mockResolvedValue(undefined),
 }));
-jest.mock('@/lib/membership/boardAlerts', () => ({ notifyBoardPaidReject: jest.fn().mockResolvedValue(undefined), notifyBoardPaymentException: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('@/lib/membership/boardAlerts', () => ({ notifyBoardPaidReject: jest.fn().mockResolvedValue(undefined), notifyBoardPaymentException: jest.fn().mockResolvedValue(undefined), notifyBoardSettleStuck: jest.fn().mockResolvedValue(undefined) }));
 
 const TAG = 'settle-household-bg-test';
 const FRESH = new Date();
@@ -377,6 +378,26 @@ describe('releaseDepartedRejection', () => {
         expect(audit.oldData).toMatchObject({ status: 'BLOCKED' });
         expect(audit.newData).toMatchObject({ status: 'PENDING_PAYMENT', action: "released from a departed person's rejection", reason: 'divorced, moved out', releasedReviewIds: [d.reviewId], departedPersonIds: [d.otherId] });
         expect((await row(d.reviewId)).status).toBe('BLOCKED');
+    });
+
+    it('stands when the settle after it fails, and leaves the application stuck for Retry', async () => {
+        const f = await family();
+        const reviewId = await checkReview(f.otherId, 'BLOCKED');
+        const id = await application(f.orgMembershipId, 'PENDING_BG_CLEARANCE', { paidAt: new Date() });
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['blocked', 'paidReject']);
+        const elsewhere = await prisma.household.create({ data: { name: `${TAG} elsewhere ${seq++}` } });
+        await prisma.person.update({ where: { id: f.otherId }, data: { householdId: elsewhere.id } });
+        const board = await family();
+        jest.mocked(notifyBoardSettleStuck).mockClear();
+        jest.mocked(recordUnreportedReversalOnProcess).mockRejectedValueOnce(new Error('Shopify unavailable'));
+
+        expect(await releaseDepartedRejection(id, board.leadId, 'moved out')).toEqual({ status: 'PENDING_BG_CLEARANCE', steps: [] });
+        const p = await row(id);
+        expect(p).toMatchObject({ status: 'PENDING_BG_CLEARANCE', bgSettleError: 'Shopify unavailable' });
+        expect(p.bgSettleFailedAt).not.toBeNull();
+        expect(notifyBoardSettleStuck).toHaveBeenCalledTimes(1);
+        const audit = await prisma.auditLog.findFirstOrThrow({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: id, actorId: board.leadId } });
+        expect(audit.newData).toMatchObject({ status: 'PENDING_BG_CLEARANCE', action: "released from a departed person's rejection", releasedReviewIds: [reviewId] });
     });
 
     it('returns an application blocked before review to the step it was blocked from', async () => {
