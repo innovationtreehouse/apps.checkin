@@ -356,7 +356,8 @@ model Household {
   /// writes it before the column goes. @sensitivity:pii
   intakeNotes String? @ignore
 
-  /// When the family left the organisation permanently; null means active.
+  /// When the Board archived this idle family to hide it from its lists; null
+  /// means not archived. A household member's sign-in unarchives it.
   /// @sensitivity:public
   archivedAt DateTime?
 

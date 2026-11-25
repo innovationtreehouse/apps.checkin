@@ -18,6 +18,9 @@ How to apply these words in code is in
 qualified by the relationship's target: **Org** or **Household**. A screen or
 identifier that just says "member" is a bug against this dictionary.
 
+The same goes for a bare **"blocked"**: name what holds it. See
+[Household and application states](#household-and-application-states).
+
 ## The relationships
 
 | Concept | Relationship | UI word | Code identifier | Model / table | Path |
@@ -159,6 +162,44 @@ Rules:
    clearance** — they differ by whether the membership fee is paid. A known misnomer; the enum
    stays, because renaming a status reaches the schema, a migration, and the
    applicant-facing wire.
+
+## Household and application states
+
+A household's standing is read from three places: its membership status
+(`OrgMembershipStatus`), its application's status (`OrgMembershipProcessStatus`)
+and `Household.archivedAt`. A person's background check adds a fourth, the
+check standing. The words for these are easy to misread: "revoked" is taken to
+mean refused, and "blocked" is taken to mean unpaid. Use the words below.
+
+Household:
+
+| State | Meaning | Code | Words |
+|---|---|---|---|
+| **Active** | a current Treehouse Member household | `OrgMembershipStatus` `ACTIVE` | "active" |
+| **Lapsed** | an active membership whose valid-through date has passed with no renewal paid. The status stays `ACTIVE` and the household still counts as a Treehouse Member; ending it is the Board's call | `ACTIVE` with `isMembershipLapsed()` true | "lapsed" |
+| **Revoked** | a former Treehouse Member household: the Board ended its membership. It keeps app access and loses facility privileges | `OrgMembershipStatus` `REVOKED` | "Revoked" on status badges; **"former member"** in prose |
+| **Denied** | the Board refused the household membership. Every person in it is locked out of sign-in. A household with a Board Member in it can't be denied | `OrgMembershipStatus` `DENIED` | "denied" |
+| **Archived** | the Board's way to hide an idle family from its lists. It sits beside the membership status and changes nothing about it, so a denied household stays locked out. Nothing about an archived household can change; a household member's sign-in unarchives it, and so can the Board | `Household.archivedAt` set | "archived" |
+
+Application and person:
+
+| State | Meaning | Code | Words |
+|---|---|---|---|
+| **Held by a rejected background check** | a reviewer rejected an adult's check, so the application stops where it is. The household can't start another; only a Board reset (which then needs two new approvals) or a Board override moves it on | `OrgMembershipProcessStatus` `BLOCKED` | "held by a rejected background check" |
+| **Disputed** | a person whose check carries a rejection that still counts: their review is held by it, or the rejection was reset by the Board or changed to approve and the check hasn't cleared since. It outweighs an older clearance, and the household's check doesn't clear while it stands | `CheckStanding` `DISPUTED` | "disputed" |
+
+Rules:
+1. **Never a bare "blocked".** A reader takes it for a payment block. Always name
+   the cause: "held by a rejected background check". The `BLOCKED` enum, and
+   names built on it such as `PAID_WHILE_BLOCKED`, stay as they are: like
+   `PENDING_BG_REVIEW`, a known name that a rename would carry through the
+   schema, a migration and the applicant-facing wire.
+2. **"Former member" in prose, not "revoked".** "Revoked" is read as "denied",
+   and the two differ: a former member can still sign in; a denied household
+   can't.
+3. **Archived is not left.** Archiving hides an idle family from the Board's
+   lists. It says nothing about whether the family left, and it ends neither the
+   membership nor sign-in.
 
 ## Attendance / check-in
 
