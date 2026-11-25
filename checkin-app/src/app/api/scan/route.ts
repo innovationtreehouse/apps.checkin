@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
+import { orgToday } from "@/lib/appSettings";
 import { apiError } from "@/lib/api-response";
 import { processCheckin, processCheckout, type LegacyKiosk, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/attendance/scan";
 import { processCloseRequest, executePendingCloses, LIVE_ARRIVAL_WINDOW_MS } from "@/lib/attendance/close";
@@ -175,6 +176,9 @@ export const POST = withKiosk(
         // second blocks until the first commits, then observes committed state
         // and branches correctly. The lock auto-releases on commit/rollback.
         let closeRefused = false;
+
+        // The org's day for age and clearance, read before the transaction takes its lock.
+        const today = await orgToday(eventTime);
 
         let result: ScanResult;
         try {
@@ -407,6 +411,7 @@ export const POST = withKiosk(
                 return applyPresenceIntent(tx, {
                     participant,
                     direction: intent,
+                    today,
                     occurredAt: eventTime,
                     source: "SCANNER",
                     clientEventId,
@@ -419,8 +424,8 @@ export const POST = withKiosk(
             }
 
             const outcome = activeVisit
-                ? await processCheckout(participant, activeVisit.id, tx, eventTime, isReplay, legacyKiosk)
-                : await processCheckin(participant, tx, isReplay ? eventTime : undefined);
+                ? await processCheckout(participant, activeVisit.id, today, tx, eventTime, isReplay, legacyKiosk)
+                : await processCheckin(participant, today, tx, isReplay ? eventTime : undefined);
 
             // Classification comes from the ACTUAL outcome. Only a confirmed
             // toggle is PROJECTED; a park keeps its own class; a departure

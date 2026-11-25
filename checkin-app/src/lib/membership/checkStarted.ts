@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { orgToday } from "@/lib/appSettings";
 import { personActor } from "@/lib/auditActor";
 import { calculateAge } from "@/lib/time";
 import { backgroundCheckProvider } from "@/lib/membership/background-check/manual-adapter";
@@ -29,8 +30,8 @@ const notAllowed = () => new ExternalError("not_lead", "Only a household lead ca
 type AgeFacts = { dateOfBirth: Date | null; isDeclaredAdult: boolean };
 
 /** Under 18 by a recorded date of birth. A person of unknown age is not a known minor. */
-function isKnownMinor(person: AgeFacts, now: Date): boolean {
-    return !person.isDeclaredAdult && !!person.dateOfBirth && calculateAge(person.dateOfBirth, now) < 18;
+function isKnownMinor(person: AgeFacts, today: Date): boolean {
+    return !person.isDeclaredAdult && !!person.dateOfBirth && calculateAge(person.dateOfBirth, today) < 18;
 }
 
 /**
@@ -58,7 +59,7 @@ export async function markCheckStarted(subjectPersonId: number, actorId: number)
     const leadsSubjectHousehold = actor.isHouseholdLead && actor.householdId !== null && actor.householdId === subject.householdId;
     if (actor.id !== subject.id && !leadsSubjectHousehold && !privileged) throw notAllowed();
     const now = new Date();
-    if (isKnownMinor(subject, now)) throw new ExternalError("wrong_phase", "A person under 18 is never background-checked.");
+    if (isKnownMinor(subject, await orgToday(now))) throw new ExternalError("wrong_phase", "A person under 18 is never background-checked.");
 
     const outcome = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Person" WHERE id = ${subjectPersonId} FOR UPDATE`;
@@ -134,8 +135,9 @@ export async function checkStartedRows(callerId: number): Promise<CheckStartedRo
     const caller = await prisma.person.findUnique({ where: { id: callerId }, select: { ...select, householdId: true, isHouseholdLead: true } });
     if (!caller) return [];
     const now = new Date();
+    const today = await orgToday(now);
     const others = caller.isHouseholdLead && caller.householdId !== null
-        ? (await prisma.person.findMany({ where: { householdId: caller.householdId, id: { not: callerId } }, orderBy: { id: "asc" }, select })).filter((p) => !isKnownMinor(p, now))
+        ? (await prisma.person.findMany({ where: { householdId: caller.householdId, id: { not: callerId } }, orderBy: { id: "asc" }, select })).filter((p) => !isKnownMinor(p, today))
         : [];
     const people = [caller, ...others];
     const app = caller.householdId === null ? null : await prisma.orgMembershipProcess.findFirst({
@@ -153,7 +155,7 @@ export async function checkStartedRows(callerId: number): Promise<CheckStartedRo
     const started = new Set(flagged.map((r) => r.subjectPersonId));
     return people.map((p) => {
         const cleared = !!threshold && !!p.lastBackgroundCheck && p.lastBackgroundCheck >= threshold;
-        const needs = !started.has(p.id) && !cleared && !isKnownMinor(p, now);
+        const needs = !started.has(p.id) && !cleared && !isKnownMinor(p, today);
         return { personId: p.id, name: p.name, state: needs ? "NEEDS_MARKING" : "NOTHING_TO_DO" };
     });
 }

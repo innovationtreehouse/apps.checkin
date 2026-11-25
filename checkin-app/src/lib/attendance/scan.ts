@@ -82,6 +82,8 @@ export type ScanOutcome =
  */
 export async function processCheckin(
     participant: Person,
+    /** The org's calendar day, for the youth and supervision reads. */
+    today: Date,
     db: DbClient = prisma,
     /** A replay's scan time; absent for a live check-in. */
     visitTime?: Date,
@@ -139,10 +141,10 @@ export async function processCheckin(
     // household covers owes no two-deep. Only asked for youth, so an ordinary
     // adult check-in still costs no extra query.
     const isYouthArrival = !participant.isDeclaredAdult
-        && isYouth(participant.dateOfBirth, { unknownIs: "youth" });
+        && isYouth(participant.dateOfBirth, today, { unknownIs: "youth" });
     const supervisionShort = isYouthArrival
-        && (await uncoveredYouthVisitIds(tx)).includes(newVisit.id)
-        && supervisingAdultCount(await supervisingAdultVisits(tx)) < MIN_SUPERVISING_ADULTS;
+        && (await uncoveredYouthVisitIds(tx, today)).includes(newVisit.id)
+        && supervisingAdultCount(await supervisingAdultVisits(tx, today)) < MIN_SUPERVISING_ADULTS;
 
     return { kind: "checkin", person: participant, visit: newVisit, supervisionShort, departedAtClose: false };
     });
@@ -205,6 +207,8 @@ export type LegacyKiosk = { shownEmpty: boolean | null; clientEventId: string | 
 export async function processCheckout(
     participant: Person,
     activeVisitId: number,
+    /** The org's calendar day, for the supervision interrupt. */
+    today: Date,
     db: DbClient = prisma,
     visitTime: Date = new Date(),
     isReplay: boolean = false,
@@ -256,7 +260,7 @@ export async function processCheckout(
     // shape, so the queued departure would be dropped and the visit left open.
     let supervisorsRemaining: number | undefined;
     if (!facilityClosed && !isReplay) {
-        const interrupt = await supervisionInterrupt(activeVisitId, db);
+        const interrupt = await supervisionInterrupt(activeVisitId, db, today);
         if (interrupt?.confirm) return { kind: "confirm_departure", supervisorsRemaining: interrupt.remaining };
         supervisorsRemaining = interrupt?.remaining;
     }
@@ -297,8 +301,9 @@ export async function processCheckout(
 async function supervisionInterrupt(
     activeVisitId: number,
     db: DbClient,
+    today: Date,
 ): Promise<{ remaining: number; confirm: boolean } | null> {
-    const supervising = await supervisingAdultVisits(db);
+    const supervising = await supervisingAdultVisits(db, today);
     const remaining = supervisingAdultCount(supervising, activeVisitId);
     if (remaining > MIN_SUPERVISING_ADULTS) return null;
     const removesSupervisor = remaining < supervisingAdultCount(supervising);
@@ -306,7 +311,7 @@ async function supervisionInterrupt(
     if (remaining === MIN_SUPERVISING_ADULTS) return removesSupervisor ? { remaining, confirm: false } : null;
 
     // Probed below two only, so every quieter departure pays nothing for it.
-    const { before, after } = await uncoveredYouthAroundDeparture(db, activeVisitId);
+    const { before, after } = await uncoveredYouthAroundDeparture(db, activeVisitId, today);
     if (after.length === 0) return removesSupervisor ? { remaining, confirm: false } : null;
     // Someone who is not a supervising adult stops only by taking a youth's own household adult away.
     if (!removesSupervisor && after.every(id => before.includes(id))) return null;

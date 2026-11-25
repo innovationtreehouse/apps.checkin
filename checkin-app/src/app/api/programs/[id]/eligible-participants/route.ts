@@ -67,7 +67,7 @@ export const GET = handler<{ id: string }>('GET /api/programs/[id]/eligible-part
         take: 50
     });
 
-    const bounds = { minAge: currentProgram.minAge, maxAge: currentProgram.maxAge, asOf: currentProgram.startAt ?? undefined };
+    const bounds = { minAge: currentProgram.minAge, maxAge: currentProgram.maxAge, asOf: currentProgram.startAt };
     return {
         EligibleCandidate: members.map(({ id, name, dateOfBirth, isDeclaredAdult }) => {
             const fit = checkProgramAge({ dateOfBirth, isDeclaredAdult }, bounds);

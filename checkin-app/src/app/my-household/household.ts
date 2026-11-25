@@ -36,9 +36,9 @@ export function validateHouseholdMemberFields(f: { name: string; email: string; 
 
 // Upper-right age chip for a member card. A DoB drives an exact age; absent a
 // DoB we trust the 25+ declaration, else the age is unknown and flagged red.
-export function ageBadge(p: HouseholdMember): { label: string; color: string; variant: string } {
+export function ageBadge(p: HouseholdMember, today: Date): { label: string; color: string; variant: string } {
   if (p.dateOfBirth) {
-    const age = calculateAge(p.dateOfBirth);
+    const age = calculateAge(p.dateOfBirth, today);
     return age < 18 ? { label: `Age (${age})`, color: 'blue', variant: 'light' } : { label: 'Adult', color: 'gray', variant: 'light' };
   }
   if (p.isDeclaredAdult) return { label: 'Adult', color: 'gray', variant: 'light' };

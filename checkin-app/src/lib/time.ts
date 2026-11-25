@@ -160,30 +160,21 @@ export function calendarDayIn(instant: Date | string | number, timeZone: string)
 }
 
 /**
- * `calendarDayIn` pinned to APP_TIMEZONE, not the configured zone, so a server age gate
- * and the browser cannot disagree about who is 18. Server code that needs the configured
- * zone's day uses `orgToday()` (lib/appSettings.ts).
- */
-export function orgCalendarDay(instant: Date | string | number = new Date()): Date {
-    return calendarDayIn(instant, APP_TIMEZONE);
-}
-
-/**
  * Returns the calendar age in whole years for the given DOB, decremented if
  * the birthday hasn't happened yet as of `asOf`. Canonical implementation — use
  * this everywhere instead of inline epoch-diff age math.
  *
- * `asOf` defaults to today's calendar day in the organisation's zone, so a birthday
- * rolls over at local midnight rather than at UTC midnight — 7 PM the evening before,
- * which would grant adult status early. Program age gates pass the program's start
- * date so the bound is judged as-of when the program begins, not when the person
- * happens to register.
+ * `asOf` is a calendar day: today in the organisation's zone (`orgToday()` on the
+ * server, `useOrgTime().today()` in the browser), so a birthday rolls over at the
+ * org's midnight on both sides. Program age gates pass the program's start date so
+ * the bound is judged as-of when the program begins, not when the person happens to
+ * register.
  *
  * Both sides are read via getUTC* because both are calendar dates stored at UTC
  * midnight — local fields off those instants read a day early west of UTC. A caller
  * passing `asOf` must therefore pass a day, not a moment.
  */
-export function calculateAge(dob: Date | string, asOf: Date | string = orgCalendarDay()): number {
+export function calculateAge(dob: Date | string, asOf: Date | string): number {
     const birthDate = new Date(dob);
     const today = new Date(asOf);
     let age = today.getUTCFullYear() - birthDate.getUTCFullYear();
@@ -203,8 +194,9 @@ export function calculateAge(dob: Date | string, asOf: Date | string = orgCalend
  */
 export function isYouth(
     dob: Date | string | null | undefined,
+    today: Date,
     opts?: { unknownIs?: 'youth' | 'adult' },
 ): boolean {
     if (!dob) return (opts?.unknownIs ?? 'adult') === 'youth';
-    return calculateAge(dob) < 18;
+    return calculateAge(dob, today) < 18;
 }

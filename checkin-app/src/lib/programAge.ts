@@ -9,10 +9,15 @@ import { calculateAge, isYouth } from "@/lib/time";
  * themselves: the rules take an unverified self-declaration as a
  * risk knowingly accepted.
  */
-export function isKnownAdult(person: { dateOfBirth: Date | string | null; isDeclaredAdult?: boolean | null }): boolean {
+export function isKnownAdult(person: { dateOfBirth: Date | string | null; isDeclaredAdult?: boolean | null }, today: Date): boolean {
   // A real DOB outranks the flag, as in checkProgramAge: the flag exists to stand
   // in for a missing DOB, not to contradict one on file.
-  return person.dateOfBirth ? !isYouth(person.dateOfBirth) : !!person.isDeclaredAdult;
+  return person.dateOfBirth ? !isYouth(person.dateOfBirth, today) : !!person.isDeclaredAdult;
+}
+
+/** Whether the record carries an age at all: a DOB, or the "over 25" declaration. Decides no age. */
+export function hasKnownAge(person: { dateOfBirth: Date | string | null; isDeclaredAdult?: boolean | null }): boolean {
+  return !!person.dateOfBirth || !!person.isDeclaredAdult;
 }
 
 /**
@@ -23,8 +28,8 @@ export function isKnownAdult(person: { dateOfBirth: Date | string | null; isDecl
  */
 export type AgeBand = "adult" | "youth" | "unknown";
 
-export function ageBand(person: { dateOfBirth: Date | string | null; isDeclaredAdult?: boolean | null }): AgeBand {
-  if (isKnownAdult(person)) return "adult";
+export function ageBand(person: { dateOfBirth: Date | string | null; isDeclaredAdult?: boolean | null }, today: Date): AgeBand {
+  if (isKnownAdult(person, today)) return "adult";
   return person.dateOfBirth ? "youth" : "unknown";
 }
 
@@ -48,7 +53,7 @@ export type ProgramAgeResult =
 
 export function checkProgramAge(
   person: { dateOfBirth: Date | string | null; isDeclaredAdult?: boolean },
-  program: { minAge: number | null; maxAge: number | null; asOf?: Date | string },
+  program: { minAge: number | null; maxAge: number | null; asOf: Date | string },
 ): ProgramAgeResult {
   const { minAge, maxAge } = program;
   if (minAge === null && maxAge === null) return { ok: true };
@@ -75,8 +80,8 @@ export const LEADER_MIN_AGE = 23;
  * Whether this person is eligible to be a program leader by age. Fails closed:
  * unknown DOB without isDeclaredAdult is not old enough.
  */
-export function isLeaderAgeEligible(person: { dateOfBirth: Date | string | null; isDeclaredAdult?: boolean | null }): boolean {
-  if (person.dateOfBirth) return calculateAge(person.dateOfBirth) >= LEADER_MIN_AGE;
+export function isLeaderAgeEligible(person: { dateOfBirth: Date | string | null; isDeclaredAdult?: boolean | null }, today: Date): boolean {
+  if (person.dateOfBirth) return calculateAge(person.dateOfBirth, today) >= LEADER_MIN_AGE;
   return !!person.isDeclaredAdult;
 }
 

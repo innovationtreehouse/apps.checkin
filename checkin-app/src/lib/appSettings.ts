@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import type { DbClient } from "@/lib/db-client";
 import { APP_TIMEZONE, calendarDayIn } from "@/lib/time";
 
 /** Default locale, mirrors the AppSettings.locale schema default. */
@@ -31,11 +32,17 @@ let cachedTimezone: { value: string; at: number } | null = null;
  * Falls back to the last known value, then to APP_TIMEZONE, when the settings row can't
  * be read: a sleeping or unreachable database renders the app in the default zone rather
  * than failing every page.
+ *
+ * Pass `db` from inside a transaction: the row is then read through that client, never
+ * upserted, so the read takes no second connection and holds no lock on the singleton.
  */
-export async function resolveDisplayTimezone(): Promise<string> {
+export async function resolveDisplayTimezone(db?: DbClient): Promise<string> {
     if (cachedTimezone && Date.now() - cachedTimezone.at < TIMEZONE_TTL_MS) return cachedTimezone.value;
     try {
-        const { timezone } = await getAppSettings();
+        const timezone = db
+            ? (await db.appSettings.findUnique({ where: { id: 1 }, select: { timezone: true } }))?.timezone
+            : (await getAppSettings()).timezone;
+        if (!timezone) return cachedTimezone?.value ?? APP_TIMEZONE;
         cachedTimezone = { value: timezone, at: Date.now() };
         return timezone;
     } catch {
@@ -43,7 +50,10 @@ export async function resolveDisplayTimezone(): Promise<string> {
     }
 }
 
-/** Today's calendar day (UTC midnight, the `@db.Date` shape) in the organisation's configured zone. */
-export async function orgToday(now: Date = new Date()): Promise<Date> {
-    return calendarDayIn(now, await resolveDisplayTimezone());
+/**
+ * Today's calendar day (UTC midnight, the `@db.Date` shape) in the organisation's configured
+ * zone. Pass `db` when already inside a transaction (see {@link resolveDisplayTimezone}).
+ */
+export async function orgToday(now: Date = new Date(), db?: DbClient): Promise<Date> {
+    return calendarDayIn(now, await resolveDisplayTimezone(db));
 }

@@ -56,6 +56,10 @@ jest.mock('@/lib/prisma', () => ({
 
 jest.mock('@/lib/household/leads', () => ({ addHouseholdLead: jest.fn() }));
 
+// The org's calendar day the callback stamps the age band against.
+const mockOrgToday = jest.fn(async () => new Date('2026-10-12T00:00:00.000Z'));
+jest.mock('@/lib/appSettings', () => ({ orgToday: () => mockOrgToday() }));
+
 // setRoleFlag's write-choke-point plumbing (matrix + last-board guard + the PersonRole
 // upsert/mirror dual-write) has its own integration coverage (adminRolesAPI.integration.test.ts);
 // this file only drives the jwt() callback WIRING around it, so it's mocked here like
@@ -193,6 +197,16 @@ describe('jwt() callback — revocation enforcement on refresh', () => {
         expect(result.isBoardMember).toBe(true);
         expect(result.isBackgroundCheckReviewer).toBe(true);
         expect(result.toolStatuses).toEqual([{ toolId: 1, level: 'CERTIFIED' }]);
+    });
+
+    it("re-stamps the age band against the org's day, not a compiled-in zone", async () => {
+        mockFindUnique.mockResolvedValue(dbParticipant({ dateOfBirth: new Date('2008-10-12T00:00:00.000Z'), isDeclaredAdult: false }));
+
+        mockOrgToday.mockResolvedValueOnce(new Date('2026-10-12T00:00:00.000Z'));
+        expect(((await callRefresh({ id: 7 })) as Record<string, unknown>).ageBand).toBe('adult');
+
+        mockOrgToday.mockResolvedValueOnce(new Date('2026-10-11T00:00:00.000Z'));
+        expect(((await callRefresh({ id: 7 })) as Record<string, unknown>).ageBand).toBe('youth');
     });
 
     it('re-stamps canAccessStaging from the DB column on refresh (ops-stg gate)', async () => {

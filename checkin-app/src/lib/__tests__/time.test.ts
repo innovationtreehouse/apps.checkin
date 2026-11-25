@@ -1,4 +1,4 @@
-import { formatDate, formatTime, formatDateTime, formatVisitRange, APP_TIMEZONE, toDatetimeLocal, fromDatetimeLocal, formatDateOnly, parseDateOnly, parseDayAt, isYouth, calculateAge, orgCalendarDay, calendarDayIn } from '../time';
+import { formatDate, formatTime, formatDateTime, formatVisitRange, APP_TIMEZONE, toDatetimeLocal, fromDatetimeLocal, formatDateOnly, parseDateOnly, parseDayAt, isYouth, calculateAge, calendarDayIn } from '../time';
 
 describe('parseDayAt', () => {
   it.each(['2026-02-31', '2026-13-01', '2026-00-10', '2026-04-31'])('rejects %s, a day the calendar lacks', (value) => {
@@ -92,31 +92,26 @@ describe('calculateAge west of UTC', () => {
   });
 });
 
-// The default asOf is a day, not the raw instant: reading "now" as a UTC day rolls
-// the birthday over at 7 PM Chicago the evening before, granting adult status early.
-describe('calculateAge default asOf', () => {
-  const DOB = '2008-07-24T00:00:00.000Z';
-  afterEach(() => jest.useRealTimers());
+// asOf is the org's calendar day, so an 18th birthday turns at the org's midnight.
+describe('calculateAge and isYouth on the org day', () => {
+  const DOB = '2008-10-12T00:00:00.000Z';
+  // 00:30 EDT on the 12th in New York; 23:30 CDT on the 11th in Chicago.
+  const instant = '2026-10-12T04:30:00.000Z';
 
-  it('holds the birthday until midnight in the org zone', () => {
-    // 7:30 PM Chicago on the eve — UTC has already turned over to the birthday
-    jest.useFakeTimers().setSystemTime(new Date('2026-07-24T00:30:00.000Z'));
-    expect(calculateAge(DOB)).toBe(17);
-    expect(isYouth(DOB)).toBe(true);
+  it('is 18 in New York and 17 in Chicago at the same instant', () => {
+    const newYork = calendarDayIn(instant, 'America/New_York');
+    const chicago = calendarDayIn(instant, 'America/Chicago');
+    expect(calculateAge(DOB, newYork)).toBe(18);
+    expect(isYouth(DOB, newYork)).toBe(false);
+    expect(calculateAge(DOB, chicago)).toBe(17);
+    expect(isYouth(DOB, chicago)).toBe(true);
   });
 
-  it('rolls over once the org zone reaches the birthday', () => {
-    jest.useFakeTimers().setSystemTime(new Date('2026-07-24T05:00:00.000Z')); // midnight Chicago
-    expect(calculateAge(DOB)).toBe(18);
-    expect(isYouth(DOB)).toBe(false);
-  });
-
-  it('follows the org zone across daylight saving', () => {
+  it('follows the zone across daylight saving', () => {
     // CST is UTC-6, so the winter eve runs an hour later in UTC than the summer one
-    jest.useFakeTimers().setSystemTime(new Date('2026-01-15T05:00:00.000Z'));
-    expect(calculateAge('2008-01-15T00:00:00.000Z')).toBe(17);
-    jest.setSystemTime(new Date('2026-01-15T06:00:00.000Z'));
-    expect(calculateAge('2008-01-15T00:00:00.000Z')).toBe(18);
+    const winterDob = '2008-01-15T00:00:00.000Z';
+    expect(calculateAge(winterDob, calendarDayIn('2026-01-15T05:00:00.000Z', 'America/Chicago'))).toBe(17);
+    expect(calculateAge(winterDob, calendarDayIn('2026-01-15T06:00:00.000Z', 'America/Chicago'))).toBe(18);
   });
 });
 
@@ -129,40 +124,28 @@ describe('calendarDayIn', () => {
   });
 });
 
-describe('orgCalendarDay', () => {
-  it('takes the day from the org zone and returns it at UTC midnight', () => {
-    expect(orgCalendarDay('2026-07-24T00:30:00.000Z').toISOString()).toBe('2026-07-23T00:00:00.000Z');
-    expect(orgCalendarDay('2026-07-24T05:00:00.000Z').toISOString()).toBe('2026-07-24T00:00:00.000Z');
-  });
-
-  it('defaults to now', () => {
-    jest.useFakeTimers().setSystemTime(new Date('2026-09-01T02:30:00.000Z')); // 9:30 PM Aug 31 Chicago
-    expect(orgCalendarDay().toISOString()).toBe('2026-08-31T00:00:00.000Z');
-    jest.useRealTimers();
-  });
-});
-
 describe('isYouth', () => {
+  const today = new Date('2026-10-12T00:00:00.000Z');
   const yearsAgo = (n: number) => {
-    const d = new Date(); d.setFullYear(d.getFullYear() - n); d.setDate(d.getDate() - 1); return d;
+    const d = new Date(today); d.setUTCFullYear(d.getUTCFullYear() - n); d.setUTCDate(d.getUTCDate() - 1); return d;
   };
 
   it('classifies by age when DOB is known', () => {
-    expect(isYouth(yearsAgo(5))).toBe(true);
-    expect(isYouth(yearsAgo(40))).toBe(false);
+    expect(isYouth(yearsAgo(5), today)).toBe(true);
+    expect(isYouth(yearsAgo(40), today)).toBe(false);
   });
 
   it('unknown DOB defaults to adult (UI/household-lead contract)', () => {
-    expect(isYouth(null)).toBe(false);
-    expect(isYouth(undefined)).toBe(false);
-    expect(isYouth('', { unknownIs: 'adult' })).toBe(false);
+    expect(isYouth(null, today)).toBe(false);
+    expect(isYouth(undefined, today)).toBe(false);
+    expect(isYouth('', today, { unknownIs: 'adult' })).toBe(false);
   });
 
   it('unknown DOB fails closed when the caller opts in', () => {
-    expect(isYouth(null, { unknownIs: 'youth' })).toBe(true);
-    expect(isYouth(undefined, { unknownIs: 'youth' })).toBe(true);
+    expect(isYouth(null, today, { unknownIs: 'youth' })).toBe(true);
+    expect(isYouth(undefined, today, { unknownIs: 'youth' })).toBe(true);
     // known DOB is never overridden by the option
-    expect(isYouth(new Date('1980-01-01'), { unknownIs: 'youth' })).toBe(false);
+    expect(isYouth(new Date('1980-01-01'), today, { unknownIs: 'youth' })).toBe(false);
   });
 });
 

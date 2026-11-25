@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { useOrgTime } from "@/components/TimezoneProvider";
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Anchor, Button, Card, Checkbox, Stack, Text, TextInput, Title } from '@mantine/core';
@@ -24,6 +25,7 @@ interface Profile {
 }
 
 export default function ProfilePage() {
+  const today = useOrgTime().today();
   const { data: session, status } = useSession();
   const router = useRouter();
 
@@ -96,7 +98,7 @@ export default function ProfilePage() {
 
   if (!data) return <PageLoader />;
 
-  const readOnly = isYouth(form.dob);
+  const readOnly = isYouth(form.dob, today);
 
   return (
     <PageContainer>

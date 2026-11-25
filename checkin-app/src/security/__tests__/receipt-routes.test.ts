@@ -35,6 +35,9 @@ import { fileHandler, type FileResult } from '@/security/fileHandler';
 import { buildCallerContext, resolveAccess, scopesHeld, type CallerContext } from '@/security/access-resolvers';
 import { stripValue } from '@/security/stripper';
 import { ageBand } from '@/lib/programAge';
+import { APP_TIMEZONE, calendarDayIn } from '@/lib/time';
+
+const today = calendarDayIn(new Date(), APP_TIMEZONE);
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 jest.mock('@/lib/finance/financeViewLog', () => ({
@@ -91,9 +94,9 @@ function request(endpoint: string) {
     const [method, path] = endpoint.split(' ');
     return new NextRequest(`http://localhost${path.replace(/\[[^\]]+\]/g, '1')}`, { method });
 }
-const declaredAdult = ageBand({ dateOfBirth: null, isDeclaredAdult: true });
-const noAgeOnFile = ageBand({ dateOfBirth: null });
-const youthByBirthDate = ageBand({ dateOfBirth: new Date(Date.now() - 10 * 365 * 86_400_000) });
+const declaredAdult = ageBand({ dateOfBirth: null, isDeclaredAdult: true }, today);
+const noAgeOnFile = ageBand({ dateOfBirth: null }, today);
+const youthByBirthDate = ageBand({ dateOfBirth: new Date(Date.now() - 10 * 365 * 86_400_000) }, today);
 const params = { params: Promise.resolve({ id: '1', lineItemId: '1', otherId: '1' }) };
 
 beforeEach(() => mockSession.mockReset());

@@ -1,4 +1,5 @@
 import type { PersonRoleKind } from "@/generated/prisma/client";
+import { orgToday } from "@/lib/appSettings";
 import { ServiceError, type StuckItem } from "@checkin/component-kit";
 import { personActor } from "@/lib/auditActor";
 import { config } from "@/lib/config";
@@ -55,7 +56,7 @@ export async function positionCheckThreshold(db: DbClient, now = new Date()): Pr
 /** Whether `personId` lacks a current check that a position needs. Under-18s are never checked; an unknown age counts as adult. */
 export async function lacksCurrentCheck(db: DbClient, personId: number, now = new Date()): Promise<boolean> {
     const person = await db.person.findUnique({ where: { id: personId }, select: { dateOfBirth: true, lastBackgroundCheck: true } });
-    if (!person || isYouth(person.dateOfBirth)) return false;
+    if (!person || isYouth(person.dateOfBirth, await orgToday(now, db))) return false;
     const [threshold, reviews] = await Promise.all([positionCheckThreshold(db, now), loadCheckReviews(db, [personId])]);
     return checkStanding(person.lastBackgroundCheck, reviews.get(personId) ?? [], threshold) !== "CLEARED";
 }

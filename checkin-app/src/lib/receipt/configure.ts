@@ -59,14 +59,14 @@ async function purchaseOutcomes(receiptIds: string[]): Promise<Map<string, Purch
 async function getPrincipal(): Promise<ReceiptPrincipal | null> {
   const user = await sessionUser();
   if (!user) return null;
-  const [{ default: prisma }, { isKnownAdult }] = await Promise.all([import("@/lib/prisma"), import("@/lib/programAge")]);
+  const [{ default: prisma }, { isKnownAdult }, { orgToday }] = await Promise.all([import("@/lib/prisma"), import("@/lib/programAge"), import("@/lib/appSettings")]);
   const person = await prisma.person.findFirst({
     where: { id: user.id },
     select: { name: true, dateOfBirth: true, isDeclaredAdult: true },
   });
   if (!person) return null;
   return {
-    ...toPrincipal(user.id, person.name, isKnownAdult(person)),
+    ...toPrincipal(user.id, person.name, isKnownAdult(person, await orgToday())),
     isBoardMember: user.isBoardMember === true,
     addsPeople: user.isFinance === true || user.isOperations === true || user.isBoardMember === true,
   };
@@ -103,13 +103,14 @@ async function personNames(personIds: number[]): Promise<Map<number, string>> {
 async function submitterByEmail(rawAddress: string): Promise<ReceiptPrincipal | null> {
   // Aliases are stored lowercase.
   const address = rawAddress.trim().toLowerCase();
-  const [{ default: prisma }, { SIGN_IN_VERIFIED_PERSON }, { assignParticipantClaims }, { canSubmitReceipts }, { isKnownAdult }] =
+  const [{ default: prisma }, { SIGN_IN_VERIFIED_PERSON }, { assignParticipantClaims }, { canSubmitReceipts }, { isKnownAdult }, { orgToday }] =
     await Promise.all([
       import("@/lib/prisma"),
       import("@/lib/person/filters"),
       import("@/lib/authClaims"),
       import("@/lib/volunteer"),
       import("@/lib/programAge"),
+      import("@/lib/appSettings"),
     ]);
   const matches = await prisma.person.findMany({
     where: {
@@ -134,10 +135,11 @@ async function submitterByEmail(rawAddress: string): Promise<ReceiptPrincipal | 
   person.household ??= await householdWithMembership(person.householdId);
   // The org-account claim follows the sign-in email, including for mail from an alias.
   const claims: JWT = { id: person.id, email: person.email, hd: person.email?.toLowerCase().split("@")[1], emailVerified: true };
-  assignParticipantClaims(claims, person);
+  const today = await orgToday();
+  assignParticipantClaims(claims, person, today);
   if (claims.denied || !canSubmitReceipts(claims)) return null;
   const leadsActiveProgram = person.programsLed.some((p) => p.phase !== "FINISHED");
-  return { ...toPrincipal(person.id, person.name, isKnownAdult(person)), raisedMailLimit: claims.isBoardMember === true || leadsActiveProgram };
+  return { ...toPrincipal(person.id, person.name, isKnownAdult(person, today)), raisedMailLimit: claims.isBoardMember === true || leadsActiveProgram };
 }
 
 /** Live people whose name contains the query, by name. */
@@ -147,9 +149,10 @@ const REIMBURSEE_SCAN_CAP = 500;
 
 /** Live known adults whose name contains the query, by name. Adulthood is isKnownAdult, applied after the name match. */
 async function searchReimbursees(query: string, limit: number): Promise<ReimburseeOption[]> {
-  const [{ default: prisma }, { isKnownAdult }] = await Promise.all([
+  const [{ default: prisma }, { isKnownAdult }, { orgToday }] = await Promise.all([
     import("@/lib/prisma"),
     import("@/lib/programAge"),
+    import("@/lib/appSettings"),
   ]);
   const matches = await prisma.person.findMany({
     where: { name: { contains: query, mode: "insensitive" }, ...IN_LIVE_HOUSEHOLD },
@@ -158,16 +161,18 @@ async function searchReimbursees(query: string, limit: number): Promise<Reimburs
     // ponytail: fixed scan cap; a query matching more people than this offers adults from the first rows only.
     take: REIMBURSEE_SCAN_CAP,
   });
-  return matches.filter(isKnownAdult).slice(0, limit).map(({ id, name }) => ({ id, name }));
+  const today = await orgToday();
+  return matches.filter((p) => isKnownAdult(p, today)).slice(0, limit).map(({ id, name }) => ({ id, name }));
 }
 
 async function reimburseeById(personId: number): Promise<(ReimburseeOption & { isAdult: boolean }) | null> {
-  const [{ default: prisma }, { isKnownAdult }] = await Promise.all([
+  const [{ default: prisma }, { isKnownAdult }, { orgToday }] = await Promise.all([
     import("@/lib/prisma"),
     import("@/lib/programAge"),
+    import("@/lib/appSettings"),
   ]);
   const person = await prisma.person.findFirst({ where: { id: personId }, select: AGE_FIELDS });
-  return person && { id: person.id, name: person.name, isAdult: isKnownAdult(person) };
+  return person && { id: person.id, name: person.name, isAdult: isKnownAdult(person, await orgToday()) };
 }
 
 /** Whether a live person has an account to sign in with. */

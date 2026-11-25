@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { orgToday } from "@/lib/appSettings";
 import { logger, logBackendError } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
@@ -80,15 +81,16 @@ export const PATCH = withAuth(
                 return apiError("That household member was not found", 404);
             }
 
-            if (participantId === userId && isYouth(targetHouseholdMember.dateOfBirth)) {
+            const today = await orgToday();
+            if (participantId === userId && isYouth(targetHouseholdMember.dateOfBirth, today)) {
                 return apiError("Youth profiles are read-only.", 403);
             }
 
-            if (replacesUnder18Date(dob, over25, targetHouseholdMember.dateOfBirth)) {
+            if (replacesUnder18Date(dob, over25, targetHouseholdMember.dateOfBirth, today)) {
                 return apiError(UNDER_18_DECLARATION_REFUSAL, 400);
             }
 
-            const age = normalizeAdultDob(dob, over25, targetHouseholdMember.dateOfBirth);
+            const age = normalizeAdultDob(dob, today, over25, targetHouseholdMember.dateOfBirth);
             if (changesAge(age, targetHouseholdMember) && leavesAgeUnknown(age, targetHouseholdMember)) {
                 return apiError(AGE_REQUIRED_REFUSAL, 400);
             }

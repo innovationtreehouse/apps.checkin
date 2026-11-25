@@ -208,7 +208,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         if (!mentor) {
             return refuse("invalid", "Program Leader not found");
         }
-        if (!isLeaderAgeEligible(mentor)) {
+        if (!isLeaderAgeEligible(mentor, today)) {
             return refuse("invalid", "Program Leader must be at least 23 years old");
         }
         const noEmail = leadMentorId !== currentProgram.leadMentorId ? leaderEmailRefusal(mentor) : null;

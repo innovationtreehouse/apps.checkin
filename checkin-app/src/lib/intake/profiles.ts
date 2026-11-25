@@ -13,7 +13,7 @@
  * the offending inputs unchanged.
  */
 
-import { ageBand } from "@/lib/programAge";
+import { hasKnownAge } from "@/lib/programAge";
 import { isValidContact } from "@/lib/emergencyContacts/valid";
 
 export type FieldKey = "address" | "emergencyContact" | "primaryName" | "participantDob" | "memberAges";
@@ -74,7 +74,7 @@ const FIELD_RULES: Record<FieldKey, { label: string; isSatisfied: (ctx: IntakeSu
     },
     memberAges: {
         label: "an age for everyone in the household (a date of birth for each child; a date of birth or \"over 25\" for each adult)",
-        isSatisfied: (ctx) => (ctx.members ?? []).every((m) => ageBand(m) !== "unknown"),
+        isSatisfied: (ctx) => (ctx.members ?? []).every(hasKnownAge),
     },
 };
 

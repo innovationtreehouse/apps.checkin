@@ -44,7 +44,7 @@ export type ClaimSourceParticipant = {
  * authority flag is forced false and tool statuses are cleared, so nothing downstream honors it.
  * A REVOKED household keeps app access but its keyholders lose keyholder authority (LIVE_KEYHOLDER).
  */
-export function assignParticipantClaims(token: JWT, p: ClaimSourceParticipant): void {
+export function assignParticipantClaims(token: JWT, p: ClaimSourceParticipant, today: Date): void {
     const status = p.household?.orgMembership?.status;
     const denied = orgMembershipStatusBlocksLogin(status);
     const pending = p.householdJoinPending === true;
@@ -65,7 +65,7 @@ export function assignParticipantClaims(token: JWT, p: ClaimSourceParticipant): 
     token.householdLead = locked ? false : p.isHouseholdLead;
     // Derived band, never the DOB itself. Not a role, so DENIED doesn't clear
     // it — age is a fact about the person, not an authority grant.
-    token.ageBand = pending ? "unknown" : ageBand(p);
+    token.ageBand = pending ? "unknown" : ageBand(p, today);
     token.ageStepPending = !pending && p.ageStepPending === true && token.ageBand === "unknown";
     token.toolStatuses = locked ? [] : p.toolStatuses;
     token.programsLed = locked ? [] : (p.programsLed?.map((prog) => prog.id) ?? []);

@@ -18,6 +18,8 @@ export async function applyPresenceIntent(
     args: {
         participant: Person;
         direction: PresenceDirection;
+        /** The org's calendar day, resolved before the caller's transaction. */
+        today: Date;
         occurredAt: Date;
         source: "SCANNER" | "TYPED";
         clientEventId?: string | null;
@@ -51,7 +53,7 @@ export async function applyPresenceIntent(
             return { kind: "parked", reason: "conflict_double_in" };
         }
 
-        const outcome = await processCheckin(args.participant, db, args.isReplay ? args.occurredAt : undefined, args.fenceClientEventId);
+        const outcome = await processCheckin(args.participant, args.today, db, args.isReplay ? args.occurredAt : undefined, args.fenceClientEventId);
         await classifyCheckin(db, event.id, outcome, args.participant.id, args.clientEventId);
         return outcome;
     }
@@ -65,6 +67,7 @@ export async function applyPresenceIntent(
     const outcome = await processCheckout(
         args.participant,
         openVisit.id,
+        args.today,
         db,
         args.occurredAt,
         args.isReplay ?? false,

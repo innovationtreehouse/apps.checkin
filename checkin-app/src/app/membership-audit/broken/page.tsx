@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useOrgTime } from "@/components/TimezoneProvider";
 import { Badge, Box, Button, Card, Group, Loader, Stack, Text } from "@mantine/core";
 import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { formatDateOnly, isYouth } from "@/lib/time";
@@ -11,6 +12,7 @@ type Member = { id: number; name: string | null; dateOfBirth: string | null };
 type BrokenHousehold = { id: number; name: string; members: Member[] };
 
 export default function BrokenHouseholdsPage() {
+  const today = useOrgTime().today();
   const { data, error, reload } = useLoad<{ households?: BrokenHousehold[] }>("/api/admin/broken-households");
   const households = data?.households ?? [];
   const [promoting, setPromoting] = useState<number | null>(null);
@@ -53,11 +55,11 @@ export default function BrokenHouseholdsPage() {
                         <Text size="sm">
                           {m.name || "Unnamed"}
                           {m.dateOfBirth ? ` • ${formatDateOnly(m.dateOfBirth)}` : " • no birthdate"}
-                          {isYouth(m.dateOfBirth) && (
+                          {isYouth(m.dateOfBirth, today) && (
                             <Badge ml="xs" size="xs" color="gray" variant="light">youth</Badge>
                           )}
                         </Text>
-                        {!isYouth(m.dateOfBirth) && (
+                        {!isYouth(m.dateOfBirth, today) && (
                           <Button
                             size="compact-xs"
                             variant="light"

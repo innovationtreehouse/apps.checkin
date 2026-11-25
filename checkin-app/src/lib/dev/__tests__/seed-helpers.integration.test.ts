@@ -9,7 +9,7 @@ import {
 import { truncateDevDatabases } from "@/lib/dev/reset";
 import { classify, effectiveOffSaleAt, enrollmentClosedBy } from "@/lib/programs/saleState";
 import { membershipYearOf, nextBoundary } from "@/lib/programYear";
-import { orgCalendarDay } from "@/lib/time";
+import { orgToday } from "@/lib/appSettings";
 
 /**
  * Integration coverage for the dev seed/macro helpers + the reset truncate-and-reseed flow
@@ -73,7 +73,8 @@ describe("dev seed-helpers (integration)", () => {
 
     describe("seeded program spread", () => {
         const DAY = 24 * 60 * 60 * 1000;
-        const today = orgCalendarDay();
+        let today: Date;
+        beforeAll(async () => { today = await orgToday(); });
         const byName = (name: string) =>
             prisma.program.findFirstOrThrow({
                 where: { name },
@@ -82,7 +83,7 @@ describe("dev seed-helpers (integration)", () => {
 
         it("keeps Woodworking 101 for the flow tests", async () => {
             const program = await byName("Woodworking 101");
-            expect(classify(program, orgCalendarDay())).toBe("ON_SALE");
+            expect(classify(program, today)).toBe("ON_SALE");
         });
 
         it.each([
@@ -97,7 +98,7 @@ describe("dev seed-helpers (integration)", () => {
             ["Seed: ages 12-17", "ON_SALE"],
         ])("%s is in sale state %s with a lead and an event", async (name, state) => {
             const program = await byName(name);
-            expect(classify(program, orgCalendarDay())).toBe(state);
+            expect(classify(program, today)).toBe(state);
             expect(program.leadMentorId).not.toBeNull();
             expect(program.events.length).toBeGreaterThanOrEqual(1);
         });
@@ -129,7 +130,7 @@ describe("dev seed-helpers (integration)", () => {
             const full = await byName("Seed: full");
             const active = full.participants.filter((p) => p.status === "ACTIVE").length;
             expect(active).toBe(full.maxParticipants);
-            expect(enrollmentClosedBy(full, active, orgCalendarDay())).toBe("FULL");
+            expect(enrollmentClosedBy(full, active, today)).toBe("FULL");
         });
 
         it("the next-year program runs in the membership year after this one", async () => {

@@ -230,14 +230,15 @@ const getProgram = handler<{ id: string }>(ENDPOINT, async ({ auth, params, role
     if (!rosterBag) return { Program: program, ProgramRosterAge: [] };
 
     const viewerIsLeader = (isLeadMentor || isCoreVolunteer) && !isSysAdminOrBoard;
-    const emailWithheldFrom = emailWithheldParticipants(rosterBag.participants, viewerIsLeader);
+    const today = await orgToday();
+    const emailWithheldFrom = emailWithheldParticipants(rosterBag.participants, viewerIsLeader, today);
     const ages = rosterBag.participants.map(p => ({
         personId: p.personId,
         age: p.person.dateOfBirth ? calculateAge(p.person.dateOfBirth, program.startAt) : null,
     }));
     const roster = rosterBag.participants.map(p => ({
         ...p,
-        person: { ...rosterPerson(adultPhoneOnly(p.person, program.startAt), viewerIsLeader), household: rosterHousehold(p.person.household, emailWithheldFrom) },
+        person: { ...rosterPerson(adultPhoneOnly(p.person, program.startAt), viewerIsLeader, today), household: rosterHousehold(p.person.household, emailWithheldFrom) },
     }));
 
     if (isPrivileged) {

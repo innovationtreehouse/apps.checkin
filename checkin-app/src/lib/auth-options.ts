@@ -1,4 +1,5 @@
 import { NextAuthOptions } from "next-auth";
+import { orgToday } from "@/lib/appSettings";
 import type { JWT } from "next-auth/jwt";
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
@@ -469,7 +470,7 @@ export const authOptions: NextAuthOptions = {
                     dbParticipant.household ??= await householdWithMembership(dbParticipant.householdId);
                     // Stamp authority claims, applying the household login gate (a board
                     // "Deny Membership" forces denied=true and strips every role flag).
-                    assignParticipantClaims(token, dbParticipant);
+                    assignParticipantClaims(token, dbParticipant, await orgToday());
                 }
             } else if (token.id) {
                 // On every subsequent request (no `user` present), re-sync authority
@@ -513,7 +514,7 @@ export const authOptions: NextAuthOptions = {
                 // within the token's refresh window (updateAge), not only at next sign-in.
                 // assignParticipantClaims forces denied=true and clears all roles when DENIED.
                 dbParticipant.household ??= await householdWithMembership(dbParticipant.householdId);
-                assignParticipantClaims(token, dbParticipant);
+                assignParticipantClaims(token, dbParticipant, await orgToday());
             }
             return token;
         },

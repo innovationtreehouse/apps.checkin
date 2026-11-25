@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useOrgTime } from "@/components/TimezoneProvider";
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useDisclosure } from '@mantine/hooks';
@@ -66,6 +67,7 @@ async function attempt(write: Promise<unknown>): Promise<{ status: number; error
 
 /** Program load, household picker state and the enroll / payment-plan actions for the program page. */
 export function useProgramEnrollment(id: string) {
+  const { today } = useOrgTime();
   const { data: session, status, update: updateSession } = useSession();
   const router = useRouter();
   // /signin validates callbackUrl and returns the visitor here once signed in.
@@ -115,7 +117,7 @@ export function useProgramEnrollment(id: string) {
     if (!program) return { reason: null, label: '' };
     // Same eligibility rule as the enroll route: a declared over-25 adult clears
     // a youth minimum like "16 and up" without a DOB on file.
-    const check = checkProgramAge(member, { minAge: program.minAge, maxAge: program.maxAge, asOf: program.startAt ?? undefined });
+    const check = checkProgramAge(member, { minAge: program.minAge, maxAge: program.maxAge, asOf: program.startAt ?? today() });
     if (!check.ok) return { reason: check.reason, label: check.label };
     // An unverifiable age keeps the 'dob' reason so the row still routes into the
     // intake panel, where a DOB or "over 25" can be set.

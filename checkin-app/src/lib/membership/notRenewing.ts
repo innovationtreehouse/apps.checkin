@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { orgToday } from "@/lib/appSettings";
 import type { TxClient } from "@/lib/db-client";
 import { ServiceError } from "@checkin/component-kit";
 import { config } from "@/lib/config";
@@ -46,15 +47,15 @@ export function isNotRenewingRenewal(
 
 const LEAD_SELECT = { name: true, householdId: true, isHouseholdLead: true, dateOfBirth: true } as const;
 
-function refuseNonLead(person: { isHouseholdLead: boolean; dateOfBirth: Date | null } | null): asserts person {
-    if (!person?.isHouseholdLead || isYouth(person.dateOfBirth)) {
+function refuseNonLead(person: { isHouseholdLead: boolean; dateOfBirth: Date | null } | null, today: Date): asserts person {
+    if (!person?.isHouseholdLead || isYouth(person.dateOfBirth, today)) {
         throw new NotRenewingError(403, "Only an adult household lead can say whether the household will renew.", "not_lead");
     }
 }
 
 async function leadOf(personId: number) {
     const person = await prisma.person.findUnique({ where: { id: personId }, select: LEAD_SELECT });
-    refuseNonLead(person);
+    refuseNonLead(person, await orgToday());
     return person;
 }
 
@@ -62,7 +63,7 @@ async function leadOf(personId: number) {
 async function lockAsLead(tx: TxClient, personId: number, householdId: number): Promise<void> {
     await lockLiveHouseholds(tx, [householdId]);
     const person = await tx.person.findUnique({ where: { id: personId }, select: LEAD_SELECT });
-    refuseNonLead(person);
+    refuseNonLead(person, await orgToday(new Date(), tx));
     if (person.householdId !== householdId) {
         throw new NotRenewingError(403, "Only an adult household lead can say whether the household will renew.", "not_lead");
     }
