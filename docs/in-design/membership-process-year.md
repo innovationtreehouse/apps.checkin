@@ -616,16 +616,16 @@ With no boundary configured, step 4 writes nothing.
 
 What the rules and the owner say about the backfill:
 
-- **Unpaid rows (B1, settled).** Before payment, an application is for the
+- **Unpaid rows (settled).** Before payment, an application is for the
   membership year live when it was created, so a join made in renewal season is
   for the coming year. Step 4 follows that rule. The rule names no list for the owner to
   check, so the boundary-rows list below is this design's proposal. An older
   fee-help request follows the same precedent: it is for the year its
   application reached the payment step.
-- **Paid rows (B2, settled).** The year is the year paid for, the cart item's
+- **Paid rows (settled).** The year is the year paid for, the cart item's
   year. The rules don't name `appliesToYear`, but Shopify settlement writes it
   from the variant's year, so step 4 reads the year paid for.
-- **Paid rows with no `appliesToYear` (B3, decided).** The year comes from the
+- **Paid rows with no `appliesToYear` (decided).** The year comes from the
   store order, never from `paidAt`. A checkout opened before the renewal window
   and paid after it buys the ending year, so the live year at `paidAt` can be
   one year late. See below.
