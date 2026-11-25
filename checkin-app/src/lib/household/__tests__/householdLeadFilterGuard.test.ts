@@ -153,6 +153,12 @@ describe('leadFilters', () => {
 });
 
 describe('household-lead read filters', () => {
+    it('scan never reaches src/security/', () => {
+        const scanned = sourceFiles(SRC).map((path) => relative(SRC, path).split(sep).join('/'));
+        expect(scanned.length).toBeGreaterThan(0);
+        expect(scanned.filter((file) => file.startsWith('security/'))).toEqual([]);
+    });
+
     it('appear only where ALLOWLIST says, at its exact counts', () => {
         const actual = new Map<string, string[]>();
         for (const path of sourceFiles(SRC)) {
