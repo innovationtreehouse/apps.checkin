@@ -172,7 +172,7 @@ than the cycle floor.
 
 | Path | Event | Explicit year available then |
 |---|---|---|
-| `runPersonAgreementSweep`, from the nightly cron | A non-lead aged 18-25 in an ACTIVE member household is recently attached to a program (enrolled participant, volunteer or leader) | The household's paid year: the `appliesToYear` of its settled application ([decided](#q9)). Program years are not used |
+| `runPersonAgreementSweep`, from the nightly cron | A non-lead aged 18-25 in an ACTIVE member household is recently attached to a program (enrolled participant, volunteer or leader) | The household's latest paid year: the highest `appliesToYear` among its settled applications ([decided](#q9)). Program years are not used |
 | `openPersonAgreementForNewMember`, a clearance step after a joining application goes ACTIVE | The same population, within the household that just joined | The activating application's `appliesToYear` and its `membershipYear`. They differ only after a Board payment for another year ([Q10](#q10)) |
 | `openPersonAgreementForBoard`, the compliance page's manual open | The Board opens one for a person the automatic rule doesn't reach (not in a program, or over 25) | A Board pick. Following the Q4 (ii) ruling, the year is required in the dialog and the route, with no default |
 
@@ -191,27 +191,22 @@ same `create`, and the audit row records it.
 |---|---|---|
 | `openPersonAgreement`'s "already handled" check | Any open agreement, or one ACTIVE or ARCHIVED with `stageEnteredAt` on or after the cycle floor | Any open agreement (unchanged, but see [Q11](#q11)), or one ACTIVE or ARCHIVED whose `membershipYear` is the year being opened |
 | `agreementCycleFloor` | Feeds that check and compliance | Deleted |
-| Compliance "over the age ceiling, not yet asked" list | Settled agreements since the cycle floor count as handled | Settled agreements for the household's paid year count |
+| Compliance "over the age ceiling, not yet asked" list | Settled agreements since the cycle floor count as handled | Settled agreements for the household's latest paid year count |
 | Compliance "awaiting signature" list | Every open agreement | Unchanged; each row also shows its year |
 | Signing (`external.ts`) | Signs the caller's open agreement | Unchanged; the signing page names the year |
 
 ### Open questions on the agreement
 
 <a id="q9"></a>
-**The nightly pass: which year (decided).** The nightly pass opens an agreement
-for the household's paid year: the `appliesToYear` of the household's settled
-joining application or renewal. A program's year does not set it. The
-"already handled" check and the compliance list compare against the same year.
+**The nightly pass: which year (decided).** The nightly pass opens one agreement,
+for the household's latest paid year: the highest `appliesToYear` among its
+settled joining applications and renewals. A program's year does not set it.
+The "already handled" check and the compliance list compare against the same
+year.
 
-<a id="q9a"></a>
-**Q9a. A household that holds two paid years.** A household is a member for
-2025-2026. On July 10, 2026 it pays its 2026-2027 renewal, so it has a settled
-2025 application and a settled 2026 renewal. On July 20 its son turns 18, and he
-has never signed an agreement. Which agreements does the nightly pass open?
-
-- **a.** One, for the latest paid year: 2026.
-- **b.** One per paid year that has none: a 2025 agreement and a 2026
-  agreement.
+Example: a household is a member for 2025-2026 and pays its 2026-2027 renewal
+on July 10, 2026. On July 20 its son turns 18, having never signed. The nightly
+pass opens one agreement, for 2026. No 2025 agreement opens.
 
 <a id="q10"></a>
 **Q10. New-member activation: which field?** A joining application is for
@@ -664,7 +659,6 @@ ROLLBACK;
 
 | # | Question | Section |
 |---|---|---|
-| Q9a | The nightly agreement pass for a household holding two paid years | [§2a](#q9a) |
 | Q10 | Agreement on new-member activation: year paid for or year applied for? | [§2a](#q10) |
 | Q11 | An agreement whose year has ended | [§2a](#q11) |
 | Q12 | Backfilling existing agreements | [§2a](#q12) |
