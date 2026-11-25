@@ -33,8 +33,9 @@ let cachedTimezone: { value: string; at: number } | null = null;
  * be read: a sleeping or unreachable database renders the app in the default zone rather
  * than failing every page.
  *
- * Pass `db` from inside a transaction: the row is then read through that client, never
- * upserted, so the read takes no second connection and holds no lock on the singleton.
+ * Pass `db` from inside a transaction: on a cache miss the row is then read through that
+ * client, never upserted, so the read takes no second connection and holds no lock on the
+ * singleton. A warm cache answers without reading, whichever client is passed.
  */
 export async function resolveDisplayTimezone(db?: DbClient): Promise<string> {
     if (cachedTimezone && Date.now() - cachedTimezone.at < TIMEZONE_TTL_MS) return cachedTimezone.value;

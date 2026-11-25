@@ -74,7 +74,7 @@ const FIELD_RULES: Record<FieldKey, { label: string; isSatisfied: (ctx: IntakeSu
     },
     memberAges: {
         label: "an age for everyone in the household (a date of birth for each child; a date of birth or \"over 25\" for each adult)",
-        isSatisfied: (ctx) => (ctx.members ?? []).every(hasKnownAge),
+        isSatisfied: (ctx) => (ctx.members ?? []).every((m) => hasKnownAge(m)),
     },
 };
 
