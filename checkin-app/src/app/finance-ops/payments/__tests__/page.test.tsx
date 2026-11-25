@@ -39,16 +39,18 @@ const CHECKED = { configured: true, ordersScanned: 3, reversalsRaised: 1, failed
 
 /**
  * POST always succeeds (the sync really did start). A GET before the POST replies
- * `before`; each GET after it replies per `gets`, last repeating. The payment check
- * replies `check`, and the last-sync status replies `status`.
+ * `before`; each GET after it replies per `gets`, last repeating. Each payment check
+ * replies per `check`, last repeating, and the last-sync status replies `status`.
  */
 function mockSync(
     gets: GetReply[],
     before: GetReply = { status: 200, body: previousRun },
-    check: GetReply = { status: 200, body: CHECKED },
+    check: GetReply | GetReply[] = { status: 200, body: CHECKED },
     status: GetReply = { status: 200, body: { scheduled: null, laterRepair: null } },
 ) {
     let i = 0;
+    let checks = 0;
+    const checkReplies = Array.isArray(check) ? check : [check];
     let posted = false;
     const fn = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === "string" ? input : input.toString();
@@ -65,7 +67,10 @@ function mockSync(
             const g = posted ? gets[Math.min(i++, gets.length - 1)] : before;
             return reply(g.status, g.body ?? {});
         }
-        if (url.includes("/api/finance-ops/payments/reconcile")) return reply(check.status, check.body ?? {});
+        if (url.includes("/api/finance-ops/payments/reconcile")) {
+            const c = checkReplies[Math.min(checks++, checkReplies.length - 1)];
+            return reply(c.status, c.body ?? {});
+        }
         if (url.includes("/api/finance-ops/payments")) return reply(200, []);
         return reply(404, {});
     });
@@ -87,6 +92,7 @@ const messages = () => shown.mock.calls.map(([c]) => c.message as string);
 /** Each call's URL and method, in order. */
 const calls = (fetchMock: jest.Mock) =>
     fetchMock.mock.calls.map(([u, init]: [RequestInfo | URL, RequestInit | undefined]) => ({ url: String(u), method: init?.method ?? "GET" }));
+const isSyncStart = (c: { url: string; method: string }) => c.url.endsWith("/api/finance-ops/s-read/sync") && c.method === "POST";
 const isCheck = (c: { url: string; method: string }) => c.url.includes("/api/finance-ops/payments/reconcile") && c.method === "POST";
 const isQueueRead = (c: { url: string; method: string }) => c.url.endsWith("/api/finance-ops/payments") && c.method === "GET";
 const lastMessage = () => lastShown().message as string;
@@ -379,7 +385,7 @@ describe("finance-ops/payments — sync status", () => {
 });
 
 describe("finance-ops/payments — payment check after a sync", () => {
-    async function afterSync(gets: GetReply[], check?: GetReply) {
+    async function afterSync(gets: GetReply[], check?: GetReply | GetReply[]) {
         const fetchMock = mockSync(gets, undefined, check);
         renderWithProviders(<PaymentProblemsPage />);
         await syncAndPoll(gets.length);
@@ -427,7 +433,37 @@ describe("finance-ops/payments — payment check after a sync", () => {
         await afterSync([{ status: 200, body: run("COMPLETED") }], { status: 409, body: { error: "The daily payment check is running now" } });
 
         expect(lastMessage()).toMatch(/daily payment check is running now/i);
-        expect(lastShown()).toMatchObject({ color: "red", autoClose: false });
+        expect(lastShown()).toMatchObject({ color: "red", autoClose: false, id: "payment-check-held" });
+        expect(screen.getByRole("button", { name: /Run the payment check/ })).toBeInTheDocument();
+    });
+
+    it("re-runs only the check, not a sync, once the daily check frees the lease", async () => {
+        const held = { status: 409, body: { error: "The daily payment check is running now" } };
+        const fetchMock = await afterSync([{ status: 200, body: run("COMPLETED") }], [held, { status: 200, body: CHECKED }]);
+        const before = calls(fetchMock).length;
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: /Run the payment check/ }));
+        });
+
+        const after = calls(fetchMock).slice(before);
+        expect(after.filter(isCheck)).toHaveLength(1);
+        expect(after.some(isSyncStart)).toBe(false);
+        expect(after.slice(after.findIndex(isCheck) + 1).some(isQueueRead)).toBe(true);
+        expect(notifications.hide).toHaveBeenCalledWith("payment-check-held");
+        expect(screen.queryByRole("button", { name: /Run the payment check/ })).not.toBeInTheDocument();
+    });
+
+    it("keeps offering the check while the daily check still holds the lease", async () => {
+        const held = { status: 409, body: { error: "The daily payment check is running now" } };
+        await afterSync([{ status: 200, body: run("COMPLETED") }], held);
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole("button", { name: /Run the payment check/ }));
+        });
+
+        expect(lastShown()).toMatchObject({ color: "red", autoClose: false, id: "payment-check-held" });
+        expect(screen.getByRole("button", { name: /Run the payment check/ })).toBeInTheDocument();
     });
 
     it("says how many orders the check couldn't read", async () => {

@@ -30,6 +30,7 @@ import { POST as TA_OVERRIDE_POST } from '@/app/api/safety/trusted-adults/overri
 import { PATCH as SHOP_TOOL_PATCH } from '@/app/api/shop/tools/[id]/route';
 import { GET as FIN_PAYMENTS_GET } from '@/app/api/finance-ops/payments/route';
 import { PATCH as FIN_PAYMENTS_PATCH } from '@/app/api/finance-ops/payments/[id]/route';
+import { POST as FIN_PAYMENTS_RECONCILE_POST } from '@/app/api/finance-ops/payments/reconcile/route';
 import { GET as EVENT_GET, PATCH as EVENT_PATCH } from '@/app/api/events/[id]/route';
 import { GET as EVENTS_LIST_GET } from '@/app/api/events/route';
 import { POST as PROGRAMS_POST } from '@/app/api/programs/route';
@@ -182,6 +183,7 @@ describe('Protected-route role rejection', () => {
         // order + what went wrong, board/sysadmin only.
         { name: 'GET /api/finance-ops/payments', invoke: () => FIN_PAYMENTS_GET(nreq('http://localhost/api/finance-ops/payments')) },
         { name: 'PATCH /api/finance-ops/payments/[id]', invoke: () => FIN_PAYMENTS_PATCH(nreq('http://localhost/api/finance-ops/payments/1', 'PATCH', {}), idCtx(1)) },
+        { name: 'POST /api/finance-ops/payments/reconcile', invoke: () => FIN_PAYMENTS_RECONCILE_POST(nreq('http://localhost/api/finance-ops/payments/reconcile', 'POST', {})) },
         { name: 'GET /api/facility/visits', invoke: () => FAC_VISITS_GET(nreq('http://localhost/api/facility/visits')) },
         { name: 'PATCH /api/facility/visits', invoke: () => FAC_VISITS_PATCH(nreq('http://localhost/api/facility/visits', 'PATCH', {})) },
         { name: 'DELETE /api/facility/visits', invoke: () => FAC_VISITS_DELETE(nreq('http://localhost/api/facility/visits', 'DELETE', {})) },

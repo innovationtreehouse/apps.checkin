@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Badge, Button, Group, Modal, Stack, Text, Textarea } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { errorMessage, HttpError, showError, showSuccess } from '@checkin/component-ui';
+import { clearError, errorMessage, HttpError, showError, showSuccess } from '@checkin/component-ui';
 import { api } from '@/lib/api';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
@@ -75,6 +75,9 @@ const POLL_MAX_ATTEMPTS = 20;
 // do not know is not grounds to poll forever.
 const isTerminal = (status: string) => status !== 'RUNNING';
 
+// The chip saying the daily check held the lease; a later check that runs clears it.
+const CHECK_HELD_KEY = 'payment-check-held';
+
 /** "12 min ago (completed)". */
 function describeRun(run: SyncRun): string {
   return `${relTime(run.finishedAt ?? run.startedAt)} (${run.status.toLowerCase()})`;
@@ -101,6 +104,9 @@ export default function PaymentProblemsPage() {
   const [pendingResolve, setPendingResolve] = useState<PaymentException | null>(null);
   const [note, setNote] = useState("");
   const [syncing, setSyncing] = useState(false);
+  // The daily check held the lease after a sync, so this page still owes the board a check.
+  const [checkOwed, setCheckOwed] = useState(false);
+  const [checking, setChecking] = useState(false);
   // The problem whose write is in flight; its buttons stay disabled so a second click can't send again.
   const [busyId, setBusyId] = useState<number | null>(null);
   // null = the status can't be read here, so the last-sync line doesn't render.
@@ -171,20 +177,29 @@ export default function PaymentProblemsPage() {
     }
   };
 
-  // Re-run the payment check on the freshly synced mirror, then reload the rows it writes.
+  // Run the payment check on the freshly synced mirror, then reload the rows it writes.
   // The sync's own success message stays; a check that can't run adds its own chip.
+  // A check the daily run blocked stays owed: "Run the payment check" retries it
+  // without starting another sync.
   const refreshProblems = async () => {
+    setChecking(true);
     try {
       const run = await api<ReconcileRun>('/api/finance-ops/payments/reconcile', { method: 'POST' });
+      setCheckOwed(false);
+      clearError(CHECK_HELD_KEY);
       if (run.failed > 0) {
         showError(`Shopify data is fresh, but ${run.failed} order(s) couldn't be checked, so the payment problems may be incomplete.`);
       }
     } catch (e) {
       if (e instanceof HttpError && e.status === 409) {
-        showError('Shopify data is fresh, but the daily payment check is running now. Reload in a few minutes to see the payment problems it finds.');
+        setCheckOwed(true);
+        showError('Shopify data is fresh, but the daily payment check is running now. Press "Run the payment check" in a few minutes to see the payment problems it finds.', { key: CHECK_HELD_KEY });
       } else {
+        clearError(CHECK_HELD_KEY);
         showError("Shopify data is fresh, but the payment problems couldn't be refreshed.");
       }
+    } finally {
+      setChecking(false);
     }
     await fetchRows();
   };
@@ -360,14 +375,16 @@ export default function PaymentProblemsPage() {
           automatically — acknowledge to mark a problem as seen, or resolve once you&apos;ve handled it
           (e.g. in Shopify or on the membership record).
         </Text>
-        <Button
-          variant="light"
-          onClick={triggerSync}
-          loading={syncing}
-          style={{ flexShrink: 0 }}
-        >
-          Sync Shopify now
-        </Button>
+        <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+          {checkOwed && (
+            <Button variant="light" onClick={refreshProblems} loading={checking} disabled={syncing}>
+              Run the payment check
+            </Button>
+          )}
+          <Button variant="light" onClick={triggerSync} loading={syncing} disabled={checking}>
+            Sync Shopify now
+          </Button>
+        </Group>
       </Group>
 
       <Text size="sm" c="dimmed">

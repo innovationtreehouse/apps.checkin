@@ -128,7 +128,10 @@ export async function runReconcile(recordStart?: RecordStart): Promise<Reconcile
         advanceTo = pass.advanceTo;
         return pass.result;
     } finally {
-        await releaseReconcileLease(token, advanceTo);
+        // A failed release must not turn a finished pass into a failure; the lease frees itself when it expires.
+        await releaseReconcileLease(token, advanceTo).catch((e: unknown) => {
+            logger.error("[reconcile] failed to free the lease; it frees itself when it expires:", e);
+        });
     }
 }
 
