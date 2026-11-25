@@ -89,6 +89,8 @@ function KioskDisplayInner() {
   const showingPushed = pushed !== null && pushed.over === load.data;
   const data: AttendanceResponse | null = showingPushed ? pushed.roster : fetched;
   const loading = load.loading && !showingPushed;
+  // A 204 is an answer, so a resting kiosk's retry is not a first load.
+  const firstLoadRetrying = load.retrying && !data && !kioskResting;
 
   // When `data` was current: the kiosk's roster time, else when it was last answered.
   const answeredAt = load.answeredAt === null ? null : new Date(load.answeredAt).toISOString();
@@ -264,7 +266,9 @@ function KioskDisplayInner() {
           <Alert color="orange" icon="⚠️" title="Supervision status unknown" mb="lg">
             {data
               ? "Attendance loaded without safety flags, so Two-Deep Compliance and keyholder coverage cannot be checked. Verify supervision in the building."
-              : "Attendance could not be loaded, so Two-Deep Compliance and keyholder coverage cannot be checked. Verify supervision in the building."}
+              : firstLoadRetrying
+                ? "Attendance is still loading, so Two-Deep Compliance and keyholder coverage cannot be checked yet. Verify supervision in the building."
+                : "Attendance could not be loaded, so Two-Deep Compliance and keyholder coverage cannot be checked. Verify supervision in the building."}
           </Alert>
         )}
         {data && !unconfirmed && safety?.isTwoDeepViolation && (
@@ -286,7 +290,7 @@ function KioskDisplayInner() {
         )}
 
         {/* Main content */}
-        {loading || (load.retrying && !data) ? (
+        {loading || firstLoadRetrying ? (
           <Center py="xl"><Loader /></Center>
         ) : error && !kioskStale ? (
           isKioskDisplay
