@@ -282,22 +282,32 @@ new one, so no 2026 agreement opens while the 2025 one stays open.
   opens beside the old one, and the Board closes the old one when it chooses.
 
 <a id="q12"></a>
-**Q12. Existing agreements.** Rows created before this change have no year,
-and no stored value states one. A row signed on August 10, 2025 counts today
-for 2025-2026, because it falls after that cycle's floor of July 1, 2025.
-Backfilling it means working the year out from a date, which the ruling forbids
-at creation.
+**Q12. Existing agreements: with the Board (B39).** Rows created before this
+change have no year, and no stored value states one. No year is stamped from
+the date rule `agreementCycleFloor` applies today: the owner considers that rule
+wrong. The question needs production data and a Board decision, so it has moved
+to the Board's questions as B39. Its two options are:
 
-- **a.** Rejected. No year is stamped from today's date rule, which the owner
-  considers wrong.
-- **b.** Leave old rows null. The "already handled" check treats a null-year
-  settled agreement by the old date rule until one cycle has passed, then
-  ignores it. This still leans on the rejected rule for that cycle.
-- **c.** Leave old rows null, and the next nightly pass opens a year-stamped
-  agreement for everyone it covers, so each of them signs again once.
+1. The Board assigns each existing agreement its year, from a read-only list.
+2. Everyone the nightly pass covers signs again, once, on a year-stamped
+   agreement.
 
-The database check in release 2 covers PERSON_AGREEMENT only if every row has
-a year, which depends on this answer.
+The design works for either answer:
+
+- From release 1, every new agreement carries a year (§2a above). No migration
+  writes a year on an existing agreement.
+- Until B39 is answered, an existing agreement with no year still counts as
+  handled. The nightly pass opens no new agreement for that person, and no
+  agreement is judged by the date rule. The compliance page lists these
+  agreements as "no year recorded", so the Board can see them. That list is the
+  read-only list option 1 works from.
+- Answer 1: the Board's year for each row is written to `membershipYear`, by
+  whatever means B39 settles. The usual year comparison then applies.
+- Answer 2: a no-year agreement stops counting as handled. The next nightly pass
+  opens a year-stamped agreement for each person it covers.
+- Release 2's database check covers joining applications and renewals only. A
+  later check for PERSON_AGREEMENT waits on B39, and ships once no agreement is
+  left without a year.
 
 ## 3. Payment
 
@@ -702,6 +712,7 @@ ROLLBACK;
 | 0 | The org-day boundary change | Separate design |
 | 1 | Column, backfill, writers, readers with fallbacks, checkout by stamped year, and the payment answers from §3 | Release 0 merged. The owner has run the boundary query and settled any unpaid rows it lists |
 | 2 | Re-fill, check constraint, fallbacks and archive fill removed, test fixtures | Release 1 in production; the null-count query returns zero |
+| Later | The database check extended to PERSON_AGREEMENT | B39 answered and carried out; no agreement left without a year |
 
 ---
 
@@ -710,7 +721,7 @@ ROLLBACK;
 | # | Question | Section |
 |---|---|---|
 | Q11 | Whether an open agreement blocks the next year's once its own year ends | [§2a](#q11) |
-| Q12 | Backfilling existing agreements | [§2a](#q12) |
+| Q12 | Existing agreements' year: with the Board (B39) | [§2a](#q12) |
 | B1 | Backfill unpaid rows on the org's calendar day, with boundary rows listed for the owner to confirm | [§5](#rows-on-a-boundary) |
 | B2 | Paid rows take `membershipYear` from `appliesToYear` | §5 |
 | B3 | Paid rows with no `appliesToYear` get it from `paidAt`, so the archive fill can go | §5 |
