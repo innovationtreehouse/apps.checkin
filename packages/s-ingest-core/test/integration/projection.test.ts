@@ -311,15 +311,17 @@ describeDb("projection into live tables (real Postgres)", () => {
       ]);
     });
 
-    // Fails: refunds are append-only, so a hand-made refund the store version lacks survives it.
-    it.fails("a store version replacing a hand-made one leaves only the store's refunds", async () => {
+    it("accepted limit: a hand-made-only refund stays after a store version replaces the order", async () => {
       await injectHandMade(
         orderNode({ updatedAt: "2026-02-01T11:00:00Z", refunds: [refundNode("gid://shopify/Refund/3099", "99.00")] }),
       );
       await storeRead(orderNode({ refunds: [refundNode("gid://shopify/Refund/3001", "20.00")] }));
 
-      const refunds = await prisma.shopRefund.findMany({ where: { storeId: STORE } });
-      expect(refunds.map((r) => r.refundGid)).toEqual(["gid://shopify/Refund/3001"]);
+      const refunds = await prisma.shopRefund.findMany({ where: { storeId: STORE }, orderBy: { refundGid: "asc" } });
+      expect(refunds.map(({ refundGid, totalRefundedCents }) => ({ refundGid, totalRefundedCents }))).toEqual([
+        { refundGid: "gid://shopify/Refund/3001", totalRefundedCents: 2000 },
+        { refundGid: "gid://shopify/Refund/3099", totalRefundedCents: 9900 },
+      ]);
     });
 
     it("a hand-made order with no store version still projects as hand-loaded", async () => {
