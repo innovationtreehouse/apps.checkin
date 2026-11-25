@@ -57,6 +57,9 @@ type ReconcileRun = { configured: boolean; ordersScanned: number; reversalsRaise
 // simply has no runs. Keeping them apart is the whole point — see fetchSyncRun.
 type SyncFetch = { ok: true; run: SyncRun | null } | { ok: false };
 
+// Mirrors GET /api/finance-ops/s-read/sync/status.
+type SyncStatus = { scheduled: SyncRun | null; laterRepair: SyncRun | null };
+
 // Polling budget after a manual sync: 20 × 6s ≈ 2 minutes. Bounded on purpose —
 // every poll queries the mirror and keeps the scale-to-zero Aurora cluster awake,
 // which is the cost that makes the automatic sync daily rather than continuous.
@@ -72,10 +75,19 @@ const POLL_MAX_ATTEMPTS = 20;
 // do not know is not grounds to poll forever.
 const isTerminal = (status: string) => status !== 'RUNNING';
 
-/** "12 min ago · completed", or "· running" while in flight. */
-function describeSync(run: SyncRun): string {
-  const when = isTerminal(run.status) && run.finishedAt ? run.finishedAt : run.startedAt;
-  return `${relTime(when)} · ${run.status.toLowerCase()}`;
+/** "12 min ago (completed)". */
+function describeRun(run: SyncRun): string {
+  return `${relTime(run.finishedAt ?? run.startedAt)} (${run.status.toLowerCase()})`;
+}
+
+/** The daily read's line, then a repair's line when one finished after it. */
+function describeSyncStatus({ scheduled, laterRepair }: SyncStatus): string[] {
+  const lines = [`Last daily Shopify read: ${scheduled ? describeRun(scheduled) : 'never'}.`];
+  if (laterRepair) {
+    const who = laterRepair.kind === 'BACKFILL' ? 'Backfilled' : 'Repaired by a sysadmin';
+    lines.push(`${who} ${describeRun(laterRepair)}.`);
+  }
+  return lines;
 }
 
 export default function PaymentProblemsPage() {
@@ -91,9 +103,8 @@ export default function PaymentProblemsPage() {
   const [syncing, setSyncing] = useState(false);
   // The problem whose write is in flight; its buttons stay disabled so a second click can't send again.
   const [busyId, setBusyId] = useState<number | null>(null);
-  // null = the mirror has never synced, or we can't read it — either way there is
-  // nothing to say, so the status line just doesn't render.
-  const [syncRun, setSyncRun] = useState<SyncRun | null>(null);
+  // null = the status can't be read here, so the last-sync line doesn't render.
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
 
   // Read the status, keeping "couldn't read it" distinct from "read it; no runs yet".
   // Collapsing those into a bare null is what let the poll below report a failed read
@@ -104,13 +115,21 @@ export default function PaymentProblemsPage() {
       // isn't in place yet). Both mean: no status, and don't pretend otherwise.
       if (!res.ok) return { ok: false };
       const run: SyncRun | null = (await res.json()).run;
-      setSyncRun(run);
       return { ok: true, run };
     })
     .catch((): SyncFetch => {
       // Freshness is decoration on this page; a failed status read must never
       // surface as an error over the queue itself.
       return { ok: false };
+    }),
+  []);
+
+  const fetchSyncStatus = useCallback(() => fetch('/api/finance-ops/s-read/sync/status')
+    .then(async (res) => {
+      setSyncStatus(res.ok ? await res.json() : null);
+    })
+    .catch(() => {
+      setSyncStatus(null);
     }),
   []);
 
@@ -133,9 +152,9 @@ export default function PaymentProblemsPage() {
   useEffect(() => {
     if (ready) {
       fetchRows();
-      fetchSyncRun();
+      fetchSyncStatus();
     }
-  }, [ready, fetchRows, fetchSyncRun]);
+  }, [ready, fetchRows, fetchSyncStatus]);
 
   const patch = async (id: number, action: 'acknowledge' | 'resolve', noteText?: string) => {
     setBusyId(id);
@@ -220,6 +239,7 @@ export default function PaymentProblemsPage() {
 
         const { status } = res.run;
         const subject = isBaseline(res.run) ? 'A sync was already running; it' : 'Shopify sync';
+        await fetchSyncStatus();
         if (status === 'COMPLETED') {
           showSuccess(`${subject} finished. Live payment amounts are up to date.`);
           await refreshProblems();
@@ -353,8 +373,10 @@ export default function PaymentProblemsPage() {
       <Text size="sm" c="dimmed">
         Shopify data syncs automatically once a day. If you&apos;ve just changed something in Shopify
         and want it reflected here sooner, sync now.
-        {syncRun && ` Last Shopify sync: ${describeSync(syncRun)}.`}
       </Text>
+      {syncStatus && describeSyncStatus(syncStatus).map((line) => (
+        <Text key={line} size="sm" c="dimmed">{line}</Text>
+      ))}
 
       <AlertBanner message={message} tone="error" />
 

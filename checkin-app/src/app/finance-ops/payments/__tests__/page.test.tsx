@@ -40,9 +40,14 @@ const CHECKED = { configured: true, ordersScanned: 3, reversalsRaised: 1, failed
 /**
  * POST always succeeds (the sync really did start). A GET before the POST replies
  * `before`; each GET after it replies per `gets`, last repeating. The payment check
- * replies `check`.
+ * replies `check`, and the last-sync status replies `status`.
  */
-function mockSync(gets: GetReply[], before: GetReply = { status: 200, body: previousRun }, check: GetReply = { status: 200, body: CHECKED }) {
+function mockSync(
+    gets: GetReply[],
+    before: GetReply = { status: 200, body: previousRun },
+    check: GetReply = { status: 200, body: CHECKED },
+    status: GetReply = { status: 200, body: { scheduled: null, laterRepair: null } },
+) {
     let i = 0;
     let posted = false;
     const fn = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -51,6 +56,7 @@ function mockSync(gets: GetReply[], before: GetReply = { status: 200, body: prev
         const reply = (status: number, body: unknown) =>
             ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) }) as Response;
 
+        if (url.includes("/api/finance-ops/s-read/sync/status")) return reply(status.status, status.body ?? {});
         if (url.includes("/api/finance-ops/s-read/sync")) {
             if (method === "POST") {
                 posted = true;
@@ -91,24 +97,59 @@ beforeEach(() => {
     setSession({ id: 1, isSysadmin: true, isBoardMember: true });
 });
 
-describe("finance-ops/payments — sync status", () => {
-    it("shows how fresh the mirror is once loaded", async () => {
-        mockSync([{ status: 200, body: run("COMPLETED") }]);
-        renderWithProviders(<PaymentProblemsPage />);
+const HOUR = 3_600_000;
+const finished = (kind: string, status: string, hoursAgo: number) => {
+    const at = new Date(Date.now() - hoursAgo * HOUR).toISOString();
+    return { status, kind, startedAt: at, finishedAt: at, error: null };
+};
 
-        expect(await screen.findByText(/Last Shopify sync:/)).toBeInTheDocument();
+/** Load the page with the status route replying `body`; returns once the daily-read line shows. */
+async function loadWithStatus(body: unknown) {
+    mockSync([{ status: 200, body: previousRun }], { status: 200, body: previousRun }, undefined, { status: 200, body });
+    renderWithProviders(<PaymentProblemsPage />);
+    return screen.findByText(/Last daily Shopify read:/);
+}
+
+describe("finance-ops/payments — last-sync line", () => {
+    it("shows a failing daily read and the completed repair after it", async () => {
+        const line = await loadWithStatus({ scheduled: finished("INCREMENTAL", "FAILED", 5), laterRepair: finished("ADMIN", "COMPLETED", 2) });
+
+        expect(line).toHaveTextContent("Last daily Shopify read: 5 hr ago (failed).");
+        expect(screen.getByText("Repaired by a sysadmin 2 hr ago (completed).")).toBeInTheDocument();
     });
 
-    it("says nothing about freshness when the mirror can't be read", async () => {
+    it("shows one line for a completed daily read with no later repair", async () => {
+        const line = await loadWithStatus({ scheduled: finished("INCREMENTAL", "COMPLETED", 3), laterRepair: null });
+
+        expect(line).toHaveTextContent("Last daily Shopify read: 3 hr ago (completed).");
+        expect(screen.queryByText(/Repaired by|Backfilled/)).not.toBeInTheDocument();
+    });
+
+    it("says never when no daily read has finished", async () => {
+        const line = await loadWithStatus({ scheduled: null, laterRepair: null });
+
+        expect(line).toHaveTextContent("Last daily Shopify read: never.");
+    });
+
+    it("names a later backfill as a backfill", async () => {
+        await loadWithStatus({ scheduled: finished("INCREMENTAL", "ABANDONED", 30), laterRepair: finished("BACKFILL", "COMPLETED", 1) });
+
+        expect(screen.getByText("Backfilled 1 hr ago (completed).")).toBeInTheDocument();
+    });
+
+    it("says nothing about freshness when the status can't be read", async () => {
         // A 503/500 must not render a status line at all — better silent than wrong.
         const notWired = { status: 503, body: { error: "not wired" } };
-        mockSync([notWired], notWired);
+        mockSync([notWired], notWired, undefined, notWired);
         renderWithProviders(<PaymentProblemsPage />);
 
         await screen.findByRole("button", { name: /Sync Shopify now/ });
         await waitFor(() => expect(global.fetch).toHaveBeenCalled());
-        expect(screen.queryByText(/Last Shopify sync:/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Last daily Shopify read:/)).not.toBeInTheDocument();
     });
+});
+
+describe("finance-ops/payments — sync status", () => {
 
     it("reports an unreadable mirror as unreadable — NOT as 'still running'", async () => {
         // The sync did start, so the message must own that AND admit it

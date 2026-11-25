@@ -123,6 +123,7 @@ const PLANS: RoutePlan[] = Array.from(allRoutes()).map(([endpoint, spec]) => {
 // has none of — the Shopify mirror, or QuickBooks: they answer 503 after admission.
 const EXTERNAL_GATED_GETS = new Set([
     'GET /api/finance-ops/s-read/sync',
+    'GET /api/finance-ops/s-read/sync/status',
     'GET /api/finance-ops/s-read/match-audit',
     'GET /api/budget-owners/quickbooks-classes',
     'GET /api/books-map/quickbooks-accounts',
