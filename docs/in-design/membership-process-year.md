@@ -133,9 +133,22 @@ transaction, and stamps `liveMembershipYear(boundary, today)` in the same
 change that moves the year to the org's midnight; this design depends on that
 change landing first. The audit row's `newData` gains `membershipYear`.
 
-**No boundary configured.** Every year is null today when the Board has not set
-a boundary. With a stored year, a household application cannot open without
-one ([Q5](#q5)).
+<a id="q5"></a>
+**No boundary configured (decided).** Today, when the Board has not set a
+boundary, an application opens with no year anywhere and its payment records
+none.
+
+**Decision: refuse to open.** A household application never opens without a
+year, so `membershipYear` stays required and release 2's database check stays.
+
+- `startIntake` refuses with a 409 before its transaction: "Membership year
+  isn't set up yet; contact the Board." The "won't renew" note already refuses
+  this way.
+- The Board grant refuses with the same text before it opens an application,
+  whether a joining application or a renewal.
+- The renewal sweep already returns early with no boundary, and is unchanged.
+- The refusal reaches the family's page and the Board's grant dialog as a red
+  error chip that never closes on its own.
 
 ## 3. Payment
 
@@ -520,26 +533,11 @@ ROLLBACK;
 | # | Question | Section |
 |---|---|---|
 | Q8 | Payment-plan approval of a request with no stored year | [§3](#q8) |
-| Q5 | No boundary configured: refuse to open an application, or allow a null year? | below |
 | Q6 | Should the per-person agreement carry a year? | below |
 | Q7 | The renewal due date for a Board-opened out-of-season renewal | below |
 | B1 | Backfill unpaid rows on the org's calendar day, with boundary rows listed for the owner to confirm | [§5](#rows-on-a-boundary) |
 | B2 | Paid rows take `membershipYear` from `appliesToYear` | §5 |
 | B3 | Paid rows with no `appliesToYear` get it from `paidAt`, so the archive fill can go | §5 |
-
-<a id="q5"></a>
-### Q5. No boundary configured
-
-The Board has not set a boundary. A family starts an application. Today it
-opens with no year anywhere, and the payment records none.
-
-- **a.** Refuse: "The membership year isn't set up yet. Please contact the
-  Board." The "won't renew" note already refuses this way.
-- **b.** Open it with a null year. The database check in release 2 must then
-  allow null when no boundary is set, which a check constraint cannot see, so
-  the check would be dropped.
-
-Recommendation: a.
 
 <a id="q6"></a>
 ### Q6. The per-person agreement
