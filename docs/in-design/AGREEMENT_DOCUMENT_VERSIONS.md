@@ -310,41 +310,15 @@ membership agreement 6.1.1 becomes 7, and the KVA 1.1.1 becomes 2.
 
 ## Open questions
 
-Question 1 is decided: the Board decided whole-number versions for the
-membership agreement and the Key Volunteer Agreement, including renumbering the
-current membership agreement 6.1.1 as 7 and the KVA 1.1.1 as 2. A typo fix to
-the membership agreement after that becomes version 8, not 7.0.1.
+None. The Board decided whole-number versions for the membership agreement
+and the Key Volunteer Agreement, including renumbering the current membership
+agreement 6.1.1 as 7 and the KVA 1.1.1 as 2. A typo fix to the membership
+agreement after that becomes version 8, not 7.0.1.
 
-### 2. Split this doc into a design file and a migration file?
-
-`docs/DOCUMENTATION_STANDARD.md` §3.2 says a working doc "whose text outlives
-the change" is written as two files: `<name>.md`, holding only the permanent
-text, and `<name>-migration.md`, holding everything that expires once the change
-runs, ending with "apply the other file, delete both". This doc keeps both
-kinds of text in one file.
-
-- **Option A, one file (as now).** `AGREEMENT_DOCUMENT_VERSIONS.md` keeps every
-  section, including "Existing records" (copy today's PDFs to
-  `agreements/membership/7.pdf` and `agreements/key-volunteer/2.pdf`, then
-  backfill) and "Build: PR split". Build PR 6 deletes the whole file.
-- **Option B, two files.** `AGREEMENT_DOCUMENT_VERSIONS.md` keeps the problem,
-  the design, the nightly check and System status.
-  `AGREEMENT_DOCUMENT_VERSIONS-migration.md` takes "Existing records" and
-  "Build: PR split", and ends by moving the design file to its permanent home,
-  for example `docs/architecture/AGREEMENT_VERSIONS.md`, then deleting itself.
-
-The AI review's case for B: the backfill and the build order expire the day the
-change runs, while the design describes how versions work for as long as the
-feature exists. In one file, whoever lands the doc has to separate the two
-paragraph by paragraph, and the design drifts in the meantime.
-
-The case for A: §3.2 applies only to text that outlives the change. This doc is
-a feature design, deleted when the build completes, and no part of it is planned
-for a permanent home. With no permanent text, nothing exists to keep apart.
-
-Recommendation: A, unless the owner wants a permanent architecture doc for
-agreement versions, as `docs/architecture/BACKGROUND_CHECKS.md` is for
-clearances. If so, choose B; splitting now is a file move.
+The owner decided this doc stays one file, with no separate migration file
+(`docs/DOCUMENTATION_STANDARD.md` §3.2): splitting before the build exists is
+premature, and any permanent architecture doc is written after the feature is
+built and its nuances are understood.
 
 ## Build: PR split
 
