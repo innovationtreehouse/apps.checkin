@@ -603,6 +603,28 @@ describe('Individual Program API Integration Tests', () => {
             expect(data.viewerMemberPricingEligible).toBeUndefined();
         });
 
+        // A stated year sets the coverage date: a program running past the boundary but
+        // stated in the year that closes at it is priced through that boundary only.
+        it('prices a program by its stated membership year, not its end date, and returns the year', async () => {
+            const statedYear = boundary.getUTCFullYear() - 1;
+            const stated = await prisma.program.create({
+                data: { appliesToYear: statedYear, offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-01-01'), name: 'Stated Year Prog ID API Test', phase: 'UPCOMING', endAt: new Date(boundary.getTime() + 10 * DAY_MS) },
+            });
+            try {
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: memberId } });
+
+                const req = new Request(`http://localhost:4000/api/programs/${stated.id}`, { method: 'GET' });
+                const res = await GET(req as unknown as import("next/server").NextRequest, createParams(stated.id) as unknown as never);
+                expect(res.status).toBe(200);
+
+                const data = await res.json();
+                expect(data.appliesToYear).toBe(statedYear);
+                expect(data.viewerMemberPricingEligible).toBe(true);
+            } finally {
+                await prisma.program.delete({ where: { id: stated.id } });
+            }
+        });
+
         // Membership fee paid, background check still with the board. Not a member
         // (nothing else in the app treats them as one), but priced as one and
         // admitted to members-only programs. Paid BEFORE the renewal window opened
@@ -1096,6 +1118,54 @@ describe('Individual Program API Integration Tests', () => {
             expect(res.status).toBe(200);
             const data = await res.json();
             expect(data.program.leadMentorId).toBe(newLeadId);
+        });
+    });
+
+    // Dates that cross the membership-year boundary take their year from the Board.
+    describe('PATCH /api/programs/[id] — membership year across the boundary', () => {
+        let programId: number;
+        let restoreBoundary: () => Promise<void> = async () => {};
+        const patchAs = (user: Record<string, unknown>, body: Record<string, unknown>) => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user });
+            return PATCH(
+                new Request(`http://localhost:4000/api/programs/${programId}`, { method: 'PATCH', body: JSON.stringify(body) }) as unknown as import("next/server").NextRequest,
+                createParams(programId) as unknown as never,
+            );
+        };
+        const stored = () => prisma.program.findUniqueOrThrow({ where: { id: programId } });
+
+        beforeEach(async () => {
+            restoreBoundary = await setMembershipYearBoundary();
+            programId = (await prisma.program.create({
+                data: { appliesToYear: 2025, offSaleAt: new Date('2999-01-01'), startAt: new Date('2026-03-01'), endAt: new Date('2026-06-01'), name: 'Year Boundary Prog ID API Test', phase: 'PLANNING', leadMentorId: leadId },
+            })).id;
+        });
+
+        afterEach(async () => {
+            await prisma.program.delete({ where: { id: programId } });
+            await restoreBoundary();
+        });
+
+        it('refuses the lead mentor re-dating the program across the boundary (403), leaving it unchanged', async () => {
+            const res = await patchAs({ id: leadId }, { endAt: '2026-10-01' });
+            expect(res.status).toBe(403);
+            expect((await res.json()).error).toMatch(/Ask the Board to set it/);
+
+            const row = await stored();
+            expect(row.endAt.toISOString()).toBe('2026-06-01T00:00:00.000Z');
+            expect(row.appliesToYear).toBe(2025);
+        });
+
+        it("keeps the Board's stated year through a later lead mentor save", async () => {
+            const res = await patchAs({ id: adminId, isBoardMember: true }, { endAt: '2026-10-01', appliesToYear: 2026 });
+            expect(res.status).toBe(200);
+            expect((await stored()).appliesToYear).toBe(2026);
+
+            const leadSave = await patchAs({ id: leadId }, { maxParticipants: 12, appliesToYear: 2026 });
+            expect(leadSave.status).toBe(200);
+            const row = await stored();
+            expect(row.appliesToYear).toBe(2026);
+            expect(row.maxParticipants).toBe(12);
         });
     });
 

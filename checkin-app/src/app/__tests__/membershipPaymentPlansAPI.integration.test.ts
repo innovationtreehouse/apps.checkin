@@ -332,6 +332,18 @@ describe('Membership payment-plan routes', () => {
             expect((await RequestPost(requestReq({ processId: 999999999 }))).status).toBe(404);
         });
 
+        it('400 on a kind that is not one of the three, leaving the stated kind', async () => {
+            await prisma.orgMembershipProcess.update({ where: { id: leadProcessId }, data: { scholarshipRequestKind: 'PAYMENT_PLAN' } });
+            mockSession.mockResolvedValue({ user: { id: leadId } });
+
+            const res = await RequestPost(requestReq({ processId: leadProcessId, kind: 'FREE_MONEY' }));
+            expect(res.status).toBe(400);
+            expect((await res.json()).error).toBe('kind must be SCHOLARSHIP, PAYMENT_PLAN or UNSURE');
+            const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: leadProcessId } });
+            expect(proc?.scholarshipRequestKind).toBe('PAYMENT_PLAN');
+            expect(__getSentEmails()).toHaveLength(0);
+        });
+
         it('403 (IDOR) when an unrelated user requests on another household\'s membership', async () => {
             const fresh = await makeProc('IdorTarget', { requested: false, withLead: true });
             mockSession.mockResolvedValue({ user: { id: otherId } }); // not board, not this household's lead

@@ -103,6 +103,8 @@ describe('validate — invariants I1–I4', () => {
             row('PENDING', true, false, true),
             row('ACTIVE', false, false, false),
             row('ACTIVE', false, true, true), // vestigial flags, still legal
+            row('WITHDRAWN', false, false, false),
+            row('WITHDRAWN', false, true, true), // vestigial flags, still legal
         ]) {
             expect(validate(r)).toBeNull();
         }
@@ -110,6 +112,11 @@ describe('validate — invariants I1–I4', () => {
 
     test('I1 — ACTIVE holding a seat', () => {
         expect(validate(row('ACTIVE', true, false, false))).toEqual({ invariant: 'I1' });
+    });
+
+    test('I2 — WITHDRAWN holding a seat', () => {
+        expect(validate(row('WITHDRAWN', true, false, false))).toEqual({ invariant: 'I2' });
+        expect(validate(row('WITHDRAWN', true, true, false))).toEqual({ invariant: 'I2' });
     });
 
     test('I3 — held + neither awaiting nor denied (and held + both)', () => {

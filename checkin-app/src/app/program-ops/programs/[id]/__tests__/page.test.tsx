@@ -1106,7 +1106,8 @@ describe("a load that lands while the Board is editing", () => {
       { url: "/api/programs/1/eligible-participants", result: { ok: true, body: { members: [{ id: 555, name: "Wendy West", ageWarning: null }] } } },
       { url: "/api/programs/1/volunteers", method: "POST", result: { ok: true, body: {} } },
       { url: "/api/programs/1", method: "PATCH", result: { ok: true, body: {} } },
-      { url: "/api/programs/1", method: "GET", result: () => { reads += 1; return { ok: true, body: programData }; } },
+      // Every read after the first answers changed data, so only the edited form's guard keeps the typing.
+      { url: "/api/programs/1", method: "GET", result: () => { reads += 1; return { ok: true, body: reads === 1 ? programData : { ...programData, maxParticipants: 21, shopifyProductId: "80000000001" } }; } },
     ]);
     renderPage();
     await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
@@ -1121,8 +1122,36 @@ describe("a load that lands while the Board is editing", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "General" }));
     expect(screen.getByLabelText("Off-Sale Date")).toHaveValue("2026-01-03");
+    expect(screen.getByLabelText("Max Participants (Optional)")).toHaveValue("20");
+    // The unedited Shopify form takes the late read.
+    expect(screen.getByLabelText("Product ID (optional)")).toHaveValue("80000000001");
     fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
     await waitFor(() => expect(patchBody(fetchMock)).toEqual(expect.objectContaining({ offSaleAt: "2026-01-03" })));
+  });
+
+  it("keeps typed Shopify identifiers when a re-read with changed data answers after them", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    let reads = 0;
+    routedFetch([
+      { url: "/api/programs/1/eligible-participants", result: { ok: true, body: { members: [{ id: 555, name: "Wendy West", ageWarning: null }] } } },
+      { url: "/api/programs/1/volunteers", method: "POST", result: { ok: true, body: {} } },
+      { url: "/api/programs/1", method: "GET", result: () => { reads += 1; return { ok: true, body: reads === 1 ? programData : { ...programData, maxParticipants: 21, shopifyProductId: "80000000001" } }; } },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.change(screen.getByLabelText("Product ID (optional)"), { target: { value: "80000000999" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    fireEvent.change((await screen.findAllByPlaceholderText("Start typing to search..."))[0], { target: { value: "Wendy" } });
+    fireEvent.click(await screen.findByText("Wendy West"));
+    fireEvent.click(screen.getAllByRole("button", { name: "Add" })[0]);
+    await waitFor(() => expect(reads).toBe(3));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    fireEvent.click(screen.getByRole("tab", { name: "General" }));
+    expect(screen.getByLabelText("Product ID (optional)")).toHaveValue("80000000999");
+    // The unedited general form takes the late read.
+    expect(screen.getByLabelText("Max Participants (Optional)")).toHaveValue("21");
   });
 
   it("keeps the newer read when an older one answers last", async () => {

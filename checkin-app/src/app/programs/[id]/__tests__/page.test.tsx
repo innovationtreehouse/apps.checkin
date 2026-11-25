@@ -1331,6 +1331,37 @@ describe("ProgramEnrollmentPage", () => {
         expect(requestButton).toBeEnabled();
     });
 
+    it("priced program: the scholarship request button is disabled while a checkout claim is in flight", async () => {
+        setSession({ id: 101, ageBand: 'adult' });
+        setShopifyStoreDomain("shop.example.com");
+        let release: () => void = () => {};
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        const routes = mockFetchJson({
+            "/api/programs/10/discount-code": { code: null },
+            "/api/household/intake": intakeWithContact, "/api/household": household,
+            "/api/programs/10": baseProgram({ nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null, shopifyVariantId: "gid://variant" }),
+        });
+        global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            if (String(input).includes("/participants")) {
+                await held;
+                return res({ ok: true });
+            }
+            return routes(input, init);
+        }) as unknown as typeof fetch;
+        renderPage();
+        await screen.findByText("Robotics Club");
+        fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+        await toggleMember("Kid One");
+        const requestButton = screen.getByRole("button", { name: /request a scholarship or payment plan/i });
+        expect(requestButton).toBeEnabled();
+
+        fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
+        await waitFor(() => expect(requestButton).toBeDisabled());
+
+        release();
+        await waitFor(() => expect(requestButton).toBeEnabled());
+    });
+
     // An adult clears a program with no upper age limit, so auto-selecting the
     // signed-in caller would enroll a household lead who came only to pay for a
     // child — stranding an unpaid PENDING row that holds a capacity seat.
