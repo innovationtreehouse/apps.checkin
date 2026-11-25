@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { unstable_rethrow } from 'next/navigation';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth-options';
 import { getKioskPublicKeys, verifyKioskSignature } from './verify-kiosk';
 import { config, isStagingAccessAllowed } from './config';
 import { apiError } from './api-response';
+import { logBackendError } from './logger';
 import { isAcceptedSession } from './session/acceptedSession';
 import type { AuthenticatedUser, BusinessRole, AuthResult } from '@/types/auth';
 
@@ -172,6 +174,15 @@ export function withAuth<Ctx = unknown>(
             }
         }
 
-        return handler(nreq, auth, ctx as Ctx);
+        try {
+            return await handler(nreq, auth, ctx as Ctx);
+        } catch (error) {
+            // Next's redirect()/notFound() and render bailouts are control flow, not failures.
+            unstable_rethrow(error);
+            const route = `${nreq.method} ${new URL(nreq.url).pathname}`;
+            console.error(`Route error (${route}):`, error);
+            await logBackendError(error, route);
+            return apiError('Internal Server Error', 500);
+        }
     };
 }
