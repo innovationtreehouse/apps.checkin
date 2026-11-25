@@ -7,12 +7,15 @@ import { POST as ShopifyWebhook } from '@/app/api/webhooks/shopify/route';
 import prisma from '@/lib/prisma';
 import crypto from 'crypto';
 import { signCheckout } from '@/lib/programs/checkoutSignature';
+import { openPersonAgreementOnEngage } from '@/lib/membership/personAgreementTriggers';
 
 process.env.NEXTAUTH_SECRET ||= 'integration-test-nextauth-secret';
 
 // Mocking dependencies
 // The archived-household guard has its own tests; here every household is live.
 // A new leader here meets the membership and clearance requirements; leaderEligibility has its own tests.
+// The agreement trigger has its own tests; this flow's prisma mock carries no household rows.
+jest.mock('@/lib/membership/personAgreementTriggers', () => ({ openPersonAgreementOnEngage: jest.fn() }));
 jest.mock('@/lib/programs/leaderEligibility', () => ({ ...jest.requireActual('@/lib/programs/leaderEligibility'), programLeaderIneligibility: jest.fn().mockResolvedValue(null) }));
 jest.mock("@/lib/household/archiveGuard", () => ({
     ...jest.requireActual("@/lib/household/archiveGuard"),
@@ -225,6 +228,9 @@ describe('Full Program Signup Integration Flow', () => {
         });
         const enrollRes = await EnrollParticipant(enrollReq as unknown as import("next/server").NextRequest, { params: Promise.resolve({ id: String(programId) }) });
         expect(enrollRes.status).toBe(200);
+        // Naming the leader and enrolling are both taking part.
+        expect(openPersonAgreementOnEngage).toHaveBeenCalledWith(mentorId);
+        expect(openPersonAgreementOnEngage).toHaveBeenCalledWith(childParticipantId);
 
         // 7. Verify PENDING status
         (prisma.programParticipant.findUnique as jest.Mock).mockResolvedValue({ programId, personId: childParticipantId, status: 'PENDING' });
