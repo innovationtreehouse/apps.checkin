@@ -407,6 +407,7 @@ When a change would conflict with an organisational policy, stop and escalate to
 - `MIGRATION_COALESCE_FLOW.md` — the migration-coalesce script (`checkin-app/scripts/coalesce-migrations.ts`) for squashing a long unreleased tail, and the dev/prod ledger-reconcile procedure.
 
 **Architecture** (`docs/architecture/`)
+- `BACKGROUND_CHECKS.md` — how a clearance is recorded, and where a background-check date carried by a person merge came from (read before touching clearance or person-merge code).
 - `PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` — single-pool Shopify capacity model + the scholarship hold-ledger state machine (read before touching `Program`/`ProgramParticipant` capacity or payment-plan logic).
 - `RECEIPT_PIPELINE.md` — one receipt from arrival to its QuickBooks entry: each hand-off between the receipt, workflow-mapping, expense and bulk-donation libraries, and the host file that binds it.
 

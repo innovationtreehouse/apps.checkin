@@ -60,6 +60,10 @@ variables go in `checkin-app/.env` — the setup guides list them.
 - **[Security Policy Layer](docs/security/SECURITY-POLICY.md)** — the declarative model-security layer and its contract tests.
 - [`docs/security/`](docs/security/) also holds the [auth-consistency analysis](docs/security/auth-consistency-analysis.md), [presence/identity tiering](docs/security/presence-identity-tiering.md), and [pentest findings (2026-04-21)](docs/security/pentest_findings_2026-04-21.md).
 
+### Membership
+
+- **[Background Checks](docs/architecture/BACKGROUND_CHECKS.md)** — how a clearance is recorded, and where a background-check date carried by a person merge came from.
+
 ### Money & Shopify
 
 - **[s-read-function/README.md](s-read-function/README.md)** — the Shopify → Postgres ingestion pipeline; [DEPLOY.md](s-read-function/DEPLOY.md) for rollout, [FUTUREWORK.md](s-read-function/FUTUREWORK.md) for the backlog.
