@@ -542,7 +542,7 @@ year. None calls the boundary math on a row instant afterwards.
 | `checkStanding.ts` `checkValidForApplication` | `appliesToYear`, else the live year at `createdAt` | `appliesToYear`, else `membershipYear`. Takes `{ appliesToYear, membershipYear }`. Its callers `settleHouseholdBg`, `checkStarted` and `openPersonBgForNewMember` select `membershipYear` in place of `createdAt`. `checkStarted`'s fallback, when the household has no open application, passes the live year on the org's day |
 | `notRenewing.ts` `isNotRenewingRenewal` | live year at the RENEWAL's `createdAt` | the RENEWAL's `membershipYear`. Callers: the applications route and the renewal-status route |
 | `programYear.ts` `reopenYearRefusal` | live year at `createdAt` | the row's `membershipYear`. Callers: `archive.ts` reopen, and the applications page, which needs `membershipYear` in the applications route's rows |
-| `archive.ts` reopen year fill | paid row with no `appliesToYear` gets the live year at `paidAt` | Removed. The backfill (§5) fills every such row first |
+| `archive.ts` reopen year fill | paid row with no `appliesToYear` gets the live year at `paidAt` | Removed. The order fill (§5) fills every such row first, from its store order or a Board pick |
 | `renewal-status` route due date | next boundary on or after `createdAt` | the boundary that opens the renewal's `membershipYear` |
 
 <a id="q7"></a>
@@ -575,9 +575,22 @@ have no year.
 Migration, in one transaction:
 
 1. `ALTER TABLE "OrgMembershipProcess" ADD COLUMN "membershipYear" INTEGER;`
-2. Fill `appliesToYear` on paid household rows that have none, with the live
-   year at `paidAt`. This is what the archive fill would do on reopen. It is done
-   once here so that fill can go.
+2. Stop if any paid household row has no `appliesToYear`. The
+   [order fill](#paid-rows-with-no-year) settles these before release 1 ships,
+   so this only checks it ran. The error gives a count only.
+
+   ```sql
+   DO $$
+   DECLARE n integer;
+   BEGIN
+     SELECT count(*) INTO n FROM "OrgMembershipProcess"
+     WHERE kind IN ('INITIAL', 'RENEWAL') AND "paidAt" IS NOT NULL AND "appliesToYear" IS NULL;
+     IF n > 0 THEN
+       RAISE EXCEPTION '% paid application(s) have no appliesToYear', n;
+     END IF;
+   END $$;
+   ```
+
 3. Stop if any open payment-plan request has no year. The migration then fails
    and nothing applies, so the assumption is checked before any code relies on
    it. The error gives a count only, because the request is hardship data.
@@ -600,26 +613,51 @@ Migration, in one transaction:
    - unpaid rows from the live year at `createdAt`, the rule every reader
      applies today.
 
-With no boundary configured, steps 2 and 4 write nothing.
+With no boundary configured, step 4 writes nothing.
 
-What the rules already say about steps 2 and 4:
+What the rules and the owner say about the backfill:
 
-- **Unpaid rows (B1).** Before payment, an application is for the membership
-  year live when it was created, so a join made in renewal season is for the
-  coming year. Step 4 follows that rule. The rule names no list for the owner to
+- **Unpaid rows (B1, settled).** Before payment, an application is for the
+  membership year live when it was created, so a join made in renewal season is
+  for the coming year. Step 4 follows that rule. The rule names no list for the owner to
   check, so the boundary-rows list below is this design's proposal. An older
   fee-help request follows the same precedent: it is for the year its
   application reached the payment step.
-- **Paid rows (B2).** The year is the year paid for, the cart item's year. The
-  rules don't name `appliesToYear`, but Shopify settlement writes it from the
-  variant's year, so step 4 reads the year paid for.
-- **Paid rows with no `appliesToYear` (B3).** No rule covers filling it from
-  `paidAt`. There is a known gap: a checkout opened before the renewal window
-  and paid after it buys the ending year. So near the window, the live year at
-  `paidAt` can be one year late. Each such row keeps its `shopifyOrderId`, so
-  its order's line item names the year bought. The question for the owner:
-  fill step 2 from `paidAt` anyway, or first count these rows and settle any
-  near a window from their orders before release 1.
+- **Paid rows (B2, settled).** The year is the year paid for, the cart item's
+  year. The rules don't name `appliesToYear`, but Shopify settlement writes it
+  from the variant's year, so step 4 reads the year paid for.
+- **Paid rows with no `appliesToYear` (B3, decided).** The year comes from the
+  store order, never from `paidAt`. A checkout opened before the renewal window
+  and paid after it buys the ending year, so the live year at `paidAt` can be
+  one year late. See below.
+
+<a id="paid-rows-with-no-year"></a>
+#### The order fill: paid rows with no year
+
+A migration can't read the store, so a one-off script fills these rows before
+release 1 ships. It is read-only against Shopify and writes only
+`appliesToYear` on paid INITIAL and RENEWAL rows where it is null.
+
+1. For each such row with a `shopifyOrderId`, the script reads the order through
+   the Shopify Admin API. It looks for line items whose variant is in
+   `MembershipYearVariant`, since each year has its own variant. Exactly one
+   match: it writes that variant's year, with a system audit row naming the
+   order and variant.
+2. Any other row goes on a list for the Board: no `shopifyOrderId` (a payment
+   the Board mapped by hand), an order Shopify can't find, or zero or several
+   membership-year variants on the order. The list shows the household, the
+   application's kind, `paidAt`, the order if any, and the reason it is listed.
+   It shows no suggested year.
+3. The Board picks each listed row's year. The script writes each pick from an
+   input file of process id, year and the picking Board member's person id. The
+   audit row names that Board member as the actor.
+
+Example: a renewal paid on July 30, 2025 has no `appliesToYear`. Its order holds
+the 2024-2025 variant, bought from a checkout opened in June. The script writes
+2024. The live year at `paidAt` would have said 2025.
+
+The script runs against production once the owner gives the go. Release 1's
+step 2 refuses to migrate until no paid row is left without a year.
 
 The live year at an instant, in SQL, matching `membershipYearCycle`: the
 renewal window of year `y` opens at the boundary's month and day in `y`, moved
@@ -645,13 +683,15 @@ The code in this release:
 - Every reader in §4 reads `membershipYear`, falling back to today's derivation
   when it is null. Only rows the previous release created during the drain have
   a null.
-- The archive fill stays for this release, for the same reason.
+- The archive fill stays for this release, for the same reason. It fills from
+  `paidAt`, but it never fires: after the order fill no paid row lacks
+  `appliesToYear`, and every settlement path writes one.
 - The checkout sells `membershipYear`'s variant (§3). For a row with a null
   year it uses the year today's derivation gives that row, never the live year.
 
 Nothing is destructive. The previous release never selects the new column and
 inserts without it. Its reads of `appliesToYear` see what they saw before, plus
-the rows step 2 filled, which it would have filled itself on reopen.
+the rows the order fill wrote.
 
 ### Release 2: contract
 
@@ -805,7 +845,7 @@ ROLLBACK;
 | Release | Contents | Gate |
 |---|---|---|
 | 0 | The org-day boundary change | Separate design |
-| 1 | Column, backfill, writers, readers with fallbacks, checkout by stamped year, and the payment answers from §3 | Release 0 merged. The owner has run the boundary query and settled any unpaid rows it lists |
+| 1 | Column, backfill, writers, readers with fallbacks, checkout by stamped year, and the payment answers from §3 | Release 0 merged. The owner has run the boundary query and settled any unpaid rows it lists. The order fill has run and the Board has picked a year for every row it listed |
 | 2 | Re-fill, check constraint, fallbacks and archive fill removed, test fixtures | Release 1 in production; the null-count query returns zero |
 | Later | The database check extended to PERSON_AGREEMENT | B39 answered and carried out; no agreement left without a year |
 
@@ -817,9 +857,6 @@ ROLLBACK;
 |---|---|---|
 | Q12 | Existing agreements' year: with the Board (B39) | [§2a](#q12) |
 | Q13 | Whether a no-year agreement counts as handled until B39 is answered | [§2a](#q13) |
-| B1 | Backfill unpaid rows on the org's calendar day, with boundary rows listed for the owner to confirm | [§5](#rows-on-a-boundary) |
-| B2 | Paid rows take `membershipYear` from `appliesToYear` | §5 |
-| B3 | Paid rows with no `appliesToYear`: fill from `paidAt`, or settle rows near a window from their Shopify orders first | §5 |
 
 ---
 
