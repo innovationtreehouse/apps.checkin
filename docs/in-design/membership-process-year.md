@@ -31,7 +31,8 @@ sold the coming year.
   can be compared.
 - The checkout sells the application's year.
 - Rows that already exist get the year the old rule gave them, with the few that
-  sit on a year boundary listed for the owner.
+  sit on a year boundary listed for the owner. Existing agreements get a year
+  from a fixed cutoff the owner set.
 
 ## Executive summary
 
@@ -50,7 +51,7 @@ sold the coming year.
 - **Cost.** Two releases. The first adds the column, fills it, and moves every
   writer and reader. The second, after the first is in production, re-runs the
   fill and adds a database check that the column is set on every joining
-  application and renewal.
+  application, renewal and adult's agreement.
 - **What does not change.** Membership pricing, discount codes, the renewal
   sweep's timing, and every "settled for this year" query. Those already read
   `appliesToYear`, which keeps its meaning.
@@ -243,7 +244,7 @@ With the stored year, `membershipYearAt` stops deciding which agreement is
 current, and the "already handled" check compares years instead of
 `stageEnteredAt`. `membershipYearAt` still sets the window for who took part.
 
-### Open questions on the agreement
+### Decisions on the agreement
 
 <a id="q9"></a>
 **The nightly pass: which year (decided).** The nightly pass opens one agreement,
@@ -301,8 +302,7 @@ should get it before the agreement's year ends.
   mark.
 - The person can still sign: a click creates a fresh request, as today.
 
-**Proposed guard for the residual case.** The year can still end with the
-agreement open. Two parts need no choice:
+**The residual case.** The year can still end with the agreement open:
 
 - Signing a 2025 agreement records a 2025 agreement. It never counts as the
   2026 one, because "already handled" compares years.
@@ -341,11 +341,10 @@ owner set a fixed cutoff instead ([Q13](#q13)). It is the final rule for
 existing agreements, and no Board step assigns their years.
 
 - From release 1, every new agreement carries a year (§2a above).
-- Q11's year-end close skips an agreement with no year, since it has no year to
-  end.
-- Release 2's database check covers joining applications and renewals only. A
-  later check for PERSON_AGREEMENT ships once no agreement is left without a
-  year.
+- Release 1's backfill gives every existing agreement a year (Q13), and release
+  2's refill gives one to each agreement the previous release created during
+  release 1's drain (§5). No agreement is left without a year, so release 2's
+  database check covers agreements too.
 
 <a id="q13"></a>
 **Q13. The year of an existing agreement (decided).** The owner set a fixed
@@ -391,14 +390,18 @@ time zone (decided), the same day `calendarDayIn` gives with `tz` from
 `AppSettings.timezone`. It is never the UTC day or a fixed zone.
 
 <a id="q13-gaps"></a>
-**What the cutoff leaves open.** These are listed for the owner, not decided. G4, whether a Board step still assigns years, is settled: none does. G1, an agreement signed before September 1, 2025, is settled: the owner confirms none exists, so the one cutoff covers every signed agreement. G3 is settled: the cutoff compares the org's calendar day. G2 is settled: a closed, unsigned agreement gets 2025 ([below](#g2)).
+**Cases the cutoff alone didn't cover (decided).**
 
-| # | Case | Example |
-|---|---|---|
-| G5 | Agreements the previous release creates during the release-1 drain. They have no year and come after the migration | Opened by the old code on the release day and signed in 2027. Applied again, the cutoff would write 2026 |
+- No agreement was signed before September 1, 2025, so the one cutoff covers
+  every signed agreement.
+- No Board step assigns existing agreements' years. The cutoff is the final
+  rule.
+- A closed, unsigned agreement gets 2025 ([below](#g2)).
+- Agreements the previous release creates during release 1's drain get a fixed
+  2026 in release 2's refill (§5).
 
 <a id="g2"></a>
-**A closed, unsigned agreement (G2, decided).** The backfill gives every one
+**A closed, unsigned agreement (decided).** The backfill gives every one
 2025, whenever it was opened or closed. What follows:
 
 - **It never counts for 2026.** The nightly pass asks the person to sign a 2026
@@ -408,7 +411,7 @@ time zone (decided), the same day `calendarDayIn` gives with `tz` from
   her.
 - **Reopen refuses it**, because 2025-2026 has ended.
 - **No agreement is left without a year** by the backfill, so these rows don't
-  block a later PERSON_AGREEMENT database check.
+  block release 2's database check.
 
 ## 3. Payment
 
@@ -644,8 +647,9 @@ What the rules and the owner say about the backfill:
 
 - **Unpaid rows (settled).** Before payment, an application is for the
   membership year live when it was created, so a join made in renewal season is
-  for the coming year. Step 4 follows that rule. The rule names no list for the owner to
-  check, so the boundary-rows list below is this design's proposal. An older
+  for the coming year. Step 4 follows that rule. The rule names no list for the
+  owner to check, so the boundary-rows list below is this design's proposal. An
+  older
   fee-help request follows the same precedent: it is for the year its
   application reached the payment step.
 - **Paid rows (settled).** The year is the year paid for, the cart item's
@@ -726,18 +730,31 @@ Migration, in one transaction:
 
 1. Re-run step 4 of release 1 for rows still null: those the previous release
    created during release 1's drain.
-2. `ALTER TABLE "OrgMembershipProcess" ADD CONSTRAINT "household_process_has_year" CHECK (kind NOT IN ('INITIAL', 'RENEWAL') OR "membershipYear" IS NOT NULL);`
+   Agreements the previous release created then get a fixed 2026 (decided):
+
+   ```sql
+   UPDATE "OrgMembershipProcess" SET "membershipYear" = 2026
+   WHERE kind = 'PERSON_AGREEMENT' AND "membershipYear" IS NULL;
+   ```
+
+   The value is a constant, not derived from any date. It is right only if
+   release 1 deploys before September 1, 2027, so that every such agreement is
+   opened during 2026-2027. If release 1 deploys on or after that day, this value
+   must be revisited before release 2 ships.
+2. `ALTER TABLE "OrgMembershipProcess" ADD CONSTRAINT "process_has_year" CHECK (kind NOT IN ('INITIAL', 'RENEWAL', 'PERSON_AGREEMENT') OR "membershipYear" IS NOT NULL);`
 
 This is safe against old code: the code serving during release 2's drain is
-release 1, which stamps every household row. The fallbacks and the archive fill
+release 1, which stamps every household row and every agreement. The fallbacks and the archive fill
 are deleted. The migration fails, and wedges the deploy, if any household row is
 still null, which happens only with no boundary configured. The owner runs the
-query below before release 2 ships; it must return zero.
+query below before release 2 ships. It counts rows with no year that step 1
+cannot fill, and it must return zero.
 
 ```sql
 BEGIN READ ONLY;
 SELECT count(*) FROM "OrgMembershipProcess"
-WHERE kind IN ('INITIAL', 'RENEWAL') AND "membershipYear" IS NULL;
+WHERE kind IN ('INITIAL', 'RENEWAL') AND "membershipYear" IS NULL
+  AND NOT EXISTS (SELECT 1 FROM "BoardSettings" WHERE id = 1 AND "orgMembershipYearBoundary" IS NOT NULL);
 ROLLBACK;
 ```
 
@@ -872,15 +889,12 @@ ROLLBACK;
 | 0 | The org-day boundary change | Separate design |
 | 1 | Column, backfill, writers, readers with fallbacks, checkout by stamped year, and the payment answers from §3 | Release 0 merged. The owner has run the boundary query and settled any unpaid rows it lists. The order fill has run and the Board has picked a year for every row it listed |
 | 2 | Re-fill, check constraint, fallbacks and archive fill removed, test fixtures | Release 1 in production; the null-count query returns zero |
-| Later | The database check extended to PERSON_AGREEMENT | G5 answered; no agreement left without a year |
 
 ---
 
 ## Open questions
 
-| # | Question | Section |
-|---|---|---|
-| G5 | Agreements the old code creates during release 1's rollout, which come after the backfill | [§2a](#q13-gaps) |
+None. Every question in this design has an owner decision.
 
 ---
 
