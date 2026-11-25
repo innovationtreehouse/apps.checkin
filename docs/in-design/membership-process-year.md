@@ -353,6 +353,7 @@ cutoff for the backfill:
 
 - An agreement signed before July 15, 2026 is for 2025-2026.
 - An agreement signed on or after July 15, 2026 is for 2026-2027.
+- An agreement still open, whenever it was opened, is for 2026-2027.
 
 This is a one-time owner decision about existing rows. The app keeps no date
 rule: after the backfill it never works out an agreement's year from a date.
@@ -369,7 +370,15 @@ Release 1's migration writes it, after step 4:
 UPDATE "OrgMembershipProcess"
 SET "membershipYear" = CASE WHEN <signing day> < DATE '2026-07-15' THEN 2025 ELSE 2026 END
 WHERE kind = 'PERSON_AGREEMENT' AND "membershipYear" IS NULL AND "contractSignedAt" IS NOT NULL;
+
+UPDATE "OrgMembershipProcess"
+SET "membershipYear" = 2026
+WHERE kind = 'PERSON_AGREEMENT' AND "membershipYear" IS NULL AND "contractSignedAt" IS NULL
+  AND status = 'PENDING_EXTERNAL_ACTION';
 ```
+
+An open agreement given 2026 follows Q11 from then on: if it is still open
+when 2026-2027 ends, the nightly pass closes it.
 
 `<signing day>` is the day of `contractSignedAt`. Whether that is the org's
 calendar day or the UTC day is open ([G3](#q13-gaps)).
@@ -379,9 +388,22 @@ calendar day or the UTC day is open ([G3](#q13-gaps)).
 
 | # | Case | Example |
 |---|---|---|
-| G2 | An agreement with no signing date: still open, or closed unsigned. The cutoff has nothing to compare | Opened June 2026, never signed, still open in November 2026. It gets no year, and Q11's year-end close skips it, so it blocks any new agreement for her |
+| G2 | An agreement closed unsigned, with no year. It has no signing date to compare, and it isn't open. Open ones are settled: they get 2026 | Opened June 2026 and closed by the Board in October 2026, unsigned. The backfill writes no year. See below for what that affects |
 | G3 | Which day the cutoff compares: the org's calendar day or UTC | Signed 9 PM on July 14, 2026, Chicago time, which is 02:00 on July 15 in UTC. The org's day gives 2025, UTC gives 2026 |
 | G5 | Agreements the previous release creates during the release-1 drain. They have no year and come after the migration | Opened by the old code on the release day and signed in 2027. Applied again, the cutoff would write 2026 |
+
+What a closed, unsigned agreement with no year affects beyond history (G2):
+
+- **The "already handled" check.** Today a closed agreement counts as handled
+  if it was closed since the cycle floor. After this change it counts only when
+  its `membershipYear` is the year being opened. With no year it never matches,
+  so the nightly pass asks the person to sign again. Example: the Board closed
+  her agreement in October 2026, unsigned. Today she is not asked again this
+  year. With no year, the next pass opens a 2026 agreement for her.
+- **Reopen.** Reopen refuses an agreement whose year has ended. With no year it
+  can't tell, so the Board's reopen of such a row needs a rule: refuse, or allow.
+- **The database check.** The later PERSON_AGREEMENT check can't ship while
+  any row has no year.
 
 ## 3. Payment
 
