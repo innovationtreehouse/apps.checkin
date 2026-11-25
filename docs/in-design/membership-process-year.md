@@ -172,8 +172,8 @@ than the cycle floor.
 
 | Path | Event | Explicit year available then |
 |---|---|---|
-| `runPersonAgreementSweep`, from the nightly cron | A non-lead aged 18-25 in an ACTIVE member household is recently attached to a program (enrolled participant, volunteer or leader) | The household's latest paid year: the highest `appliesToYear` among its settled applications ([decided](#q9)). Program years are not used |
-| `openPersonAgreementForNewMember`, a clearance step after a joining application goes ACTIVE | The same population, within the household that just joined | The activating application's `appliesToYear` and its `membershipYear`. They differ only after a Board payment for another year ([Q10](#q10)) |
+| `runPersonAgreementSweep`, from the nightly cron | A person who passes `autoPopulationWhere`: a non-lead aged 18-25 in an ACTIVE household who is attached to a recent program (enrolled participant, volunteer or leader) | The household's latest paid year: the highest `appliesToYear` among its settled applications ([decided](#q9)). Program years are not used |
+| `openPersonAgreementForNewMember`, a clearance step after a joining application goes ACTIVE | People in the household that just joined who pass `autoPopulationWhere`, the same filter as the nightly pass. Not every adult child: one who is over 25 or not attached to a recent program gets none | The activating application's `appliesToYear`, the year paid for ([decided](#q10)) |
 | `openPersonAgreementForBoard`, the compliance page's manual open | The Board opens one for a person the automatic rule doesn't reach (not in a program, or over 25) | A Board pick. Following the Q4 (ii) ruling, the year is required in the dialog and the route, with no default |
 
 Two more paths touch existing agreements but create none:
@@ -209,13 +209,11 @@ on July 10, 2026. On July 20 its son turns 18, having never signed. The nightly
 pass opens one agreement, for 2026. No 2025 agreement opens.
 
 <a id="q10"></a>
-**Q10. New-member activation: which field?** A joining application is for
-2025, and the Board recorded its payment for 2026 with the warning acknowledged.
-The household goes ACTIVE, and the adult child's agreement opens.
-
-- **a.** The year paid for (2026). Recommended: it is the year the household is
-  a member for.
-- **b.** The application's year (2025).
+**New-member activation: which field (decided).** A joining application is for
+2025, and the Board mapped its payment to 2026 with the warning acknowledged.
+The household goes ACTIVE. For each person in it who passes
+`autoPopulationWhere`, an agreement opens for 2026, the year paid for
+(`appliesToYear`). The application's own year, 2025, is not used.
 
 <a id="q11"></a>
 **Q11. An agreement whose year has ended.** A 2025 agreement opened in August
@@ -244,7 +242,7 @@ at creation.
   settled agreement by the old date rule until one cycle has passed, then
   ignores it.
 - **c.** Leave old rows null, and the next nightly pass opens a year-stamped
-  agreement for everyone, so each adult child signs again once.
+  agreement for everyone it covers, so each of them signs again once.
 
 The database check in release 2 covers PERSON_AGREEMENT only if every row has
 a year, which depends on this answer.
@@ -659,7 +657,6 @@ ROLLBACK;
 
 | # | Question | Section |
 |---|---|---|
-| Q10 | Agreement on new-member activation: year paid for or year applied for? | [§2a](#q10) |
 | Q11 | An agreement whose year has ended | [§2a](#q11) |
 | Q12 | Backfilling existing agreements | [§2a](#q12) |
 | B1 | Backfill unpaid rows on the org's calendar day, with boundary rows listed for the owner to confirm | [§5](#rows-on-a-boundary) |
