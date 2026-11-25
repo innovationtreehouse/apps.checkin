@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { leadMembersWhere } from "@/lib/household/leads";
 import prisma from "@/lib/prisma";
 import { orgToday } from "@/lib/appSettings";
 import { withAuth } from "@/lib/auth";
@@ -255,7 +256,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
                             id: true,
                             name: true,
                             householdMembers: {
-                                where: { isHouseholdLead: true },
+                                where: leadMembersWhere(),
                                 select: { id: true, name: true, email: true, lastBackgroundCheck: true },
                             },
                         },
@@ -423,7 +424,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             id: true,
             name: true,
             householdMembers: {
-                where: { isHouseholdLead: true },
+                where: leadMembersWhere(),
                 select: { id: true, name: true, phone: true, email: true, lastBackgroundCheck: true },
             },
         },
