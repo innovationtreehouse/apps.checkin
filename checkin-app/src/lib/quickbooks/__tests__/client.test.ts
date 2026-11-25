@@ -1,7 +1,8 @@
 import { kindOf } from "@checkin/component-kit";
 import { buildQuickBooks, lambdaAccessTokenSource, tryBuildQuickBooks } from "../client";
 
-jest.mock("@aws-sdk/client-lambda", () => ({ LambdaClient: jest.fn(), InvokeCommand: jest.fn() }));
+const send = jest.fn();
+jest.mock("@aws-sdk/client-lambda", () => ({ LambdaClient: jest.fn(() => ({ send })), InvokeCommand: jest.fn() }));
 
 const SANDBOX = "1111";
 const PROD = "9999";
@@ -57,6 +58,14 @@ describe("lambdaAccessTokenSource", () => {
         expect(kindOf(err)).toBe("settings");
         expect((err as Error).message).toMatch(/QBO_REFRESHER_FN may name the wrong function\. The infra operator checks it/);
         expect(await tokens.current()).toBe("tok-1");
+    });
+
+    it("refuses a refresher Lambda's non-JSON answer as settings through the default invoke", async () => {
+        send.mockResolvedValueOnce({ Payload: new TextEncoder().encode("<html>not a refresher</html>") });
+        const tokens = lambdaAccessTokenSource({ functionName: "qbo-refresher", realmId: SANDBOX, checkinEnv: "dev", devClientId: "dev-id", now: () => 0 });
+        const err = await tokens.current().catch((e: unknown) => e);
+        expect(kindOf(err)).toBe("settings");
+        expect((err as Error).message).toMatch(/QBO_REFRESHER_FN may name the wrong function\. The infra operator checks it/);
     });
 });
 
