@@ -77,7 +77,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     const bgRecheckMonths = settings?.bgRecheckMonths;
     const boundary = settings?.orgMembershipYearBoundary ?? null;
-    const liveYear = liveMembershipYear(boundary, now);
+    const liveYear = liveMembershipYear(boundary, today);
 
     // householdId -> Set<reason>
     const reasons = new Map<number, Set<string>>();
@@ -227,7 +227,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
 
     // 4c. Position holders, judged against the start of the year each serves in.
     const positionHolderRows = isRecheckPolicySet(bgRecheckMonths) && settings?.orgMembershipYearBoundary
-        ? await positionHolders(prisma, settings.orgMembershipYearBoundary, bgRecheckMonths, now, today)
+        ? await positionHolders(prisma, settings.orgMembershipYearBoundary, bgRecheckMonths, today)
         : [];
 
     // 5. Blanket-stamped background checks: a household clearance with no per-adult
