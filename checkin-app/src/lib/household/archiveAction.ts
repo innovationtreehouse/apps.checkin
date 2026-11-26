@@ -1,6 +1,6 @@
 import { withArchivedHouseholds } from "@/lib/household/archived";
 import { closeForRestore, countOpenApplications, lockOpenApplications } from "@/lib/membership/archive";
-import { personActor } from "@/lib/auditActor";
+import { type AuditActor, personActor, systemActor } from "@/lib/auditActor";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { ServiceError } from "@checkin/component-kit";
 import type { TxClient } from "@/lib/db-client";
@@ -84,18 +84,40 @@ export async function archiveHousehold(householdId: number, actorId: number) {
     });
 }
 
-/** Board "Unarchive household": clears `archivedAt`. Closed applications stay closed. */
+/** Clears `archivedAt` and records why. The caller holds the Household row. Closed applications stay closed. */
+async function clearArchive(tx: TxClient, householdId: number, archivedAt: Date, actor: AuditActor, cause?: Record<string, string | number>) {
+    const { count } = await tx.household.updateMany({ where: { id: householdId, archivedAt: { not: null } }, data: { archivedAt: null } });
+    if (count !== 1) throw refuse("This household changed while you were looking at it. Reload and try again.");
+    await tx.auditLog.create({
+        data: { ...actor, action: "EDIT", tableName: "Household", affectedEntityId: householdId, oldData: { archivedAt }, newData: { archivedAt: null, ...cause } },
+    });
+}
+
+/** Board "Unarchive household": clears `archivedAt`. */
 export async function unarchiveHousehold(householdId: number, actorId: number) {
     return withArchivedHouseholds(async (tx) => {
         const household = await tx.household.findUnique({ where: { id: householdId }, select: { archivedAt: true } });
         if (!household) throw notFound();
         if (!household.archivedAt) throw refuse("This household is not archived.");
 
-        const { count } = await tx.household.updateMany({ where: { id: householdId, archivedAt: { not: null } }, data: { archivedAt: null } });
-        if (count !== 1) throw refuse("This household changed while you were looking at it. Reload and try again.");
-        await tx.auditLog.create({
-            data: { ...personActor(actorId), action: "EDIT", tableName: "Household", affectedEntityId: householdId, oldData: { archivedAt: household.archivedAt }, newData: { archivedAt: null } },
-        });
+        await clearArchive(tx, householdId, household.archivedAt, personActor(actorId));
         return tx.household.findUniqueOrThrow({ where: { id: householdId } });
+    });
+}
+
+/**
+ * A member's sign-in unarchives their household, silently and with no notice to the
+ * Board. A denied household stays archived. Returns whether it unarchived.
+ */
+export async function unarchiveOnSignIn(householdId: number, personId: number): Promise<boolean> {
+    return withArchivedHouseholds(async (tx) => {
+        // Membership, then household: the order lib/lockOrder.ts states.
+        const [membership] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE "householdId" = ${householdId} FOR UPDATE`;
+        if (membership?.status === "DENIED") return false;
+        const [household] = await tx.$queryRaw<{ archivedAt: Date | null }[]>`SELECT "archivedAt" FROM "Household" WHERE id = ${householdId} FOR UPDATE`;
+        if (!household?.archivedAt) return false;
+
+        await clearArchive(tx, householdId, household.archivedAt, systemActor("system:sign-in"), { reason: "sign_in", signedInBy: personId });
+        return true;
     });
 }

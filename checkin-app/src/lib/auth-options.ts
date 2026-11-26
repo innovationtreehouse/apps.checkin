@@ -15,6 +15,7 @@ import { assignParticipantClaims } from "@/lib/authClaims";
 import { ROLE_FLAGS, setRoleFlag, trustStatus } from "@/lib/roles";
 import { addHouseholdLead } from "@/lib/household/leads";
 import { householdWithMembership } from "@/lib/household/archived";
+import { unarchiveOnSignIn } from "@/lib/household/archiveAction";
 import { withAuroraResumeRetry } from "@/lib/auroraResumeRetry";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
 import { mintPersonId } from "@/lib/person/mintId";
@@ -466,7 +467,11 @@ export const authOptions: NextAuthOptions = {
                         dbParticipant.roles.push({ role: "SYSADMIN" });
                     }
 
-                    // Row security returns an archived household as null.
+                    // Row security returns an archived household as null. A member's own sign-in
+                    // unarchives it; a dev impersonating them does not.
+                    if (!dbParticipant.household && !token.impersonatedBy) {
+                        await withAuroraResumeRetry(() => unarchiveOnSignIn(dbParticipant.householdId, dbParticipant.id));
+                    }
                     dbParticipant.household ??= await householdWithMembership(dbParticipant.householdId);
                     // Stamp authority claims, applying the household login gate (a board
                     // "Deny Membership" forces denied=true and strips every role flag).

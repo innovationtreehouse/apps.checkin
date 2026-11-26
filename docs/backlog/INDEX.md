@@ -339,7 +339,7 @@ stamps the old blanket write left behind.
 
 **Attendance correction surface — SHIPPED, removed from buckets:** **AT3** staff visit management (#1478/#1254) · **AT5** self-correction of own hours (#1357/#1256) · **AT12** correction-review screen (#1560/#1258) · the legacy `SYSTEM` visit source dropped (#1256 contract stage). Residuals are AT15–AT17.
 
-**Household archive — SHIPPED, removed from buckets:** **M4** archive family (#1228) · **M19** archived households hidden from active views (#1232). The Board archives and unarchives a household; archiving is refused while anything still ties it to the organisation, and an archived household refuses every change. The owner's rulings superseded the interview's two-state model (invalid/duplicate vs idle/aged-out, self-reactivation) and list unsubscribe on archive.
+**Household archive — SHIPPED, removed from buckets:** **M4** archive family (#1228) · **M19** archived households hidden from active views (#1232). The Board archives and unarchives a household, and a member's sign-in unarchives it unless its membership is denied; archiving is refused while anything still ties it to the organisation, and an archived household refuses every change. The owner's rulings superseded the interview's two-state model (invalid/duplicate vs idle/aged-out, self-reactivation) and list unsubscribe on archive.
 
 **Merged/resolved (2026-08-01):** **RB16** boundary-isolation required-check → DONE — #1132 (CODEOWNERS gate) + #1133 (isolation job now a required status check on main) both closed. Was Q38.
 
