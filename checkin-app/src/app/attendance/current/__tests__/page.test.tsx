@@ -215,6 +215,57 @@ describe("attendance/current page", () => {
       expect(screen.queryByText(unreachable)).not.toBeInTheDocument();
     });
 
+    it("off the kiosk, keeps the Loader while the first load retries", async () => {
+      setAdminSession();
+      stubAttendance(() => { throw new TypeError("fetch failed"); });
+      renderWithProviders(<KioskDisplay />);
+      await act(async () => { jest.advanceTimersByTime(1000); });
+
+      expect(global.fetch).toHaveBeenCalled();
+      expect(document.querySelector(".mantine-Loader-root")).not.toBeNull();
+      expect(screen.queryByText("Couldn't load attendance")).not.toBeInTheDocument();
+    });
+
+    it("says attendance is still loading while the first load retries, and could not be loaded once retries stop", async () => {
+      const stillLoading = "Attendance is still loading, so Two-Deep Compliance and keyholder coverage cannot be checked yet. Verify supervision in the building.";
+      const notLoaded = "Attendance could not be loaded, so Two-Deep Compliance and keyholder coverage cannot be checked. Verify supervision in the building.";
+      setSearchParams("mode=kiosk");
+      stubAttendance(() => { throw new TypeError("fetch failed"); });
+      renderWithProviders(<KioskDisplay />);
+      await act(async () => { jest.advanceTimersByTime(1000); });
+
+      expect(screen.getByText("Supervision status unknown")).toBeInTheDocument();
+      expect(screen.getByText(stillLoading)).toBeInTheDocument();
+      expect(screen.queryByText(notLoaded)).not.toBeInTheDocument();
+
+      await advanceUntilShown(unreachable);
+
+      expect(screen.getByText("Supervision status unknown")).toBeInTheDocument();
+      expect(screen.getByText(notLoaded)).toBeInTheDocument();
+      expect(screen.queryByText(stillLoading)).not.toBeInTheDocument();
+    });
+
+    it("a resting kiosk keeps saying it is resting while a failed poll retries", async () => {
+      setSearchParams("mode=kiosk");
+      let calls = 0;
+      stubAttendance(() => {
+        calls += 1;
+        if (calls === 1) return noContent();
+        throw new TypeError("fetch failed");
+      });
+      renderWithProviders(<KioskDisplay />);
+      await advanceUntilShown("Kiosk resting — zzz. Badge in to wake it.");
+      expect(screen.getByText("Kiosk resting — zzz. Badge in to wake it.")).toBeInTheDocument();
+
+      postFromWrapper("refresh-attendance");
+      await act(async () => { jest.advanceTimersByTime(1000); });
+
+      expect(calls).toBeGreaterThanOrEqual(2);
+      expect(screen.getByText("Kiosk resting — zzz. Badge in to wake it.")).toBeInTheDocument();
+      expect(document.querySelector(".mantine-Loader-root")).toBeNull();
+      expect(screen.queryByText(unreachable)).not.toBeInTheDocument();
+    });
+
     it("off the kiosk, shows the failure in place of the roster once the retries run out, and raises no toast", async () => {
       setAdminSession();
       stubAttendance(() => { throw new TypeError("fetch failed"); });
