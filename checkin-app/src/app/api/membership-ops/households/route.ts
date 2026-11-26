@@ -7,6 +7,7 @@ import { apiError } from "@/lib/api-response";
 import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { membershipYearCycle, coveredThrough, bgValidUntilBoundary, grantableYears } from "@/lib/membership/renewal";
+import { applicationYear } from "@/lib/programYear";
 import { grantableApplicationWhere, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { PaymentError } from "@/lib/membership/payment";
 import { grantMembership, grantMessage } from "@/lib/membership/grant";
@@ -205,7 +206,7 @@ export const GET = withAuth(
                                         settledThisCycleWhere(cycle?.cycleStart.getUTCFullYear() ?? null),
                                     ],
                                 },
-                                select: { id: true, status: true },
+                                select: { id: true, status: true, membershipYear: true, createdAt: true },
                             },
                         },
                     },
@@ -229,7 +230,8 @@ export const GET = withAuth(
                 // any other row is a fee-paid process, so the live year is settled.
                 const { processes = [], id: membershipId, notRenewingYear, ...orgMembership } = h.orgMembership ?? {};
                 const notRenewingAt = membershipId === undefined ? undefined : notRenewingSince.get(membershipId);
-                const awaitingPayment = processes.some((p) => p.status === "PENDING_PAYMENT");
+                const awaiting = processes.find((p) => p.status === "PENDING_PAYMENT");
+                const awaitingPayment = !!awaiting;
                 const settledForComingYear = processes.some((p) => p.status !== "PENDING_PAYMENT");
                 // Household-level BG "valid until" — later lastBackgroundCheck among leads
                 // who passed; no per-member values in the list response.
@@ -241,6 +243,8 @@ export const GET = withAuth(
                     ...h,
                     orgMembership: h.orgMembership ? orgMembership : null,
                     awaitingPayment,
+                    // The year the application awaiting payment was opened for.
+                    awaitingPaymentYear: awaiting ? applicationYear(awaiting, settings?.orgMembershipYearBoundary) : null,
                     settledForComingYear,
                     bgValidUntil,
                     notRenewing: notRenewingYear != null && notRenewingAt ? { year: notRenewingYear, since: notRenewingAt } : null,
@@ -281,7 +285,7 @@ export const POST = withAuth(
         try {
             if (auth.type !== "session") return apiError("Unauthorized", 401);
             const body = await req.json();
-            const { householdId, active, deny, year, reason } = body;
+            const { householdId, active, deny, year, reason, acknowledgeYearMismatch } = body;
 
             if (!householdId) {
                 return apiError("Household ID is required", 400);
@@ -349,7 +353,7 @@ export const POST = withAuth(
                     return apiError("That membership year can't be granted now. Reload the page and try again.", 400);
                 }
                 try {
-                    const result = await grantMembership(householdId, { actorId: auth.user.id, reason: trimmedReason }, year);
+                    const result = await grantMembership(householdId, { actorId: auth.user.id, reason: trimmedReason }, year, acknowledgeYearMismatch === true);
                     return NextResponse.json({
                         success: true,
                         ...result,

@@ -5,14 +5,19 @@ import { orgToday } from "@/lib/appSettings";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { personOrSystemActor, systemActor } from "@/lib/auditActor";
 import { isAdultAsOf, isMinorAsOf } from "@/lib/household/secondLead";
-import { fromWhere } from "@/lib/membership/lifecycle";
-import type { TxClient } from "@/lib/db-client";
+import { fromWhere, membershipFeeSettledAwaitingBg } from "@/lib/membership/lifecycle";
+import { membershipYearEnded, membershipYearLabel } from "@/lib/programYear";
+import type { DbClient, TxClient } from "@/lib/db-client";
+
+// Loaded on use: external.ts imports this module.
+const externalModule = () => import("@/lib/membership/external");
 
 /**
  * Triggers that open a per-person membership-agreement obligation (PERSON_AGREEMENT). A
  * household's leads sign the household agreement, a partner or spouse being made a lead;
  * every other adult in it signs their own, opened only once they take part: enrolling in,
- * volunteering on or leading a program.
+ * volunteering on or leading a program. Each agreement is for one membership year, stored
+ * when it opens; a signature counts for that year only.
  */
 
 /** A span of calendar days, `start` inclusive and `end` exclusive. */
@@ -55,28 +60,55 @@ export const AGREEMENT_OWED_WHERE = {
 } satisfies Prisma.PersonWhereInput;
 
 /**
- * Already handled: an obligation still in flight (from any year, since an unsigned one is
- * no reason to open a second), or one settled since `since`.
+ * Already handled for membership year `year`: an obligation still in flight (from any year,
+ * since an unsigned one is no reason to open a second), or one signed or closed for `year`.
  */
-export function agreementHandledSinceWhere(personId: number, since: Date) {
+export function agreementHandledForYearWhere(personId: number, year: number) {
     return {
         kind: "PERSON_AGREEMENT" as const,
         subjectPersonId: personId,
         OR: [
             { status: "PENDING_EXTERNAL_ACTION" as const },
-            { status: { in: ["ACTIVE" as const, "ARCHIVED" as const] }, stageEnteredAt: { gte: since } },
+            { status: { in: ["ACTIVE" as const, "ARCHIVED" as const] }, membershipYear: year },
         ],
     };
 }
 
-/** Where a current agreement is counted from: the membership year's start, or the epoch with no boundary set. */
-async function currentAgreementSince(today: Date): Promise<Date> {
-    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    return settings?.orgMembershipYearBoundary ? membershipYearAt(settings.orgMembershipYearBoundary, today).start : new Date(0);
+/** The highest membership year a household has paid for among its settled applications, or null. */
+export async function householdLatestPaidYear(householdId: number, db: DbClient = prisma): Promise<number | null> {
+    const latest = await db.orgMembershipProcess.findFirst({
+        where: { orgMembership: { householdId }, kind: { in: ["INITIAL", "RENEWAL"] }, OR: [{ status: "ACTIVE" }, membershipFeeSettledAwaitingBg.where], appliesToYear: { not: null } },
+        orderBy: { appliesToYear: "desc" },
+        select: { appliesToYear: true },
+    });
+    return latest?.appliesToYear ?? null;
+}
+
+/** Each household's latest paid year, keyed by household; a household that has paid for none is absent. */
+export async function householdsLatestPaidYears(householdIds: readonly number[], db: DbClient = prisma): Promise<Map<number, number>> {
+    const rows = householdIds.length
+        ? await db.orgMembershipProcess.findMany({
+              where: { orgMembership: { householdId: { in: [...householdIds] } }, kind: { in: ["INITIAL", "RENEWAL"] }, OR: [{ status: "ACTIVE" }, membershipFeeSettledAwaitingBg.where], appliesToYear: { not: null } },
+              select: { appliesToYear: true, orgMembership: { select: { householdId: true } } },
+          })
+        : [];
+    const latest = new Map<number, number>();
+    for (const r of rows) {
+        const householdId = r.orgMembership?.householdId;
+        if (householdId == null || r.appliesToYear == null) continue;
+        latest.set(householdId, Math.max(latest.get(householdId) ?? r.appliesToYear, r.appliesToYear));
+    }
+    return latest;
+}
+
+/** The household's latest paid year for `personId`, or null when they have no household or it has paid for none. */
+async function personLatestPaidYear(personId: number): Promise<number | null> {
+    const person = await prisma.person.findUnique({ where: { id: personId }, select: { householdId: true } });
+    return person?.householdId == null ? null : householdLatestPaidYear(person.householdId);
 }
 
 /**
- * Open one PERSON_AGREEMENT for `personId` unless one is handled since `since`. Idempotent
+ * Open one PERSON_AGREEMENT for `personId` for membership year `year` unless one is handled for it. Idempotent
  * and concurrency-safe: a FOR UPDATE lock on the Person row serializes the check-then-insert,
  * so the yearly pass and an enrolment can't both open one.
  *
@@ -91,7 +123,7 @@ async function currentAgreementSince(today: Date): Promise<Date> {
 export async function openPersonAgreement(
     personId: number,
     today: Date,
-    since: Date,
+    year: number,
     { manual = false, actorId }: { manual?: boolean; actorId?: number } = {},
 ) {
     return prisma.$transaction(async (tx) => {
@@ -109,7 +141,7 @@ export async function openPersonAgreement(
         if (manual ? isMinorAsOf(person, today) : !(isAdultAsOf(person, today) && person.household.orgMembership?.status === "ACTIVE")) return null;
 
         const handled = await tx.orgMembershipProcess.findFirst({
-            where: agreementHandledSinceWhere(personId, since),
+            where: agreementHandledForYearWhere(personId, year),
             select: { id: true },
         });
         if (handled) return null;
@@ -120,6 +152,7 @@ export async function openPersonAgreement(
                 subjectPersonId: personId,
                 orgMembershipId: null,
                 status: "PENDING_EXTERNAL_ACTION",
+                membershipYear: year,
             },
         });
         await tx.auditLog.create({
@@ -128,7 +161,7 @@ export async function openPersonAgreement(
                 action: "CREATE",
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: created.id,
-                newData: { kind: "PERSON_AGREEMENT", status: "PENDING_EXTERNAL_ACTION", subjectPersonId: personId },
+                newData: { kind: "PERSON_AGREEMENT", status: "PENDING_EXTERNAL_ACTION", subjectPersonId: personId, membershipYear: year },
             },
         });
         return created;
@@ -144,46 +177,79 @@ export function findOpenPersonAgreement(personId: number) {
 }
 
 /**
- * The yearly re-sign, run nightly. Opens an agreement for each adult non-lead who took part in
- * the previous membership year or this one and has none opened or signed since this year's
- * start: the new year's re-sign once a year has started, and a retry for anyone whose open on
- * taking part failed. Idempotent, so each person is asked once a year. No boundary
- * configured: there is no year, and it does nothing.
+ * The nightly pass. First closes every open agreement whose year has ended
+ * ({@link closeEndedAgreements}). Then opens an agreement for each adult non-lead who took
+ * part in the previous membership year or this one, for their household's latest paid
+ * year, unless they have one for that year or one open: the new year's re-sign once the
+ * household has paid for it, and a retry for anyone whose open on taking part failed.
+ * Idempotent, so each person is asked once a year. No boundary configured: there is no
+ * year, and it does nothing.
  */
 export async function runPersonAgreementSweep(now: Date) {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    if (!settings?.orgMembershipYearBoundary) return { opened: 0, failed: 0, reason: "no membership-year boundary configured" };
+    if (!settings?.orgMembershipYearBoundary) return { opened: 0, failed: 0, closedAtYearEnd: 0, closeFailed: 0, reason: "no membership-year boundary configured" };
 
     const today = await orgToday(now);
+    const closed = await closeEndedAgreements(settings.orgMembershipYearBoundary, today);
     const year = membershipYearAt(settings.orgMembershipYearBoundary, today);
     const people = await prisma.person.findMany({
         where: { ...AGREEMENT_OWED_WHERE, ...tookPartWhere({ start: previousMembershipYear(year).start, end: year.end }) },
-        select: { id: true },
+        select: { id: true, householdId: true },
     });
 
+    const paidYears = new Map<number, number | null>();
     let opened = 0;
     let failed = 0;
     for (const p of people) {
         try {
-            if (await openPersonAgreement(p.id, today, year.start)) opened++;
+            if (!paidYears.has(p.householdId)) paidYears.set(p.householdId, await householdLatestPaidYear(p.householdId));
+            const paidYear = paidYears.get(p.householdId);
+            if (paidYear != null && await openPersonAgreement(p.id, today, paidYear)) opened++;
         } catch (err) {
             failed++;
             logger.error(`Failed to open an individual membership agreement for person ${p.id}:`, err);
         }
     }
-    return { opened, failed, yearStart: year.start.toISOString() };
+    return { opened, failed, ...closed, yearStart: year.start.toISOString() };
+}
+
+/**
+ * Closes every open agreement whose membership year has ended on `today`, through
+ * closeEndedPersonAgreement. A Zoho failure leaves that agreement open and is retried
+ * the next night.
+ */
+async function closeEndedAgreements(boundary: Date, today: Date) {
+    const open = await prisma.orgMembershipProcess.findMany({
+        where: { kind: "PERSON_AGREEMENT", contractSignedAt: null, membershipYear: { not: null }, ...fromWhere("PENDING_EXTERNAL_ACTION") },
+        select: { id: true, zohoEnvelopeId: true, membershipYear: true },
+    });
+    const ended = open.filter((p) => p.membershipYear !== null && membershipYearEnded(p.membershipYear, boundary, today));
+    if (!ended.length) return { closedAtYearEnd: 0, closeFailed: 0 };
+    const { closeEndedPersonAgreement } = await externalModule();
+    let closedAtYearEnd = 0;
+    let closeFailed = 0;
+    for (const p of ended) {
+        try {
+            if ((await closeEndedPersonAgreement(p)) === "closed") closedAtYearEnd++;
+        } catch (err) {
+            closeFailed++;
+            logger.error(`Failed to close individual membership agreement ${p.id} at its year's end:`, err);
+        }
+    }
+    return { closedAtYearEnd, closeFailed };
 }
 
 /**
  * A person just took part: enrolled in a program, was made a volunteer, or was named its
- * leader. Opens their agreement when they owe one and have none for the current year.
- * Never throws: taking part must not fail because the agreement couldn't open, and the
- * nightly sweep opens it instead.
+ * leader. Opens their agreement for their household's latest paid year when they owe one
+ * and have none for it. Never throws: taking part must not fail because the agreement
+ * couldn't open, and the nightly sweep opens it instead.
  */
 export async function openPersonAgreementOnEngage(personId: number, now: Date = new Date()) {
     try {
-        const today = await orgToday(now);
-        return await openPersonAgreement(personId, today, await currentAgreementSince(today));
+        const year = await personLatestPaidYear(personId);
+        if (year === null) return null;
+        return await openPersonAgreement(personId, await orgToday(now), year);
     } catch (err) {
         logger.error(`Failed to open an individual membership agreement for person ${personId} on taking part:`, err);
         return null;
@@ -192,12 +258,15 @@ export async function openPersonAgreementOnEngage(personId: number, now: Date = 
 
 /**
  * New-member activation (INITIAL -> ACTIVE): the household's adult non-leads who already
- * take part this year get their agreement now, since the membership they join
- * under has only just started. No-op when no boundary is configured.
+ * take part this year get their agreement now, for the year the activating application
+ * paid for, since the membership they join under has only just started. No-op when no
+ * boundary is configured or the application records no paid year.
  */
-export async function openPersonAgreementForNewMember(householdId: number, asOf: Date) {
+export async function openPersonAgreementForNewMember(householdId: number, processId: number, asOf: Date) {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     if (!settings?.orgMembershipYearBoundary) return;
+    const activated = await prisma.orgMembershipProcess.findUnique({ where: { id: processId }, select: { appliesToYear: true } });
+    if (activated?.appliesToYear == null) return;
 
     const today = await orgToday(asOf);
     const year = membershipYearAt(settings.orgMembershipYearBoundary, today);
@@ -205,7 +274,7 @@ export async function openPersonAgreementForNewMember(householdId: number, asOf:
         where: { householdId, ...AGREEMENT_OWED_WHERE, ...tookPartWhere(year) },
         select: { id: true },
     });
-    for (const p of people) await openPersonAgreement(p.id, today, year.start);
+    for (const p of people) await openPersonAgreement(p.id, today, activated.appliesToYear);
 }
 
 export class PersonAgreementError extends Error {
@@ -216,10 +285,10 @@ export class PersonAgreementError extends Error {
 }
 
 /**
- * The Board's open: any adult who isn't a lead, an unknown age included. Refuses with a reason rather than no-oping, so the Board sees why.
- * Idempotent: an obligation already open is returned as-is.
+ * The Board's open, for the membership year `year` the Board picks: any adult who isn't a lead, an unknown age included.
+ * Refuses with a reason rather than no-oping, so the Board sees why. Idempotent: an obligation already open is returned as-is.
  */
-export async function openPersonAgreementForBoard(personId: number, actorId: number, now = new Date()) {
+export async function openPersonAgreementForBoard(personId: number, actorId: number, year: number, now = new Date()) {
     const person = await prisma.person.findUnique({
         where: { id: personId },
         select: { dateOfBirth: true, isDeclaredAdult: true, isHouseholdLead: true },
@@ -233,9 +302,9 @@ export async function openPersonAgreementForBoard(personId: number, actorId: num
         throw new PersonAgreementError("minor", "This person's date of birth shows they are under 18.");
     }
 
-    await openPersonAgreement(personId, today, await currentAgreementSince(today), { manual: true, actorId });
+    await openPersonAgreement(personId, today, year, { manual: true, actorId });
     const open = await findOpenPersonAgreement(personId);
-    if (!open) throw new PersonAgreementError("not_opened", "This person already signed an individual agreement for this membership year.");
+    if (!open) throw new PersonAgreementError("not_opened", `This person already has an individual agreement for ${membershipYearLabel(year)}.`);
     return open;
 }
 

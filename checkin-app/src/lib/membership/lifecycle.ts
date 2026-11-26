@@ -436,6 +436,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     // Signature completes a person-scoped agreement outright — no payment, no BG gate
     { from: "PENDING_EXTERNAL_ACTION", to: "ACTIVE", event: "markContractSigned", actor: "subject", guardSite: "external.ts markContractSigned: updateMany where contractSignedAt=null + fromWhere", kind: "PERSON_AGREEMENT" },
     { from: "PENDING_EXTERNAL_ACTION", to: "ARCHIVED", event: "closePersonAgreementOnLead", actor: "system", guardSite: "personAgreementTriggers.ts closePersonAgreementOnLead: in addHouseholdLead's Household lock, updateMany where contractSignedAt=null + fromWhere", kind: "PERSON_AGREEMENT" },
+    { from: "PENDING_EXTERNAL_ACTION", to: "ARCHIVED", event: "closeEndedPersonAgreement", actor: "system", guardSite: "external.ts closeEndedPersonAgreement: after a Zoho check and recall, updateMany where contractSignedAt=null + zohoEnvelopeId unchanged + fromWhere", kind: "PERSON_AGREEMENT" },
     { from: "PENDING_EXTERNAL_ACTION", to: "ACTIVE", event: "markContractSigned", actor: "subject/board", guardSite: "external.ts markContractSigned: updateMany where contractSignedAt=null + fromWhere", kind: "KEY_VOLUNTEER_AGREEMENT" },
     // Payment convergence
     { from: "PENDING_PAYMENT", to: "ACTIVE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (bgClearedAt set)" },

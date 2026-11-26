@@ -22,6 +22,8 @@ export interface ProcessRow {
   bgConsentAt: string | null;
   bgClearedAt: string | null;
   paidAt: string | null;
+  // The membership year the application was opened for; null on per-person kinds other than an agreement.
+  membershipYear: number | null;
   attestations: Attestation[];
   requestedForHouseholdId: number | null;
   subjectPerson: { id: number; name: string | null; householdId: number | null } | null;

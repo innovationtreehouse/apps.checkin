@@ -70,9 +70,9 @@ export async function openPersonBgForNewMember(householdId: number, asOf: Date) 
     const activated = await prisma.orgMembershipProcess.findFirst({
         where: { orgMembership: { householdId }, kind: "INITIAL", status: "ACTIVE" },
         orderBy: { id: "desc" },
-        select: { appliesToYear: true },
+        select: { appliesToYear: true, membershipYear: true, createdAt: true },
     });
-    const threshold = (await checkValidForApplication({ appliesToYear: activated?.appliesToYear ?? null, createdAt: asOf })) ?? bgFreshThreshold(asOf, months);
+    const threshold = (await checkValidForApplication(activated ?? { appliesToYear: null, membershipYear: null, createdAt: asOf })) ?? bgFreshThreshold(asOf, months);
     const people = await prisma.person.findMany({
         where: { householdId, household: { archivedAt: null }, ...programAttachedWhere(await orgToday(asOf)) },
         select: { id: true },

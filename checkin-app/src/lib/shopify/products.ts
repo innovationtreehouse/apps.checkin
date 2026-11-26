@@ -49,6 +49,39 @@ export async function getProductByHandle(storeDomain: string, accessToken: strin
     return body.products?.[0] ?? null;
 }
 
+/** Whether a variant can still be sold: `missing` when Shopify has no such variant, `archived` when its product is archived. */
+export type VariantSaleState = "sellable" | "missing" | "archived";
+
+/**
+ * Reads a variant and its product through the Admin API to tell whether a checkout for it
+ * can be paid. Throws when Shopify can't be reached or answers with an error, so a failed
+ * lookup is never reported as a retired product.
+ */
+export async function variantSaleState(variantId: string): Promise<VariantSaleState> {
+    const storeDomain = config.shopifyStoreDomain();
+    const accessToken = await getAccessToken();
+    if (!storeDomain || !accessToken) throw new Error("Shopify is not configured or could not be signed in to");
+    const headers = { "X-Shopify-Access-Token": accessToken };
+    const variantRes = await shopifyFetch(
+        `https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/variants/${encodeURIComponent(variantId)}.json?fields=id,product_id`,
+        { method: "GET", headers },
+        "Shopify read variant",
+    );
+    if (variantRes.status === 404) return "missing";
+    if (!variantRes.ok) throw new ShopifyStatusError(variantRes.status);
+    const { variant }: { variant?: { product_id?: number | string } } = await variantRes.json();
+    if (variant?.product_id == null) return "missing";
+    const productRes = await shopifyFetch(
+        `https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products/${encodeURIComponent(String(variant.product_id))}.json?fields=id,status`,
+        { method: "GET", headers },
+        "Shopify read product",
+    );
+    if (productRes.status === 404) return "missing";
+    if (!productRes.ok) throw new ShopifyStatusError(productRes.status);
+    const { product }: { product?: AdminProduct } = await productRes.json();
+    return product?.status === "archived" ? "archived" : "sellable";
+}
+
 /**
  * Resolve the variants of a membership product from a pasted storefront URL,
  * read through the Shopify Admin API.

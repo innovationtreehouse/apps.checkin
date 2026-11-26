@@ -45,7 +45,7 @@ export interface IntakeState {
   process: MembershipProcess | null;
   external: ExternalStatus | null;
   /** The caller's own unsigned individual agreement, independent of the household's. */
-  personAgreement: { id: number; started: boolean } | null;
+  personAgreement: { id: number; started: boolean; membershipYear: number | null } | null;
   /** The caller's own check and the background-check tool's link, for the Background checks panel. */
   ownBackgroundCheck?: OwnBackgroundCheck | null;
   prefill: IntakePrefill;
@@ -54,6 +54,8 @@ export interface IntakeState {
 export interface MembershipPayment {
   amountCents: number;
   checkoutUrl: string | null;
+  // Why there is no link for the application's year (ended, or no product), to show the family.
+  unavailable?: string | null;
   financeContactEmail: string | null;
 }
 

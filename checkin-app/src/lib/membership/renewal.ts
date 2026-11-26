@@ -9,11 +9,11 @@ import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { personActor, systemActor } from "@/lib/auditActor";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { clearNotRenewingInTx } from "@/lib/membership/notRenewing";
-import { membershipYearLabel, membershipYearOf, membershipYearStart, nextBoundary, upcomingBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear, RENEWAL_LEAD_MONTHS } from "@/lib/programYear";
+import { membershipYearLabel, membershipYearStart, nextBoundary, upcomingBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear, grantableYears, RENEWAL_LEAD_MONTHS } from "@/lib/programYear";
 import { orgToday } from "@/lib/appSettings";
 import { lockProcessRows } from "@/lib/lockOrder";
 
-export { nextBoundary, upcomingBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear };
+export { nextBoundary, upcomingBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear, grantableYears };
 
 /**
  * Annual renewal. A common membership-year boundary (BoardSettings) drives every
@@ -89,16 +89,6 @@ export function bgValidUntilBoundary(
 }
 
 
-/**
- * The years a board grant may record on `today`, an org calendar day, earliest first: the year in progress
- * and, inside the renewal window, the coming year. None with no boundary set.
- */
-export function grantableYears(configuredBoundary: Date | null | undefined, today: Date): { year: number; label: string }[] {
-    if (!configuredBoundary) return [];
-    const inProgress = membershipYearOf(configuredBoundary, today);
-    const live = membershipYearCycle(configuredBoundary, today).cycleStart.getUTCFullYear();
-    return (live > inProgress ? [inProgress, live] : [inProgress]).map((year) => ({ year, label: membershipYearLabel(year) }));
-}
 
 /**
  * How far a household's membership fee reaches in the live cycle: the boundary that closes it
@@ -151,8 +141,8 @@ export async function runRenewalSweep(now: Date) {
 
     // In season the live year is the coming year. Lazy: payment.ts imports this module.
     const comingYear = membershipYearCycle(settings.orgMembershipYearBoundary, today).cycleStart.getUTCFullYear();
-    const { liveYearVariantId } = await import("@/lib/membership/payment");
-    if (!(await liveYearVariantId(settings.orgMembershipYearBoundary, today))) {
+    const { yearVariantId } = await import("@/lib/membership/payment");
+    if (!(await yearVariantId(comingYear))) {
         return { opened: 0, skipped: 0, reason: `no membership product set for ${membershipYearLabel(comingYear)}` };
     }
 
@@ -182,7 +172,7 @@ export async function runRenewalSweep(now: Date) {
     let skipped = 0;
     for (const m of memberships) {
         if (m.processes.length > 0) { skipped++; continue; } // already opened this cycle
-        const p = await createRenewalProcess(m.id);
+        const p = await createRenewalProcess(m.id, comingYear);
         if (p) opened++; else skipped++; // null = concurrent run beat us to it
     }
 
@@ -259,7 +249,8 @@ export async function beginRenewal(processId: number, actorId: number) {
 }
 
 /**
- * Create one PENDING_RENEWAL process (+ audit) for an ACTIVE household, or no-op
+ * Create one PENDING_RENEWAL process (+ audit) for membership year `membershipYear`
+ * for an ACTIVE household, or no-op
  * when the household is no longer ACTIVE or already has an open or BLOCKED
  * household application ({@link householdApplicationOpenOrBlockedWhere}).
  * The callers' check-then-act is NOT atomic, so this function serializes its own
@@ -277,7 +268,7 @@ export async function beginRenewal(processId: number, actorId: number) {
  * boundary dropped from the signature (#PR-2) along with the reminder they only existed
  * to feed — renewalReminderSentAt is now write-never (column kept, see its schema doc).
  */
-export async function createRenewalProcess(orgMembershipId: number) {
+export async function createRenewalProcess(orgMembershipId: number, membershipYear: number) {
     let process;
     try {
         process = await prisma.$transaction(async (tx) => {
@@ -290,10 +281,10 @@ export async function createRenewalProcess(orgMembershipId: number) {
             });
             if (existing) return null;
             const created = await tx.orgMembershipProcess.create({
-                data: { orgMembershipId, kind: "RENEWAL", status: "PENDING_RENEWAL" },
+                data: { orgMembershipId, kind: "RENEWAL", status: "PENDING_RENEWAL", membershipYear },
             });
             await tx.auditLog.create({
-                data: { ...systemActor("system:renewal-open"), action: "CREATE", tableName: "OrgMembershipProcess", affectedEntityId: created.id, newData: { kind: "RENEWAL", status: "PENDING_RENEWAL" } },
+                data: { ...systemActor("system:renewal-open"), action: "CREATE", tableName: "OrgMembershipProcess", affectedEntityId: created.id, newData: { kind: "RENEWAL", status: "PENDING_RENEWAL", membershipYear } },
             });
             return created;
         });

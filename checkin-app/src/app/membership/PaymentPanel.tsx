@@ -40,6 +40,8 @@ export default function PaymentPanel({ processId, bgCleared, saving, setSaving, 
                 Show the payment button again
               </Anchor>
             </Stack>
+          ) : payment.unavailable ? (
+            <Alert color="red" variant="light" mt="md">{payment.unavailable}</Alert>
           ) : payment.checkoutUrl ? (
             <Button component="a" href={payment.checkoutUrl} target="_blank" rel="noopener noreferrer" mt="md" onClick={handlePayClick}>
               Pay here with Shopify →

@@ -32,7 +32,7 @@ describe("notifyClearanceOutcome after the clearance has committed", () => {
 
         await expect(notifyClearanceOutcome(activatedInitial)).resolves.toBeUndefined();
 
-        expect(openPersonAgreementForNewMember).toHaveBeenCalledWith(5, expect.any(Date));
+        expect(openPersonAgreementForNewMember).toHaveBeenCalledWith(5, 9, expect.any(Date));
         expect(logBackendError).toHaveBeenCalledWith(failure, "clearance person background-check trigger", expect.objectContaining({ householdId: 5, processId: 9 }));
         expect(recordStuck).toHaveBeenCalledWith({
             where: { processId_step: { processId: 9, step: "PERSON_BG_TRIGGER" } },

@@ -610,6 +610,12 @@ model OrgMembershipProcess {
   /// (2026 for 2026-2027). Set once when the process is paid; null reads as unsettled.
   /// @sensitivity:public
   appliesToYear         Int?
+  /// The membership year this joining application or renewal is for, as the year
+  /// its boundary opens in (2026 for 2026-2027). Set when the row is created and
+  /// never changed. Also set on an adult's PERSON_AGREEMENT. Null on PERSON_BG and
+  /// KEY_VOLUNTEER_AGREEMENT.
+  /// @sensitivity:public
+  membershipYear        Int?
   // The @map holds the physical column on its old name: most reads of this model
   // carry no select, so the previous release reads it through a rolling deploy's
   // drain window. Rename it in a later release (contract stage).
@@ -632,9 +638,9 @@ model OrgMembershipProcess {
   /// @sensitivity:hardship
   /// @financeMark
   scholarshipRequestKind ScholarshipRequestKind?
-  /// The membership year a payment-plan request is for: the live year when the
-  /// family asked. Approval certifies this year. Null on a request made before
-  /// this column, which is approved for the year live at approval.
+  /// The membership year a payment-plan request is for: the application's
+  /// membershipYear, set on every request. Approval certifies this year and
+  /// refuses a request without one.
   /// @sensitivity:hardship
   /// @financeMark
   paymentPlanYear       Int?

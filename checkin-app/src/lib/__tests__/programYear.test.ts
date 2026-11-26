@@ -1,4 +1,4 @@
-import { nextBoundary, upcomingBoundary, renewalWindow, membershipYearCycle, liveMembershipYear, landsNextYear, memberYearStarts, birthCutoff, membershipYearOf, membershipYearLabel, programYearsTouched, variantSlotYears } from '@/lib/programYear';
+import { nextBoundary, upcomingBoundary, renewalWindow, membershipYearCycle, liveMembershipYear, landsNextYear, memberYearStarts, birthCutoff, membershipYearOf, membershipYearLabel, programYearsTouched, variantSlotYears, applicationYear, reopenYearRefusal, membershipYearEnded } from '@/lib/programYear';
 import { calculateAge, calendarDayIn } from '@/lib/time';
 
 // Anchor "now" so the rollover branch is deterministic.
@@ -138,5 +138,32 @@ describe('variantSlotYears', () => {
         expect(variantSlotYears(boundary, new Date('2027-07-15T00:00:00.000Z'))).toEqual([2026, 2027]);
         expect(variantSlotYears(boundary, new Date('2027-08-31T23:59:59.000Z'))).toEqual([2026, 2027]);
         expect(variantSlotYears(boundary, new Date('2027-09-01T00:00:00.000Z'))).toEqual([2027, 2028]);
+    });
+});
+
+describe("an application's stored year", () => {
+    const b = new Date(Date.UTC(2000, 8, 1));
+    const d = (s: string) => new Date(`${s}T00:00:00Z`);
+
+    it('reads the stored year, whatever the creation date', () => {
+        expect(applicationYear({ membershipYear: 2025, createdAt: d('2026-07-10') }, b)).toBe(2025);
+    });
+
+    it('falls back to the live year at creation for a row stored without one', () => {
+        expect(applicationYear({ membershipYear: null, createdAt: d('2026-07-10') }, b)).toBe(2026);
+        expect(applicationYear({ membershipYear: null, createdAt: '2026-06-20T00:00:00.000Z' }, b)).toBe(2025);
+        expect(applicationYear({ membershipYear: null, createdAt: d('2026-07-10') }, null)).toBeNull();
+    });
+
+    it('refuses a reopen once the next renewal window opens, from the stored year', () => {
+        expect(reopenYearRefusal('INITIAL', 2025, b, d('2026-06-30'))).toBeNull();
+        expect(reopenYearRefusal('INITIAL', 2025, b, d('2026-07-01'))).toContain('This application is for 2025-2026.');
+        expect(reopenYearRefusal('PERSON_BG', 2025, b, d('2027-07-01'))).toBeNull();
+        expect(reopenYearRefusal('RENEWAL', null, b, d('2027-07-01'))).toBeNull();
+    });
+
+    it('a year ends at the boundary that closes it', () => {
+        expect(membershipYearEnded(2025, b, d('2026-08-31'))).toBe(false);
+        expect(membershipYearEnded(2025, b, d('2026-09-01'))).toBe(true);
     });
 });

@@ -10,6 +10,7 @@ import { APP_TIMEZONE, formatDate, formatDateOnly } from "@/lib/time";
 import { membershipYearLabel } from "@/lib/programYear";
 import type { PositionCheckStanding, PositionHolderRow } from "@/lib/membership/positionHolders";
 import { PageLoader } from "@/components/ui/PageLoader";
+import { AgreementYearModal } from "@/components/membership/AgreementYearModal";
 
 // The board's cutoff for blanket-stamped background checks: a round date chosen to sit
 // safely before the first affected clearance, not a boundary anything depends on. Shown
@@ -32,6 +33,8 @@ type PersonRow = {
   programName: string | null;
   reason: string;
   lastVisitAt?: string;
+  // The membership year of the person's open individual agreement.
+  agreementYear?: number | null;
 };
 type BlanketStampedRow = {
   processId: number;
@@ -143,7 +146,7 @@ function PersonSection({
             <div>
               <Text fw={600} fz="lg">{p.name}</Text>
               <Text size="sm" c="dimmed">
-                {p.programName && `Program: ${p.programName} · `}{p.lastVisitAt && `Last free-time visit: ${formatDate(p.lastVisitAt, { timeZone: APP_TIMEZONE, dateStyle: "medium" })} · `}Household #{p.householdId}
+                {p.programName && `Program: ${p.programName} · `}{p.agreementYear != null && `Agreement for ${membershipYearLabel(p.agreementYear)} · `}{p.lastVisitAt && `Last free-time visit: ${formatDate(p.lastVisitAt, { timeZone: APP_TIMEZONE, dateStyle: "medium" })} · `}Household #{p.householdId}
               </Text>
             </div>
             <Group gap="sm">
@@ -188,11 +191,12 @@ export default function CompliancePage() {
     }
   };
 
-  // Open an individual membership agreement for one adult non-lead.
-  const requestAgreement = async (personId: number) => {
+  // Open an individual membership agreement for one adult non-lead, for the year the Board picks.
+  const [agreementFor, setAgreementFor] = useState<number | null>(null);
+  const requestAgreement = async (personId: number, year: number) => {
     setBusyId(personId);
     try {
-      await api("/api/membership-audit/person-agreement", { method: "POST", body: JSON.stringify({ personId }) });
+      await api("/api/membership-audit/person-agreement", { method: "POST", body: JSON.stringify({ personId, year }) });
       setRequestedIds((s) => new Set(s).add(personId));
       showSuccess("Individual agreement requested.");
     } catch (e) {
@@ -220,13 +224,18 @@ export default function CompliancePage() {
     requestedIds.has(p.personId) ? (
       <Badge variant="light">Agreement requested</Badge>
     ) : (
-      <Button size="xs" variant="light" loading={busyId === p.personId} disabled={busyId === p.personId} onClick={() => requestAgreement(p.personId)}>
+      <Button size="xs" variant="light" loading={busyId === p.personId} disabled={busyId === p.personId} onClick={() => setAgreementFor(p.personId)}>
         Request individual agreement
       </Button>
     );
 
   return (
     <Stack>
+      <AgreementYearModal
+        opened={agreementFor !== null}
+        onClose={() => setAgreementFor(null)}
+        onConfirm={(year) => { const personId = agreementFor; setAgreementFor(null); if (personId !== null) void requestAgreement(personId, year); }}
+      />
       <Card withBorder radius="md" padding="lg">
         <Text c="dimmed">
           Households out of compliance that the system did not auto-terminate. This is
@@ -420,7 +429,7 @@ export default function CompliancePage() {
 
       <PersonSection
         title="Free-time check-in, no agreement"
-        description="Adults in member households who aren't a lead, checked in outside any program this membership year, and have no individual agreement signed this year or waiting for their signature. Nothing opens at the door and entry is never blocked; request an agreement here if one is owed."
+        description="Adults in member households who aren't a lead, checked in outside any program this membership year, and have no individual agreement signed for their household's latest paid year or waiting for their signature. Nothing opens at the door and entry is never blocked; request an agreement here if one is owed."
         color="orange"
         people={peopleFreeTime}
         renderAction={requestAction}

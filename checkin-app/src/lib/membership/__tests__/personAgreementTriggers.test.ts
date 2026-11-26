@@ -9,7 +9,12 @@ jest.mock("@/lib/appSettings", () => ({
 
 jest.mock("@/lib/prisma", () => ({
     __esModule: true,
-    default: { $transaction: jest.fn(), boardSettings: { findUnique: jest.fn() }, person: { findMany: jest.fn() } },
+    default: {
+        $transaction: jest.fn(),
+        boardSettings: { findUnique: jest.fn() },
+        person: { findMany: jest.fn(), findUnique: jest.fn() },
+        orgMembershipProcess: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue({ appliesToYear: 2026 }) },
+    },
 }));
 
 /**
@@ -44,7 +49,7 @@ describe("openPersonAgreement — the per-person transaction", () => {
         const transaction = jest.mocked(prisma.$transaction);
         transaction.mockResolvedValue(null as never);
 
-        await openPersonAgreement(1, TODAY, NOW);
+        await openPersonAgreement(1, TODAY, 2026);
 
         expect(transaction.mock.calls[0]?.[1]).toEqual({ maxWait: 5_000, timeout: 15_000 });
     });
@@ -53,7 +58,7 @@ describe("openPersonAgreement — the per-person transaction", () => {
 describe("runPersonAgreementSweep — the yearly pass, one person's failure", () => {
     it("counts it and still opens the rest", async () => {
         jest.mocked(prisma.boardSettings.findUnique).mockResolvedValue({ orgMembershipYearBoundary: BOUNDARY } as never);
-        jest.mocked(prisma.person.findMany).mockResolvedValue([{ id: 1 }, { id: 2 }] as never);
+        jest.mocked(prisma.person.findMany).mockResolvedValue([{ id: 1, householdId: 5 }, { id: 2, householdId: 5 }] as never);
         jest.mocked(prisma.$transaction).mockRejectedValueOnce(new Error("lock timeout")).mockResolvedValueOnce({ id: 9 } as never);
 
         const errors = jest.spyOn(console, "error").mockImplementation(() => {});
@@ -69,6 +74,7 @@ describe("runPersonAgreementSweep — the yearly pass, one person's failure", ()
 describe("openPersonAgreementOnEngage — taking part never fails on it", () => {
     it("logs a failure and returns null instead of throwing", async () => {
         jest.mocked(prisma.boardSettings.findUnique).mockResolvedValue({ orgMembershipYearBoundary: BOUNDARY } as never);
+        jest.mocked(prisma.person.findUnique).mockResolvedValue({ householdId: 5 } as never);
         jest.mocked(prisma.$transaction).mockRejectedValueOnce(new Error("lock timeout"));
         const errors = jest.spyOn(console, "error").mockImplementation(() => {});
 

@@ -222,12 +222,14 @@ describe('Membership Intake API', () => {
         const householdId = owner.householdId!;
         const membership = await prisma.orgMembership.findUniqueOrThrow({ where: { householdId } });
 
-        const proc = await createRenewalProcess(membership.id);
+        const proc = await createRenewalProcess(membership.id, 2026);
         expect(proc).not.toBeNull();
+        expect(proc!.membershipYear).toBe(2026);
 
         const createLog = await expectAuditRow(prisma, { action: 'CREATE', tableName: 'OrgMembershipProcess', affectedEntityId: proc!.id });
         expect(createLog.actorId).toBe(0); // SYSTEM_ACTOR — cron, not a person
         expect(auditJson(createLog.newData).status).toBe('PENDING_RENEWAL');
+        expect(auditJson(createLog.newData).membershipYear).toBe(2026);
 
         const begun = await beginRenewal(proc!.id, owner.id);
         expect(begun.status).not.toBe('PENDING_RENEWAL');

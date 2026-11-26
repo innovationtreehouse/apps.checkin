@@ -136,6 +136,20 @@ const reviewRow = {
     orgMembership: null,
 };
 
+// Boundary 1 Aug: the certify dialog offers the years the grant action may record.
+const SETTINGS = { settings: { BoardSettings: { orgMembershipYearBoundary: "2020-08-01T00:00:00.000Z" } } };
+
+/** Picks the first year the certify dialog offers, acknowledging a mismatch if one is shown; returns the year. */
+async function pickCertifyYear(): Promise<number> {
+    fireEvent.click((await screen.findAllByLabelText(/^Membership year this payment is for/))[0]);
+    const option = (await screen.findAllByRole("option"))[0];
+    const year = Number(option.textContent?.slice(0, 4));
+    fireEvent.click(option);
+    const ack = screen.queryByRole("checkbox", { name: /year doesn't match/ });
+    if (ack) fireEvent.click(ack);
+    return year;
+}
+
 describe("AdminMembershipPage", () => {
     it("renders in-flight applications and their status counts", async () => {
         mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
@@ -231,6 +245,8 @@ describe("AdminMembershipPage", () => {
     it("drives the external-action, certify, and reset controls", async () => {
         setSession({ id: 99, householdId: 99, isBoardMember: true });
         mockFetchJson({
+            "/api/settings/membership": SETTINGS,
+            "/api/membership-ops/membership-products": { problems: [] },
             "/api/membership-ops/applications": { processes: rows },
             "/api/membership-ops/applications/external": { ok: true },
             "/api/membership-ops/applications/certify-payment": { ok: true },
@@ -252,10 +268,13 @@ describe("AdminMembershipPage", () => {
         fireEvent.click(screen.getByRole("button", { name: /Activate without payment/ }));
         // Mantine's `required` prop appends a visible " *" to the label text.
         const certifyReasonInput = await screen.findByLabelText(/^Reason/);
-        // The confirm button is disabled until a reason is entered.
+        // The confirm button is disabled until a reason is entered and a year is picked.
         expect(screen.getByRole("button", { name: "Certify" })).toBeDisabled();
         fireEvent.change(certifyReasonInput, { target: { value: "Paid by check outside Shopify" } });
+        expect(screen.getByRole("button", { name: "Certify" })).toBeDisabled();
+        const year = await pickCertifyYear();
         fireEvent.click(screen.getByRole("button", { name: "Certify" }));
+        await waitFor(() => expect(JSON.parse(String(jest.mocked(global.fetch).mock.calls.find(([url]) => String(url).includes("/certify-payment"))?.[1]?.body))).toMatchObject({ year }));
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Certified — membership activated." })));
 
         fireEvent.click(screen.getByRole("button", { name: "Reset for re-review" }));
@@ -276,6 +295,8 @@ describe("AdminMembershipPage", () => {
             const url = String(input);
             if (url.includes("/external")) return answer(400, { error: "The contract is already signed." });
             if (url.includes("/certify-payment")) return answer(409, { error: "This application is no longer awaiting payment.", code: "wrong_phase" });
+            if (url.includes("/api/settings/membership")) return answer(200, SETTINGS);
+            if (url.includes("/membership-products")) return answer(200, { problems: [] });
             return answer(200, { processes: rows });
         });
         global.fetch = fetchMock as unknown as typeof fetch;
@@ -290,6 +311,7 @@ describe("AdminMembershipPage", () => {
         const readsBefore = boardReads();
         fireEvent.click(screen.getByRole("button", { name: /Activate without payment/ }));
         fireEvent.change(await screen.findByLabelText(/^Reason/), { target: { value: "Paid by check" } });
+        await pickCertifyYear();
         fireEvent.click(screen.getByRole("button", { name: "Certify" }));
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "This application is no longer awaiting payment." })));
         await waitFor(() => expect(boardReads()).toBe(readsBefore + 1));
@@ -302,7 +324,7 @@ describe("AdminMembershipPage", () => {
         const fetchMock = jest.fn((input: RequestInfo | URL) =>
             String(input).includes("/certify-payment")
                 ? new Promise<Response>((resolve) => { release = resolve; })
-                : Promise.resolve(answer({ processes: rows })));
+                : Promise.resolve(answer(String(input).includes("/api/settings/membership") ? SETTINGS : { processes: rows })));
         global.fetch = fetchMock as unknown as typeof fetch;
         const certifies = () => fetchMock.mock.calls.filter(([url]) => String(url).includes("/certify-payment")).length;
         renderPage();
@@ -310,6 +332,7 @@ describe("AdminMembershipPage", () => {
 
         fireEvent.click(screen.getByRole("button", { name: /Activate without payment/ }));
         fireEvent.change(await screen.findByLabelText(/^Reason/), { target: { value: "Paid by check" } });
+        await pickCertifyYear();
         fireEvent.click(screen.getByRole("button", { name: "Certify" }));
         await waitFor(() => expect(certifies()).toBe(1));
         const rowButton = screen.getByRole("button", { name: /Activate without payment/ });
@@ -686,6 +709,7 @@ describe("Reset for re-review while the reload is in flight", () => {
         const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const answer = (body: unknown) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }) as Response;
             if (init?.method === "POST") return answer({});
+            if (!String(input).startsWith("/api/membership-ops/applications")) return answer({});
             reads += 1;
             if (reads === 1) return answer({ processes: [blocked] });
             return new Promise<Response>((resolve) => { finishReload = (rows) => resolve(answer({ processes: rows })); });

@@ -15,6 +15,7 @@ import { latestPendingExternal } from "@/lib/membership/phases";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
 import { asHouseholdProcess, fromWhere, openProcess, zohoWebhookMatchable } from "@/lib/membership/lifecycle";
 import { systemActor, personActor, personOrSystemActor, recordAudit } from "@/lib/auditActor";
+import { membershipYearLabel } from "@/lib/programYear";
 
 /**
  * EXTERNAL-phase service — the actions an applicant completes after intake:
@@ -240,6 +241,44 @@ export async function pickUpMissedSignature(process: Pick<OrgMembershipProcess, 
     } catch (e) {
         logger.warn(`Zoho signature check failed for membership process ${process.id}: ${e instanceof Error ? e.message : String(e)}`);
     }
+}
+
+/**
+ * Year-end close of an open, unsigned agreement whose year has ended. Zoho is asked
+ * about a stored request first: a signature found is recorded on the agreement instead,
+ * and a live request is recalled before the close, so none outlives it. A failed Zoho
+ * call throws and leaves the agreement open for the next night's pass.
+ */
+export async function closeEndedPersonAgreement(process: Pick<OrgMembershipProcess, "id" | "zohoEnvelopeId" | "membershipYear">): Promise<"signed" | "closed" | "unchanged"> {
+    const requestId = process.zohoEnvelopeId;
+    if (requestId && config.zohoAvailable() && !(await signingMockActive())) {
+        const token = await zohoSign.getAccessToken();
+        const state = await zohoSign.getRequestStatus(token, requestId);
+        if (state === "completed") {
+            await markContractSigned(process.id);
+            return "signed";
+        }
+        if (state !== "terminal") await zohoSign.recallRequest(token, requestId);
+    }
+    const year = process.membershipYear === null ? "its year" : membershipYearLabel(process.membershipYear);
+    return prisma.$transaction(async (tx) => {
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id: process.id, kind: "PERSON_AGREEMENT", contractSignedAt: null, zohoEnvelopeId: requestId, ...fromWhere("PENDING_EXTERNAL_ACTION") },
+            data: { status: "ARCHIVED", archivedFromStatus: "PENDING_EXTERNAL_ACTION", stageEnteredAt: new Date() },
+        });
+        if (count !== 1) return "unchanged" as const;
+        await tx.auditLog.create({
+            data: {
+                ...systemActor("system:person-agreement-year-end"),
+                action: "EDIT",
+                tableName: "OrgMembershipProcess",
+                affectedEntityId: process.id,
+                oldData: { status: "PENDING_EXTERNAL_ACTION" },
+                newData: { status: "ARCHIVED", membershipYear: process.membershipYear, reason: `closed unsigned at the end of ${year}` },
+            },
+        });
+        return "closed" as const;
+    });
 }
 
 /**

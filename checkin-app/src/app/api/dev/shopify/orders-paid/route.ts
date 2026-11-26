@@ -3,8 +3,8 @@ import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { config } from "@/lib/config";
-import { liveYearVariantId } from "@/lib/membership/payment";
-import { orgToday } from "@/lib/appSettings";
+import { yearVariantId } from "@/lib/membership/payment";
+import { applicationYear } from "@/lib/programYear";
 import { logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { checkoutVariantId } from "@/lib/programs/variants";
@@ -69,7 +69,7 @@ async function fireWebhook(payload: object): Promise<number> {
 async function fireMembership(processId: number, refundedInShopify: boolean): Promise<NextResponse> {
     if (!Number.isInteger(processId)) return apiError("Missing or invalid processId", 400);
 
-    const existing = await prisma.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true } });
+    const existing = await prisma.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, membershipYear: true, createdAt: true } });
     if (!existing || existing.status !== "PENDING_PAYMENT") {
         return apiError("Process not found or not awaiting payment", 404);
     }
@@ -77,7 +77,7 @@ async function fireMembership(processId: number, refundedInShopify: boolean): Pr
     // Echo the variant the family's checkout would sell, so the inbound handler finds
     // the membership line. The mock is active here, so this is never null.
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-    const variantId = await liveYearVariantId(settings?.orgMembershipYearBoundary, await orgToday());
+    const variantId = await yearVariantId(applicationYear(existing, settings?.orgMembershipYearBoundary));
 
     // Shape mirrors the subset the inbound handler reads: note_attributes (where
     // Shopify maps cart attributes) + line_items + an order id. Stable id so two

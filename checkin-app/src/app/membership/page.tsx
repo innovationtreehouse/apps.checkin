@@ -7,6 +7,7 @@ import { AlertBanner } from "@/components/admin/AlertBanner";
 import MembershipFlowStepper from "@/components/MembershipFlowStepper";
 import { useConfirmNav } from "@/components/UnsavedChangesProvider";
 import { PageLoader } from "@/components/ui/PageLoader";
+import { membershipYearLabel } from "@/lib/programYear";
 import { useMembershipPage } from "./useMembershipPage";
 import IntakePanel from "./IntakePanel";
 import ExternalActionPanel from "./ExternalActionPanel";
@@ -79,7 +80,9 @@ export default function MembershipPage() {
 
       {/* Your own agreement, not your household's: shown until signed, and it blocks nothing. */}
       {state?.personAgreement && (
-        <Alert color="yellow" variant="light" mb="lg" maw={640} title="Your individual membership agreement is unsigned">
+        <Alert color="yellow" variant="light" mb="lg" maw={640} title={state.personAgreement.membershipYear === null
+          ? "Your individual membership agreement is unsigned"
+          : `Your ${membershipYearLabel(state.personAgreement.membershipYear)} individual membership agreement is unsigned`}>
           <Text size="sm" mb="md">
             You sign your own membership agreement rather than being covered by your
             household&apos;s. Nothing is blocked while it&apos;s unsigned, but this stays here

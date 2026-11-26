@@ -10,6 +10,7 @@ import { IN_FLIGHT_INITIAL_STATUSES } from "@/lib/membership/phases";
 import { getExternalStatus, advanceExternalIfComplete } from "@/lib/membership/external";
 import { getOwnBackgroundCheck } from "@/lib/membership/checkStarted";
 import { householdApplicationOpenOrBlockedWhere } from "@/lib/membership/renewal";
+import { liveMembershipYear, NO_MEMBERSHIP_YEAR_REFUSAL } from "@/lib/programYear";
 import { ensureHouseholdMembership, lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
@@ -48,7 +49,7 @@ export class IntakeError extends Error {
      *                "primaryName".
      */
     constructor(
-        public readonly code: "no_household" | "not_lead" | "already_member" | "denied" | "blocked" | "renewal_open" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated" | "email_in_use" | "under_18_declared" | "age_lead_only",
+        public readonly code: "no_household" | "not_lead" | "already_member" | "denied" | "blocked" | "renewal_open" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated" | "email_in_use" | "under_18_declared" | "age_lead_only" | "no_boundary",
         message: string,
         public readonly fields?: string[],
     ) {
@@ -150,7 +151,7 @@ export async function getIntakeState(userId: number) {
         membershipStatus: membership?.status ?? null,
         process: process ? { id: process.id, kind: process.kind, status: process.status, isPaymentPlanRequested: process.isPaymentPlanRequested } : null,
         external,
-        personAgreement: ownAgreement ? { id: ownAgreement.id, started: !!ownAgreement.zohoEnvelopeId } : null,
+        personAgreement: ownAgreement ? { id: ownAgreement.id, started: !!ownAgreement.zohoEnvelopeId, membershipYear: ownAgreement.membershipYear } : null,
         ownBackgroundCheck,
         hasEmergencyContact: !!(contact?.name?.trim() && contact?.phone?.trim()),
         prefill: {
@@ -180,13 +181,22 @@ export async function getIntakeState(userId: number) {
  * Refused when the household is DENIED (raised to the board), ACTIVE (renewals
  * only), has a BLOCKED application (only the board moves it on), or has an open
  * renewal (one open household application at a time; a REVOKED household
- * continues that renewal instead).
+ * continues that renewal instead), or when no membership-year boundary is set. The
+ * application is for the live year on the org's today, stamped at creation.
  *
  * Every check runs inside a transaction holding a `SELECT ... FOR UPDATE` lock on
  * the Membership row, so overlapping starts, renewal opens and status changes
  * serialize here. The partial unique index `membership_one_inflight_initial` is
  * defense-in-depth.
  */
+/** The live year on the org's today, which a new household application is for. Refused with no boundary set. */
+async function openingMembershipYear(): Promise<number> {
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    const year = liveMembershipYear(settings?.orgMembershipYearBoundary, await orgToday());
+    if (year === null) throw new IntakeError("no_boundary", NO_MEMBERSHIP_YEAR_REFUSAL);
+    return year;
+}
+
 export async function startIntake(userId: number) {
     const user = await loadUserWithHousehold(userId);
     if (!user) throw new IntakeError("no_household", "User not found.");
@@ -194,6 +204,7 @@ export async function startIntake(userId: number) {
     assertLead(user);
     const householdId = user.householdId!;
 
+    const membershipYear = await openingMembershipYear();
     const membership = await ensureHouseholdMembership(prisma, householdId);
 
     try {
@@ -213,7 +224,7 @@ export async function startIntake(userId: number) {
             if (open.length > 0) return { refuse: "renewal_open" };
 
             const process = await tx.orgMembershipProcess.create({
-                data: { orgMembershipId: membership.id, kind: "INITIAL", status: "INTAKE" },
+                data: { orgMembershipId: membership.id, kind: "INITIAL", status: "INTAKE", membershipYear },
             });
 
             await tx.auditLog.create({
@@ -222,7 +233,7 @@ export async function startIntake(userId: number) {
                     action: "CREATE",
                     tableName: "OrgMembershipProcess",
                     affectedEntityId: process.id,
-                    newData: { orgMembershipId: membership.id, kind: "INITIAL", status: "INTAKE" },
+                    newData: { orgMembershipId: membership.id, kind: "INITIAL", status: "INTAKE", membershipYear },
                 },
             });
 

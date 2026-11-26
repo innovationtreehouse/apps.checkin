@@ -6,10 +6,9 @@ import { config } from "@/lib/config";
 import { personActor } from "@/lib/auditActor";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { isYouth } from "@/lib/time";
-import { orgToday } from "@/lib/appSettings";
 import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { RENEWAL_UNDERWAY, settledThisCycleWhere } from "@/lib/membership/lifecycle";
-import { liveMembershipYear, membershipYearLabel, renewalWindow } from "@/lib/programYear";
+import { applicationYear, liveMembershipYear, membershipYearLabel, renewalWindow } from "@/lib/programYear";
 
 /**
  * A household lead tells the Board the household won't renew into the year the
@@ -39,11 +38,11 @@ export function noteStands(notRenewingYear: number | null, boundary: Date | null
 
 /** True when a RENEWAL application was opened for the year its household has said it won't renew into. */
 export function isNotRenewingRenewal(
-    row: { kind: string; createdAt: Date },
+    row: { kind: string; membershipYear: number | null; createdAt: Date },
     notRenewingYear: number | null,
     boundary: Date | null | undefined,
 ): boolean {
-    return row.kind === "RENEWAL" && notRenewingYear !== null && liveMembershipYear(boundary, row.createdAt) === notRenewingYear;
+    return row.kind === "RENEWAL" && notRenewingYear !== null && applicationYear(row, boundary) === notRenewingYear;
 }
 
 const LEAD_SELECT = { name: true, householdId: true, isHouseholdLead: true, dateOfBirth: true } as const;

@@ -28,12 +28,12 @@ beforeEach(() => {
 
 describe("retryClearanceStep", () => {
     it.each([
-        ["person background-check trigger", openPersonBgForNewMember],
-        ["person agreement trigger", openPersonAgreementForNewMember],
-    ])("re-runs only the %s, as of its first failure, and clears the item", async (step, trigger) => {
+        ["person background-check trigger", openPersonBgForNewMember, [4, FAILED_AT]],
+        ["person agreement trigger", openPersonAgreementForNewMember, [4, 12, FAILED_AT]],
+    ])("re-runs only the %s, as of its first failure, and clears the item", async (step, trigger, args) => {
         await retryClearanceStep({ id: "12", step });
 
-        expect(trigger).toHaveBeenCalledWith(4, FAILED_AT);
+        expect(trigger).toHaveBeenCalledWith(...args);
         expect(raisePaymentException).not.toHaveBeenCalled();
         expect(clearStuck).toHaveBeenCalledWith({ where: { id: 3 } });
     });

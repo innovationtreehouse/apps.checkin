@@ -126,23 +126,52 @@ export function membershipYearCycle(
     return { label: `${endYear - 1}-${endYear}`, settledSince, cycleStart, cycleEnd };
 }
 
+/**
+ * The years a board grant may record on `today`, an org calendar day, earliest first: the year in progress
+ * and, inside the renewal window, the coming year. None with no boundary set.
+ */
+export function grantableYears(configuredBoundary: Date | null | undefined, today: Date): { year: number; label: string }[] {
+    if (!configuredBoundary) return [];
+    const inProgress = membershipYearOf(configuredBoundary, today);
+    const live = membershipYearCycle(configuredBoundary, today).cycleStart.getUTCFullYear();
+    return (live > inProgress ? [inProgress, live] : [inProgress]).map((year) => ({ year, label: membershipYearLabel(year) }));
+}
+
+/** Why a household application can't open with no membership-year boundary set. */
+export const NO_MEMBERSHIP_YEAR_REFUSAL = "Membership year isn't set up yet; contact the Board.";
+
 /** The live year on `day`, an org calendar day, named by the year its opening boundary is in; null with no boundary set. */
 export function liveMembershipYear(configuredBoundary: Date | null | undefined, day: Date): number | null {
     return configuredBoundary ? membershipYearCycle(configuredBoundary, day).cycleStart.getUTCFullYear() : null;
 }
 
 /**
- * Why a closed household application can't be reopened for its year, or null. Its
- * year is the live year when it was created; once the next year's renewal window
- * opens, Reopen refuses. No boundary set, or a per-person kind: null.
+ * The year a household application is for: its stored `membershipYear`, else, for a row
+ * stored without one, the live year at its creation. Null with no boundary set.
  */
-export function reopenYearRefusal(kind: string, createdAt: Date, boundary: Date | null | undefined, now: Date): string | null {
+export function applicationYear(
+    row: { membershipYear: number | null; createdAt: Date | string },
+    boundary: Date | null | undefined,
+): number | null {
+    return row.membershipYear ?? liveMembershipYear(boundary, new Date(row.createdAt));
+}
+
+/**
+ * Why a closed household application for `year` can't be reopened, or null: once the
+ * next year's renewal window opens on `today`, Reopen refuses. No boundary set, no year,
+ * or a per-person kind: null.
+ */
+export function reopenYearRefusal(kind: string, year: number | null, boundary: Date | null | undefined, today: Date): string | null {
     if (kind !== "INITIAL" && kind !== "RENEWAL") return null;
-    const year = liveMembershipYear(boundary, createdAt);
-    const live = liveMembershipYear(boundary, now);
+    const live = liveMembershipYear(boundary, today);
     if (year == null || live == null || live <= year) return null;
     const instead = kind === "RENEWAL" ? "use the new renewal" : "start a new application";
     return `This application is for ${membershipYearLabel(year)}. The ${membershipYearLabel(year + 1)} renewal period has started, so it can't be reopened; ${instead}.`;
+}
+
+/** True once membership year `year` has ended on `today`, an org calendar day: the boundary that closes it has come. */
+export function membershipYearEnded(year: number, boundary: Date, today: Date): boolean {
+    return membershipYearOf(boundary, today) > year;
 }
 
 /**
@@ -151,6 +180,6 @@ export function reopenYearRefusal(kind: string, createdAt: Date, boundary: Date 
  * by `today`, an org calendar day. No boundary set, or no year: null.
  */
 export function endedPaymentPlanYearRefusal(year: number | null, boundary: Date | null | undefined, today: Date): string | null {
-    if (year == null || !boundary || membershipYearOf(boundary, today) <= year) return null;
+    if (year == null || !boundary || !membershipYearEnded(year, boundary, today)) return null;
     return `This request is for ${membershipYearLabel(year)}, which has ended. Deny it; the family can ask again for the current year.`;
 }

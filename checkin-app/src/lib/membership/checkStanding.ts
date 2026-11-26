@@ -3,7 +3,8 @@ import type { DbClient } from "@/lib/db-client";
 import prisma from "@/lib/prisma";
 import { householdLeadsWhere } from "@/lib/household/leads";
 import { personBgOpen, type ProcessStatus } from "@/lib/membership/lifecycle";
-import { bgThresholdForYear, liveMembershipYear } from "@/lib/membership/renewal";
+import { bgThresholdForYear } from "@/lib/membership/renewal";
+import { applicationYear } from "@/lib/programYear";
 
 /**
  * A person's background-check standing, derived from their own check reviews
@@ -111,13 +112,15 @@ export async function checkValidFor(year: number | null, db: DbClient = prisma):
 
 /**
  * checkValidFor the year a household application is for: the year it paid for, else
- * the live year when it was created (a renewal opens in its year's window; a join in
- * renewal season is for the coming year).
+ * the year it was opened for.
  */
-export async function checkValidForApplication(app: { appliesToYear: number | null; createdAt: Date }, db: DbClient = prisma): Promise<Date | null> {
+export async function checkValidForApplication(
+    app: { appliesToYear: number | null; membershipYear: number | null; createdAt: Date },
+    db: DbClient = prisma,
+): Promise<Date | null> {
     const settings = await bgPolicy(db);
     const boundary = settings?.orgMembershipYearBoundary ?? null;
-    const year = app.appliesToYear ?? liveMembershipYear(boundary, app.createdAt);
+    const year = app.appliesToYear ?? applicationYear(app, boundary);
     return bgThresholdForYear(boundary, settings?.bgRecheckMonths, year);
 }
 

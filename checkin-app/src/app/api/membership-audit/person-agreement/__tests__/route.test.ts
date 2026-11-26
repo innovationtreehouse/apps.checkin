@@ -32,7 +32,7 @@ const mockSession = require('next-auth/next').getServerSession;
 
 // A plain Request cast to NextRequest — next/server's class isn't constructible under
 // jest, and handler() only ever reads url + json() off it.
-function req(body: unknown = { personId: 7 }) {
+function req(body: unknown = { personId: 7, year: 2026 }) {
     return new Request('http://localhost/api/membership-audit/person-agreement', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -69,11 +69,23 @@ describe('POST /api/membership-audit/person-agreement', () => {
         expect(openMock).not.toHaveBeenCalled();
     });
 
-    it('opens for a board member, crediting them as the actor', async () => {
+    it.each([
+        ['no year', { personId: 7 }],
+        ['a year that is not a whole number', { personId: 7, year: 2026.5 }],
+        ['a year given as text', { personId: 7, year: '2026' }],
+    ])('400 with %s, without opening anything', async (_label, body) => {
+        mockSession.mockResolvedValue(board);
+        const res = await POST(req(body));
+        expect(res.status).toBe(400);
+        await expect(res.json()).resolves.toMatchObject({ error: 'Choose the membership year this agreement is for.' });
+        expect(openMock).not.toHaveBeenCalled();
+    });
+
+    it('opens for a board member for the year they picked, crediting them as the actor', async () => {
         mockSession.mockResolvedValue(board);
         const res = await POST(req());
         expect(res.status).toBe(200);
-        expect(openMock).toHaveBeenCalledWith(7, 3);
+        expect(openMock).toHaveBeenCalledWith(7, 3, 2026);
     });
 
     // The registry grant is internal+public and the route selects three fields, so

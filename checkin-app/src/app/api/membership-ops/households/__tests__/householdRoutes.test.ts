@@ -124,7 +124,7 @@ describe("GET /api/membership-ops/households", () => {
         expect(Object.keys(args.select).sort()).toEqual(["householdMembers", "id", "name", "orgMembership"]);
         expect(Object.keys(args.select.orgMembership.select).sort()).toEqual(["id", "memberSince", "notRenewingYear", "processes", "status"]);
         const [row] = (await res.json()).households;
-        expect(Object.keys(row).sort()).toEqual(["awaitingPayment", "bgValidUntil", "householdMembers", "id", "name", "notRenewing", "orgMembership", "settledForComingYear", "validUntil"]);
+        expect(Object.keys(row).sort()).toEqual(["awaitingPayment", "awaitingPaymentYear", "bgValidUntil", "householdMembers", "id", "name", "notRenewing", "orgMembership", "settledForComingYear", "validUntil"]);
         expect(row.orgMembership).toEqual({ status: "ACTIVE", memberSince: null });
         expect(row.notRenewing).toBeNull();
     });

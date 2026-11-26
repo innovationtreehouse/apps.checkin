@@ -16,7 +16,7 @@ import { useLoad } from "@/lib/api";
 export default function RenewalBanner() {
   const { status } = useSession();
   const [dismissed, setDismissed] = useState(false);
-  const { data } = useLoad<{ renewalDue: boolean; dueDate?: string | null; notRenewing?: boolean }>(
+  const { data } = useLoad<{ renewalDue: boolean; dueDate?: string | null; wasDue?: boolean; notRenewing?: boolean }>(
     status === "authenticated" ? "/api/membership/renewal-status" : null,
     { retry: false, expireOn401: false },
   );
@@ -24,6 +24,7 @@ export default function RenewalBanner() {
   if (!data?.renewalDue || dismissed || sessionStorage.getItem("renewal_banner_dismissed") === "true") return null;
 
   const dueDate = data.dueDate ?? null;
+  const due = !dueDate ? "" : data.wasDue ? ` (it was due ${dueDate})` : ` by ${dueDate}`;
 
   const dismiss = () => {
     sessionStorage.setItem("renewal_banner_dismissed", "true");
@@ -36,10 +37,10 @@ export default function RenewalBanner() {
       <Group justify="space-between" align="center" wrap="wrap" gap="sm">
         <Text size="sm">
           {data.notRenewing ? (
-            <>You can still renew{dueDate ? ` by ${dueDate}` : ""} if you change your mind.</>
+            <>You can still renew{due} if you change your mind.</>
           ) : (
             <>
-              Your household membership is up for renewal{dueDate ? ` by ${dueDate}` : ""}. You&apos;re
+              Your household membership is up for renewal{due}. You&apos;re
               still active — confirm to continue for another year.
             </>
           )}

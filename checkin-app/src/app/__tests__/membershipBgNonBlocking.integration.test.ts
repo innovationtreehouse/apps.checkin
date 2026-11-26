@@ -17,6 +17,7 @@ import { markLeadCheckStarted } from '@/test-helpers/checkStarted';
 import { normalizeAuditData } from '@/lib/auditPayload';
 import { attest, boardResetReview } from '@/lib/membership/review';
 import { certifyPaymentPlan, activate, activateByProcessId } from '@/lib/membership/payment';
+import { applicationYear } from '@/lib/programYear';
 import { submitIntake } from '@/lib/membership/intake';
 import { beginRenewal } from '@/lib/membership/renewal';
 import prisma from '@/lib/prisma';
@@ -35,6 +36,15 @@ const holder = new PrismaClient({ adapter: new PrismaPg({ connectionString: proc
 afterAll(() => holder.$disconnect());
 
 const TAG = 'bg-nonblocking-test';
+
+/** The year an application was opened for, which a Board certify here records. */
+async function yearOf(processId: number): Promise<number> {
+    const [row, settings] = await Promise.all([
+        prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId }, select: { membershipYear: true, createdAt: true } }),
+        prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } }),
+    ]);
+    return applicationYear(row, settings?.orgMembershipYearBoundary) ?? 2026;
+}
 
 async function makeReviewer(label: string): Promise<number> {
     const r = await prisma.person.create({
@@ -161,7 +171,7 @@ describe('background check is non-blocking', () => {
         await markContractSigned(processId);
         await markLeadCheckStarted(processId);
         // Pay first.
-        await certifyPaymentPlan(processId, board);
+        await certifyPaymentPlan(processId, board, { year: await yearOf(processId) });
         expect(await statusOf(processId)).toBe('PENDING_BG_CLEARANCE');
         expect(await membershipStatusOf(orgMembershipId)).toBe('NONE'); // NOT active without a valid check
 
@@ -196,7 +206,7 @@ describe('background check is non-blocking', () => {
         await attest(revB, await reviewOf(processId), { result: 'APPROVE', subjectPersonIds: [leadId] });
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT'); // cleared, but unpaid → not active
         expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
-        await certifyPaymentPlan(processId, board);
+        await certifyPaymentPlan(processId, board, { year: await yearOf(processId) });
         expect(await statusOf(processId)).toBe('ACTIVE');
         expect(await membershipStatusOf(orgMembershipId)).toBe('ACTIVE');
     });
@@ -210,7 +220,7 @@ describe('background check is non-blocking', () => {
         let certify!: Promise<unknown>;
         await holder.$transaction(async (tx) => {
             await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
-            certify = certifyPaymentPlan(processId, board).catch((e: unknown) => e);
+            certify = certifyPaymentPlan(processId, board, { year: await yearOf(processId) }).catch((e: unknown) => e);
             // Let certify take the process lock and block on the household row.
             await new Promise((r) => setTimeout(r, 500));
             await tx.orgMembership.update({ where: { id: orgMembershipId }, data: { status: 'DENIED' } });
@@ -225,7 +235,7 @@ describe('background check is non-blocking', () => {
         const { processId, orgMembershipId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
         await markLeadCheckStarted(processId);
-        await certifyPaymentPlan(processId, board); // paid → PENDING_BG_CLEARANCE
+        await certifyPaymentPlan(processId, board, { year: await yearOf(processId) }); // paid → PENDING_BG_CLEARANCE
         await attest(revA, await reviewOf(processId), { result: 'REJECT', note: 'concern', subjectPersonIds: [leadId] });
         expect(await statusOf(processId)).toBe('BLOCKED');
         expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
@@ -275,7 +285,7 @@ describe('background check is non-blocking', () => {
         // Contract alone advances (no BG consent needed), and paying activates immediately.
         await markContractSigned(processId);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
-        await certifyPaymentPlan(processId, board); // certifier must be outside the applicant household (conflict-of-interest guard)
+        await certifyPaymentPlan(processId, board, { year: await yearOf(processId) }); // certifier must be outside the applicant household (conflict-of-interest guard)
         expect(await statusOf(processId)).toBe('ACTIVE');
         expect(await membershipStatusOf(orgMembershipId)).toBe('ACTIVE');
     });
@@ -335,7 +345,7 @@ describe('background check is non-blocking', () => {
         await markLeadCheckStarted(processId);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
 
-        await certifyPaymentPlan(processId, board);
+        await certifyPaymentPlan(processId, board, { year: await yearOf(processId) });
         expect(await statusOf(processId)).toBe('PENDING_BG_CLEARANCE'); // paid first, check still open
     });
 
@@ -379,13 +389,13 @@ describe('background check is non-blocking', () => {
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
 
         // A household lead certifying their OWN membership = self-approval → forbidden.
-        await expect(certifyPaymentPlan(processId, leadId)).rejects.toMatchObject({ code: 'forbidden' });
+        await expect(certifyPaymentPlan(processId, leadId, { year: await yearOf(processId) })).rejects.toMatchObject({ code: 'forbidden' });
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT'); // unchanged — nothing certified
 
         // Promoting that same lead to sysadmin does not buy a way through: the guard
         // reads the household relationship, not the actor's roles.
         await prisma.person.update({ where: { id: leadId }, data: { isSysadmin: true, isBoardMember: true } });
-        await expect(certifyPaymentPlan(processId, leadId)).rejects.toMatchObject({ code: 'forbidden' });
+        await expect(certifyPaymentPlan(processId, leadId, { year: await yearOf(processId) })).rejects.toMatchObject({ code: 'forbidden' });
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
     });
 

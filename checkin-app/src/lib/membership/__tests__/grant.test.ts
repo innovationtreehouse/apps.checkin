@@ -10,7 +10,7 @@ jest.mock('@/lib/prisma', () => {
     const db = {
         orgMembership: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn(), createMany: jest.fn() },
         orgMembershipProcess: { findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn() },
-        boardSettings: { findUnique: jest.fn() },
+        boardSettings: { findUnique: jest.fn().mockResolvedValue({ orgMembershipYearBoundary: new Date(Date.UTC(2000, 7, 1)) }) },
         auditLog: { create: jest.fn() },
         $queryRaw: jest.fn(),
         $transaction: jest.fn((fn: (tx: unknown) => unknown): unknown => fn(db)),
@@ -100,6 +100,19 @@ describe('grantMembership opening an application', () => {
         jest.mocked(prisma.orgMembershipProcess.create).mockResolvedValue({ id: 12, kind: 'INITIAL', status: 'INTAKE' } as Awaited<ReturnType<typeof prisma.orgMembershipProcess.create>>);
 
         await expect(grantMembership(7, { actorId: 99, reason: 'comp' }, 2026)).resolves.toMatchObject({ paid: false, opened: true });
+        const { data } = jest.mocked(prisma.orgMembershipProcess.create).mock.calls[0][0];
+        expect(data).toMatchObject({ kind: 'INITIAL', status: 'INTAKE', membershipYear: expect.any(Number) });
+        expect(jest.mocked(prisma.auditLog.create).mock.calls[0][0].data.newData).toMatchObject({ membershipYear: data.membershipYear });
+    });
+
+    it('refuses to open an application with no membership-year boundary set', async () => {
+        findUnique.mockResolvedValue({ status: 'NONE' } as Awaited<ReturnType<typeof prisma.orgMembership.findUnique>>);
+        jest.mocked(prisma.orgMembership.findUniqueOrThrow).mockResolvedValue({ id: 3, status: 'NONE' } as Awaited<ReturnType<typeof prisma.orgMembership.findUniqueOrThrow>>);
+        jest.mocked(prisma.orgMembershipProcess.findFirst).mockResolvedValue(null);
+        jest.mocked(prisma.boardSettings.findUnique).mockResolvedValueOnce({ orgMembershipYearBoundary: null } as Awaited<ReturnType<typeof prisma.boardSettings.findUnique>>);
+
+        await expect(grantMembership(7, { actorId: 99, reason: 'comp' }, 2026)).rejects.toThrow("Membership year isn't set up yet; contact the Board.");
+        expect(prisma.orgMembershipProcess.create).not.toHaveBeenCalled();
     });
 });
 
@@ -118,7 +131,7 @@ describe('grantMembership on a lapsed ACTIVE household with nothing open', () =>
         jest.mocked(createRenewalProcess).mockResolvedValue({ id: 30, kind: 'RENEWAL', status: 'PENDING_RENEWAL' } as Awaited<ReturnType<typeof createRenewalProcess>>);
 
         await expect(grantMembership(7, { actorId: 99, reason: 'check' }, 2026)).resolves.toMatchObject({ paid: false, opened: true, process: { id: 30 } });
-        expect(createRenewalProcess).toHaveBeenCalledWith(3);
+        expect(createRenewalProcess).toHaveBeenCalledWith(3, expect.any(Number));
     });
 
     it('refuses a household already paid for the live year', async () => {

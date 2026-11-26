@@ -107,6 +107,7 @@ beforeEach(() => {
     txQueryRaw.mockResolvedValue([{ value: MINTED_ID }]);
     prisma.person.findUnique.mockResolvedValue(user);
     ensureHouseholdMembership.mockResolvedValue({ id: 42, status: 'NONE' });
+    prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) });
 });
 
 describe('startIntake race guard', () => {
@@ -140,9 +141,31 @@ describe('startIntake race guard', () => {
         expect(result).toBe(created);
         expect(ensureHouseholdMembership).toHaveBeenCalledWith(prisma, 7);
         expect(txMembershipProcess.create).toHaveBeenCalledWith({
-            data: { orgMembershipId: 42, kind: 'INITIAL', status: 'INTAKE' },
+            data: { orgMembershipId: 42, kind: 'INITIAL', status: 'INTAKE', membershipYear: expect.any(Number) },
         });
         expect(txAuditLog.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('stamps the live year on the org day it opens', async () => {
+        jest.useFakeTimers({ now: new Date(Date.UTC(2026, 5, 20, 15)), doNotFake: ['nextTick', 'queueMicrotask', 'setImmediate', 'setTimeout'] });
+        try {
+            underLock('NONE', []);
+            txMembershipProcess.create.mockResolvedValue({ id: 101 });
+
+            await startIntake(1);
+
+            expect(txMembershipProcess.create.mock.calls[0][0].data.membershipYear).toBe(2025);
+            expect(txAuditLog.create.mock.calls[0][0].data.newData).toMatchObject({ membershipYear: 2025 });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('no_boundary: refuses before its transaction when no membership year is set up', async () => {
+        prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: null });
+
+        await expect(startIntake(1)).rejects.toMatchObject({ code: 'no_boundary', message: "Membership year isn't set up yet; contact the Board." });
+        expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
     it('a REVOKED household with nothing open starts a joining application', async () => {

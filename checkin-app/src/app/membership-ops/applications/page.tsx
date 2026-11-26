@@ -10,7 +10,7 @@ import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useStatusFilter } from "@/components/StatusFilter";
-import { reopenYearRefusal } from "@/lib/programYear";
+import { applicationYear, grantableYears, membershipYearEnded, membershipYearLabel, reopenYearRefusal } from "@/lib/programYear";
 import { useMembershipYearBoundary } from "@/app/program-ops/ProgramYearField";
 import { NOT_RENEWING, processLabel, statusLabel, type ProcessRow } from "./applicationRows";
 import { ApplicationCard, type ApplicationActions } from "./ApplicationCard";
@@ -18,6 +18,7 @@ import { ApplicationsLegend } from "./ApplicationsLegend";
 import { SettleWaitingButton } from "./SettleWaitingButton";
 import { CertifyDialog } from "./CertifyDialog";
 import { RefundDialog } from "./RefundDialog";
+import { MembershipProductChips } from "@/components/membership/MembershipProductChips";
 
 export default function AdminMembershipPage() {
   return (
@@ -41,10 +42,17 @@ function ApplicationsBoard() {
   const [certifyOpened, { open: openCertify, close: closeCertify }] = useDisclosure(false);
   const [pendingCertify, setPendingCertify] = useState<number | null>(null);
   const [certifyReason, setCertifyReason] = useState("");
+  const [certifyYear, setCertifyYear] = useState<number | null>(null);
+  const [certifyAcknowledged, setCertifyAcknowledged] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
-  // Mirrors the server's same-year Reopen refusal; the server stays the enforcement.
-  const { boundary } = useMembershipYearBoundary(showArchived);
-  const yearRefusal = (r: ProcessRow) => reopenYearRefusal(r.kind, new Date(r.createdAt), boundary, new Date());
+  const { boundary } = useMembershipYearBoundary(true);
+  // Mirrors the server's Reopen year refusals; the server stays the enforcement.
+  const yearRefusal = (r: ProcessRow) => {
+    if (r.kind !== "PERSON_AGREEMENT") return reopenYearRefusal(r.kind, applicationYear(r, boundary), boundary, new Date());
+    return r.membershipYear !== null && boundary && membershipYearEnded(r.membershipYear, boundary, new Date())
+      ? `This agreement is for ${membershipYearLabel(r.membershipYear)}, which has ended, so it can't be reopened.`
+      : null;
+  };
   const [refundOpened, { open: openRefund, close: closeRefund }] = useDisclosure(false);
   const [pendingRefund, setPendingRefund] = useState<number | null>(null);
   const [refundReason, setRefundReason] = useState("");
@@ -53,6 +61,7 @@ function ApplicationsBoard() {
     `/api/membership-ops/applications${showArchived ? "?archived=1" : ""}`,
   );
   const rows = data?.processes ?? [];
+  const certifyRow = rows.find((r) => r.id === pendingCertify) ?? null;
 
   // The row stays busy until the list re-reads, so a second click can't act on a stale row. A 409 means the
   // row changed under the board, so it re-reads too.
@@ -91,7 +100,8 @@ function ApplicationsBoard() {
   // Board reopen of a closed application — the server restores the step it was
   // closed from, or refuses with the reason.
   const unarchive = (processId: number) => post(processId, "unarchive", {}, "Application reopened.");
-  const certify = (processId: number, reason: string) => post(processId, "certify-payment", { reason }, "Certified — membership activated.");
+  const certify = (processId: number, reason: string, year: number, acknowledgeYearMismatch: boolean) =>
+    post(processId, "certify-payment", { reason, year, acknowledgeYearMismatch }, "Certified — membership activated.");
   const recordRefund = (processId: number, reason: string) => post(processId, "refund", { reason }, "Refund recorded.");
 
   const handleRefund = (processId: number) => {
@@ -111,16 +121,18 @@ function ApplicationsBoard() {
   const handleCertify = (processId: number) => {
     setPendingCertify(processId);
     setCertifyReason("");
+    setCertifyYear(null);
+    setCertifyAcknowledged(false);
     openCertify();
   };
 
   const confirmCertify = async () => {
-    if (pendingCertify === null || !certifyReason.trim()) return;
+    if (pendingCertify === null || !certifyReason.trim() || certifyYear === null) return;
     closeCertify();
     const processId = pendingCertify;
     const reason = certifyReason.trim();
     setPendingCertify(null);
-    await certify(processId, reason);
+    await certify(processId, reason, certifyYear, certifyAcknowledged);
   };
 
   const actions: ApplicationActions = {
@@ -132,6 +144,7 @@ function ApplicationsBoard() {
 
   return (
     <Stack>
+      <MembershipProductChips />
       <Text c="dimmed">
         In-flight applications. Use the manual controls below to confirm the contract was signed
         or to mark a lead&apos;s background check started. (The contract is also confirmed
@@ -185,7 +198,19 @@ function ApplicationsBoard() {
         </Stack>
       )}
 
-      <CertifyDialog opened={certifyOpened} onClose={closeCertify} reason={certifyReason} onReasonChange={setCertifyReason} onConfirm={confirmCertify} />
+      <CertifyDialog
+        opened={certifyOpened}
+        onClose={closeCertify}
+        reason={certifyReason}
+        onReasonChange={setCertifyReason}
+        years={grantableYears(boundary, new Date())}
+        year={certifyYear}
+        onYearChange={(y) => { setCertifyYear(y); setCertifyAcknowledged(false); }}
+        appliedFor={certifyRow ? applicationYear(certifyRow, boundary) : null}
+        acknowledged={certifyAcknowledged}
+        onAcknowledge={setCertifyAcknowledged}
+        onConfirm={confirmCertify}
+      />
       <RefundDialog opened={refundOpened} onClose={closeRefund} reason={refundReason} onReasonChange={setRefundReason} onConfirm={confirmRefund} />
     </Stack>
   );
