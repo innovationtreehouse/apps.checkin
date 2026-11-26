@@ -13,13 +13,19 @@ import { snapshotBoardSettings } from "@/test-helpers/boardSettings";
 import { runReconcile } from "@/lib/finance/reconcile";
 import { raiseReversalByOrderId, returnTestOrderStock } from "@/lib/finance/reconcile/reversals";
 import { recordPaymentException } from "@/lib/finance/reconcile/exceptions";
-import * as boardAlerts from "@/lib/membership/boardAlerts";
+import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
 import { refundableApplication } from "@/lib/membership/lifecycle";
 import { orderEntitlesEnrollment, type EntitlementOrder } from "@/lib/finance/reconcile/program";
 import { activateProgramEnrollment } from "@/lib/programs/activateEnrollment";
 import { systemActor } from "@/lib/auditActor";
 import { signCheckout } from "@/lib/programs/checkoutSignature";
 import type { IncomeMirrorLineRow, MirrorOrder } from "@/lib/shopifyRead/client";
+
+jest.mock("@/lib/membership/boardAlerts", () => {
+    const actual = jest.requireActual("@/lib/membership/boardAlerts");
+    return { ...actual, notifyBoardPaymentException: jest.fn(actual.notifyBoardPaymentException) };
+});
+const notifyBoard = notifyBoardPaymentException as jest.Mock;
 
 jest.mock("@/lib/email", () => ({
     sendEmail: jest.fn().mockResolvedValue(true),
@@ -304,14 +310,10 @@ describe("forward recovery", () => {
         expect(raised.shopifyOrderId).toBe(oid);
         await prisma.paymentException.update({ where: { id: raised.id }, data: { status: "RESOLVED", resolvedAt: new Date(), resolutionNote: "Board: refunded by hand" } });
 
-        const notify = jest.spyOn(boardAlerts, "notifyBoardPaymentException");
-        try {
-            ordersChangedSince.mockResolvedValue([{ ...scanned, updatedAt: new Date() }]);
-            await runReconcile();
-            expect(notify).not.toHaveBeenCalledWith("DENIED_HOUSEHOLD_ACTIVITY", expect.anything(), raised.id);
-        } finally {
-            notify.mockRestore();
-        }
+        notifyBoard.mockClear();
+        ordersChangedSince.mockResolvedValue([{ ...scanned, updatedAt: new Date() }]);
+        await runReconcile();
+        expect(notifyBoard).not.toHaveBeenCalledWith("DENIED_HOUSEHOLD_ACTIVITY", expect.anything(), raised.id);
         const after = await prisma.paymentException.findUniqueOrThrow({ where: { id: raised.id } });
         expect(after.status).toBe("RESOLVED");
         expect(after.resolutionNote).toBe("Board: refunded by hand");
