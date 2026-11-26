@@ -33,6 +33,7 @@ import * as volunteerRosterSynthetic from './volunteerRosterSyntheticClassificat
 import * as householdSynthetic from './householdSyntheticClassifications';
 import * as problemsSynthetic from './problemsSyntheticClassifications';
 import * as membershipApplicationSynthetic from './membershipApplicationSyntheticClassifications';
+import * as roleHolderSynthetic from './roleHolderSyntheticClassifications';
 import * as shopifyReadGenerated from './generated/shopify-read-classifications';
 import * as shopifyReadSynthetic from './shopifyReadSyntheticClassifications';
 
@@ -68,6 +69,7 @@ export const CLASSIFICATION_SOURCES = [
     { source: 'household-synthetic', classifications: householdSynthetic.classifications, relations: householdSynthetic.relations, marks: householdSynthetic.marks },
     { source: 'problems-synthetic', classifications: problemsSynthetic.classifications, relations: problemsSynthetic.relations, marks: problemsSynthetic.marks },
     { source: 'membership-application-synthetic', classifications: membershipApplicationSynthetic.classifications, relations: membershipApplicationSynthetic.relations, marks: membershipApplicationSynthetic.marks },
+    { source: 'role-holder-synthetic', classifications: roleHolderSynthetic.classifications, relations: roleHolderSynthetic.relations, marks: roleHolderSynthetic.marks },
     { source: 'shopify-read', classifications: shopifyReadGenerated.classifications, relations: shopifyReadGenerated.relations, marks: shopifyReadGenerated.marks },
     { source: 'shopify-read-synthetic', classifications: shopifyReadSynthetic.classifications, relations: shopifyReadSynthetic.relations, marks: shopifyReadSynthetic.marks },
 ] as const;
