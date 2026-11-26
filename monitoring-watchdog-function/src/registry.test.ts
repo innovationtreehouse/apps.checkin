@@ -36,6 +36,10 @@ describe("loadWatchdogConfig", () => {
     ).toThrow(/MONITORING_ENV/);
   });
 
+  it("throws when MONITORING_ENV is an empty string", () => {
+    expect(() => loadWatchdogConfig(env({ MONITORING_ENV: "" }))).toThrow(/MONITORING_ENV/);
+  });
+
   it("applies defaults for monitor name and renotify window", () => {
     const cfg = loadWatchdogConfig(env());
     expect(cfg.monitorName).toBe("monitoring-watchdog");

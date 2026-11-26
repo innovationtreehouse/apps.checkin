@@ -150,6 +150,16 @@ describeDb("projection into live tables (real Postgres)", () => {
     expect(row?.payoutGid).toBe(PAYOUT_GID);
   });
 
+  it("a replay of the newest balance transaction event re-applies it", async () => {
+    const newer = txnNode({ id: PAYOUT_GID });
+    const { rawEventId: newerId } = await ingest(ObjectType.BALANCE_TXN, newer);
+    const row = () => prisma.shopBalanceTransaction.findFirst({ where: { storeId: STORE, txnGid: TXN_GID } });
+
+    await prisma.shopBalanceTransaction.updateMany({ where: { storeId: STORE }, data: { netCents: 1, payoutGid: null } });
+    await project(ObjectType.BALANCE_TXN, newer, newerId);
+    expect(await row()).toMatchObject({ netCents: 9700, payoutGid: PAYOUT_GID });
+  });
+
   it("tags injected rows by source in the append-only log", async () => {
     await injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node: orderNode() }], { storeId: STORE, test: true });
     const events = await prisma.shopifyRawEvent.findMany({ where: { storeId: STORE } });

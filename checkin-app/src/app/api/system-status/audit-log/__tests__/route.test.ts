@@ -28,7 +28,8 @@ beforeEach(() => {
     prisma.auditLog.groupBy = jest.fn().mockImplementation(({ by }: { by: string[] }) => {
         if (by[0] === 'tableName') return Promise.resolve([{ tableName: 'Visit' }]);
         if (by[0] === 'actorId') return Promise.resolve([{ actorId: 7 }]);
-        return Promise.resolve([{ actorSystem: 'cron:nightly' }]);
+        if (by[0] === 'actorSystem') return Promise.resolve([{ actorSystem: 'cron:nightly' }]);
+        throw new Error(`unexpected groupBy column: ${by.join(',')}`);
     });
     prisma.person.findMany = jest.fn().mockResolvedValue([{ id: 7, name: 'Ada' }]);
 });
