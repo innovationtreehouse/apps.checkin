@@ -6,12 +6,20 @@
  * the OrgMembershipProcess fields the tab reads, at OrgMembershipProcess's
  * tiers, plus `notRenewing`, true when the row is a renewal for the year its
  * household has said it won't renew into. `notRenewing` is `internal`, the
- * tier of OrgMembership.notRenewingYear it is computed from. No other process
+ * tier of OrgMembership.notRenewingYear it is computed from. `membershipYear`,
+ * the year the application was opened for, is `public`, the tier of
+ * OrgMembershipProcess.membershipYear. No other process
  * field exists here, so a hardship or Shopify field cannot leave whatever the
  * route selects.
  *
  * Every mirrored field's tier is pinned to its schema field's tier by
  * __tests__/membership-application-strip.test.ts.
+ *
+ * MembershipProductProblem — one membership year whose Shopify product families
+ * with an unpaid application for that year can't pay through
+ * (GET /api/membership-ops/membership-products): the year (`public`, as
+ * appliesToYear), why (`internal`) and the Board's message naming the year and
+ * the cause (`internal`). No field names a household or person.
  *
  * ApplicationSettleCounts — the counts from one run of the waiting-
  * application settle sweep (POST /api/membership-ops/applications/settle-waiting):
@@ -33,7 +41,13 @@ export const classifications = {
     bgClearedAt: "internal",
     paidAt: "internal",
     requestedForHouseholdId: "public",
+    membershipYear: "public",
     notRenewing: "internal",
+  },
+  MembershipProductProblem: {
+    year: "public",
+    cause: "internal",
+    message: "internal",
   },
   ApplicationSettleCounts: {
     households: "internal",

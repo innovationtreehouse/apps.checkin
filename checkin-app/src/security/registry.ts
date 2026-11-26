@@ -378,6 +378,21 @@ defineRoute({
     ],
 });
 
+// Each running membership year whose Shopify product families with an unpaid
+// application for that year can't pay through, for the Board's error chip on the
+// applications and membership settings pages. Names a year and a cause, never a
+// household or person, so the grant stops at internal.
+defineRoute({
+    endpoint: 'GET /api/membership-ops/membership-products',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: 'problems',
+    returns: ['MembershipProductProblem'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:internal', 'public']],
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+
 // Board's volunteer roster: households on volunteer dues + the emails designated
 // ahead of signup. Exposes household leads' addresses and the designated
 // addresses (VolunteerRosterRow.email and VolunteerRosterDesignation.email are
