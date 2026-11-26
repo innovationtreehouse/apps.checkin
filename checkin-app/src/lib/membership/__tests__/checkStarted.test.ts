@@ -57,6 +57,7 @@ beforeEach(() => {
     process_.create.mockResolvedValue({ id: 70 });
     process_.updateMany.mockResolvedValue({ count: 1 });
     process_.findFirst.mockResolvedValue({ id: 40 });
+    prisma.$queryRaw.mockResolvedValue([{ status: 'NONE' }]);
 });
 
 describe('markCheckStarted — who may mark whom', () => {
@@ -131,6 +132,23 @@ describe('markCheckStarted — the review', () => {
     it('takes the Person row lock before reading', async () => {
         await markCheckStarted(2, 2);
         expect(prisma.$queryRaw).toHaveBeenCalled();
+    });
+
+    it.each([
+        ['a Board member', actor({ isBoardMember: true, householdId: 11 })],
+        ['a sysadmin', actor({ isSysadmin: true, householdId: 11 })],
+    ])('%s marking a person in a DENIED household is refused, writing and moving nothing', async (_label, a) => {
+        given(a, subject());
+        prisma.$queryRaw.mockResolvedValueOnce([{ status: 'DENIED' }]);
+        await expect(markCheckStarted(2, 1)).rejects.toMatchObject({
+            code: 'wrong_phase',
+            message: expect.stringContaining('Restore the household'),
+        });
+        expect(process_.create).not.toHaveBeenCalled();
+        expect(process_.updateMany).not.toHaveBeenCalled();
+        expect(auditCreate).not.toHaveBeenCalled();
+        expect(settleAfterEvent).not.toHaveBeenCalled();
+        expect(advanceExternalIfComplete).not.toHaveBeenCalled();
     });
 
     it('reuses an open review, stamps it once and fills an empty requested household', async () => {

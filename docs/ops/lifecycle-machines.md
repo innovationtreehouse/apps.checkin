@@ -9,8 +9,11 @@ legal states and its transition table:
   renewal, from intake through review and payment to active or archived.
 - **Household status** (`OrgMembership.status`): whether the household is a
   member — NONE, ACTIVE, REVOKED or DENIED. Only a membership process converging
-  (paid and check cleared) makes it ACTIVE; DENIED's one exit is the board's
-  restore to NONE. `setHouseholdStatus` is its one writer, and
+  (paid and check cleared) makes it ACTIVE. Denying closes the household's
+  unpaid applications in the same act; a paid one stays open until its refund
+  is recorded, which closes it. DENIED's one exit is the board's restore to
+  NONE, which closes nothing and is refused while a refund is owed.
+  `setHouseholdStatus` is its one writer, and
   `noRawStatusWrites.test.ts` fails CI on a status write anywhere else.
 - **Program sale** (`Program.phase`, `enrollmentStatus` and the start, off-sale and
   sale-ended dates): a program's time on sale — NOT_ON_SALE, ON_SALE,

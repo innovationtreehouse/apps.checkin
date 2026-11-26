@@ -337,8 +337,8 @@ type TState = ProcessStatus | OriginState;
  * The steps "Close application" (archiveApplication) takes and "Reopen" returns to;
  * `CLOSABLE_STATUSES` adds the legacy one. Close also requires `paidAt` null.
  * BLOCKED, PENDING_BG_CLEARANCE and ACTIVE are not closable here — closing would
- * erase a rejection or hide money. Only a board restore closes a BLOCKED one
- * (`RESTORE_CLOSABLE_STATUSES`).
+ * erase a rejection or hide money. Only a household denial or archive closes a
+ * BLOCKED one (`HOUSEHOLD_CLOSABLE_STATUSES`).
  */
 export const ARCHIVABLE_STATUSES = [
     "INTAKE",
@@ -356,10 +356,13 @@ export const ARCHIVABLE_STATUSES = [
 export const CLOSABLE_STATUSES = [...ARCHIVABLE_STATUSES, "RENEWAL_PENDING_BG"] as const satisfies readonly ProcessStatus[];
 
 /**
- * What a board restore of a DENIED household, or a household archive, closes, unpaid
- * only: a BLOCKED application closes too (its rejection stays in the audit row).
+ * What a household denial or archive closes, unpaid only: a BLOCKED application
+ * closes too (its rejection stays in the audit row).
  */
-export const RESTORE_CLOSABLE_STATUSES = [...CLOSABLE_STATUSES, "BLOCKED"] as const satisfies readonly ProcessStatus[];
+export const HOUSEHOLD_CLOSABLE_STATUSES = [...CLOSABLE_STATUSES, "BLOCKED"] as const satisfies readonly ProcessStatus[];
+
+/** The reason on the audit row of each application a household denial closes, or a refund closes on a denied household. */
+export const DENY_CLOSE_REASON = "household denied";
 
 /**
  * "Record refund": the step each paid, open application lands in once its refund is
@@ -394,7 +397,7 @@ export const refundableApplication = defineStateSet<Where>()({
 /**
  * Steps a row closed before the unpaid-only rule may still hold in
  * `archivedFromStatus`. Reopening restores them (a BLOCKED row comes back blocked);
- * of these, only a board restore still closes a BLOCKED row.
+ * of these, only a household denial or archive still closes a BLOCKED row.
  */
 export const LEGACY_REOPEN_STATUSES = ["PENDING_BG_CLEARANCE", "BLOCKED"] as const satisfies readonly ProcessStatus[];
 
@@ -468,13 +471,23 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, paid and signed)", legacy: true },
     { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, unsigned, or unpaid with its check not started)", legacy: true },
     // Refund recorded by the board, or by a denied household's store refund: money undone, background check untouched. Every
-    // other step only loses paidAt (flag-only, no status edge).
+    // other step only loses paidAt (flag-only, no status edge). On a DENIED household the application closes instead.
     ...ALL_STATUSES.flatMap((from): Transition<TState, string, ProcessKind>[] => {
         const to = refundLandsIn(from);
         return to && to !== from
-            ? [{ from, to, event: "recordRefund", actor: "board/sysadmin, or a store refund on a DENIED household", guardSite: "refund.ts updateMany CAS (paidAt set) + COI for a person" }]
+            ? [{ from, to, event: "recordRefund", actor: "board/sysadmin", guardSite: "refund.ts OrgMembership FOR UPDATE (not DENIED) + updateMany CAS (paidAt set) + COI for a person" }]
             : [];
     }),
+    ...(Object.keys(REFUND_LANDS_IN) as ProcessStatus[]).map(
+        (from): Transition<TState, string, ProcessKind> => ({
+            from,
+            to: "ARCHIVED",
+            event: "recordRefund",
+            actor: "board/sysadmin, or a store refund on a DENIED household",
+            guardSite: "refund.ts OrgMembership FOR UPDATE (DENIED) + updateMany CAS (paidAt set) + COI for a person",
+            ...(from === "RENEWAL_PENDING_BG" ? { legacy: true } : {}),
+        }),
+    ),
     // Close application — unpaid steps only
     { from: "RENEWAL_PENDING_BG", to: "ARCHIVED", event: "archiveApplication", actor: "board", guardSite: "archive.ts updateMany CAS (status read, paidAt null) + COI", legacy: true },
     ...ARCHIVABLE_STATUSES.map(
@@ -486,8 +499,17 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
             guardSite: "archive.ts updateMany CAS (status read, paidAt null) + COI",
         }),
     ),
-    // A board restore closes the denied household's unpaid applications, BLOCKED included.
-    { from: "BLOCKED", to: "ARCHIVED", event: "closeForRestore", actor: "board", guardSite: "archive.ts closeForRestore: updateMany CAS (status read, paidAt null), in the household restore or archive transaction" },
+    // A household denial or archive closes its unpaid applications, BLOCKED included.
+    ...HOUSEHOLD_CLOSABLE_STATUSES.map(
+        (from): Transition<TState, string, ProcessKind> => ({
+            from,
+            to: "ARCHIVED",
+            event: "closeHouseholdApplications",
+            actor: "board",
+            guardSite: "archive.ts closeHouseholdApplications: updateMany CAS (status read, paidAt null), in the household deny or archive transaction",
+            ...(from === "RENEWAL_PENDING_BG" ? { legacy: true } : {}),
+        }),
+    ),
     // Reopen — back to the step the close captured. ARCHIVED rests but is not sealed.
     ...ARCHIVABLE_STATUSES.map(
         (to): Transition<TState, string, ProcessKind> => ({

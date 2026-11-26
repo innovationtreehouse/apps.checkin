@@ -32,7 +32,8 @@ import {
     ALL_KINDS,
     ARCHIVABLE_STATUSES,
     CLOSABLE_STATUSES,
-    RESTORE_CLOSABLE_STATUSES,
+    HOUSEHOLD_CLOSABLE_STATUSES,
+    REFUND_LANDS_IN,
     refundLandsIn,
     refundableApplication,
     RESTORABLE_STATUSES,
@@ -220,14 +221,20 @@ describe('isLegalTransition covers the declared edges', () => {
         expect(isLegalTransition('BLOCKED', 'ACTIVE')).toBe(false);
     });
 
-    test('close only from the unpaid, long-idle steps — never paid or active; blocked only by a board restore', () => {
+    test('close only from the unpaid, long-idle steps — never active; blocked only by a household denial or archive; paid only by a refund', () => {
         for (const from of ['INTAKE', 'PENDING_EXTERNAL_ACTION', 'PENDING_BG_REVIEW', 'PENDING_PAYMENT', 'PENDING_RENEWAL'] as ProcessStatus[]) {
             expect(isLegalTransition(from, 'ARCHIVED')).toBe(true);
         }
-        for (const from of ['ACTIVE', 'PENDING_BG_CLEARANCE'] as ProcessStatus[]) {
-            expect(isLegalTransition(from, 'ARCHIVED')).toBe(false);
-        }
-        expect(TRANSITIONS.filter((t) => t.from === 'BLOCKED' && t.to === 'ARCHIVED').map((t) => t.event)).toEqual(['closeForRestore']);
+        expect(isLegalTransition('ACTIVE', 'ARCHIVED')).toBe(false);
+        expect(TRANSITIONS.filter((t) => t.from === 'PENDING_BG_CLEARANCE' && t.to === 'ARCHIVED').map((t) => t.event)).toEqual(['recordRefund']);
+        expect(TRANSITIONS.filter((t) => t.from === 'BLOCKED' && t.to === 'ARCHIVED').map((t) => t.event).sort()).toEqual(['closeHouseholdApplications', 'recordRefund']);
+    });
+
+    test('a denial or archive closes every unpaid open step but a clearance wait', () => {
+        const closes = TRANSITIONS.filter((t) => t.event === 'closeHouseholdApplications');
+        expect(closes.every((t) => t.to === 'ARCHIVED')).toBe(true);
+        expect(closes.map((t) => t.from).sort()).toEqual([...HOUSEHOLD_CLOSABLE_STATUSES].sort());
+        expect((openProcess.statuses as readonly string[]).filter((s) => !(HOUSEHOLD_CLOSABLE_STATUSES as readonly string[]).includes(s))).toEqual(['PENDING_BG_CLEARANCE']);
     });
 
     test('reopen returns to every closable step and to the legacy closed-from steps — ARCHIVED is not sealed', () => {
@@ -252,8 +259,14 @@ describe('isLegalTransition covers the declared edges', () => {
         }
         expect(refundLandsIn('ACTIVE')).toBeNull();
         expect(refundLandsIn('ARCHIVED')).toBeNull();
-        expect(TRANSITIONS.filter((t) => t.event === 'recordRefund').map((t) => [t.from, t.to])).toEqual([['PENDING_BG_CLEARANCE', 'PENDING_PAYMENT']]);
-        expect(TRANSITIONS.some((t) => t.from === 'BLOCKED' && t.event === 'recordRefund')).toBe(false);
+        const refunds = TRANSITIONS.filter((t) => t.event === 'recordRefund');
+        expect(refunds.filter((t) => t.to !== 'ARCHIVED').map((t) => [t.from, t.to])).toEqual([['PENDING_BG_CLEARANCE', 'PENDING_PAYMENT']]);
+        expect(refunds.some((t) => t.from === 'BLOCKED' && t.to !== 'ARCHIVED')).toBe(false);
+    });
+
+    test('a refund on a denied household closes the application from every refundable step', () => {
+        const closes = TRANSITIONS.filter((t) => t.event === 'recordRefund' && t.to === 'ARCHIVED').map((t) => t.from);
+        expect(closes.sort()).toEqual(Object.keys(REFUND_LANDS_IN).sort());
     });
 
     test('Record refund is offered on a paid row exactly where a refund lands somewhere', () => {
@@ -264,9 +277,9 @@ describe('isLegalTransition covers the declared edges', () => {
         expect(refundableApplication.where).toEqual({ status: { in: [...openProcess.statuses] }, paidAt: { not: null } });
     });
 
-    test('close takes the legacy RENEWAL_PENDING_BG too, and a restore closes it, without a reopen edge back', () => {
+    test('close takes the legacy RENEWAL_PENDING_BG too, and a denial or archive closes it, without a reopen edge back', () => {
         expect([...CLOSABLE_STATUSES].sort()).toEqual([...ARCHIVABLE_STATUSES, 'RENEWAL_PENDING_BG'].sort());
-        expect([...RESTORE_CLOSABLE_STATUSES].sort()).toEqual([...CLOSABLE_STATUSES, 'BLOCKED'].sort());
+        expect([...HOUSEHOLD_CLOSABLE_STATUSES].sort()).toEqual([...CLOSABLE_STATUSES, 'BLOCKED'].sort());
         expect(TRANSITIONS.some((t) => t.from === 'RENEWAL_PENDING_BG' && t.to === 'ARCHIVED' && t.legacy)).toBe(true);
         expect(isLegalTransition('ARCHIVED', 'RENEWAL_PENDING_BG')).toBe(false);
     });

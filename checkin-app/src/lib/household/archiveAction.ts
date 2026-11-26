@@ -1,5 +1,5 @@
 import { withArchivedHouseholds } from "@/lib/household/archived";
-import { closeForRestore, countOpenApplications, lockOpenApplications } from "@/lib/membership/archive";
+import { closeHouseholdApplications, countOpenApplications, lockOpenApplications } from "@/lib/membership/archive";
 import { type AuditActor, personActor, systemActor } from "@/lib/auditActor";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { ServiceError } from "@checkin/component-kit";
@@ -73,7 +73,7 @@ export async function archiveHousehold(householdId: number, actorId: number) {
         }
 
         // Refuses while an open application holds a payment with no recorded refund.
-        await closeForRestore(tx, openApplications, actor, "archive");
+        await closeHouseholdApplications(tx, openApplications, actor, "archive");
         const archivedAt = new Date();
         const { count } = await tx.household.updateMany({ where: { id: householdId, archivedAt: null }, data: { archivedAt } });
         if (count !== 1) throw refuse("This household changed while you were looking at it. Reload and try again.");

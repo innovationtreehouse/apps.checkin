@@ -12,7 +12,7 @@
  *     reads the household's check started from its people's reviews; a paid row
  *     goes to PENDING_BG_CLEARANCE and is handed to the household settle.
  */
-import { setZohoEnvelope, findProcessByEnvelope, getOrCreateContractSigningUrl, advanceExternalIfComplete, markContractSigned, pickUpMissedSignature, resetSigning, ExternalError } from '@/lib/membership/external';
+import { setZohoEnvelope, findProcessByEnvelope, getOrCreateContractSigningUrl, advanceExternalIfComplete, markContractSigned, pickUpMissedSignature, raiseDeniedClosedSignature, resetSigning, ExternalError } from '@/lib/membership/external';
 import { SIGN_FIELDS } from '@/lib/membership/contract/signFields';
 
 jest.mock('@/lib/prisma', () => ({
@@ -22,6 +22,7 @@ jest.mock('@/lib/prisma', () => ({
         orgMembership: { findUnique: jest.fn() },
         orgMembershipProcess: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn(), update: jest.fn(), findFirst: jest.fn(), updateMany: jest.fn(), count: jest.fn() },
         auditLog: { create: jest.fn() },
+        $queryRaw: jest.fn(),
         // signingMockActive reads the dev signing-target radio; null = default ('zoho').
         boardSettings: { findUnique: jest.fn().mockResolvedValue(null) },
         $transaction: jest.fn(),
@@ -34,6 +35,7 @@ jest.mock('@/lib/membership/review', () => ({
 }));
 
 jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleAfterEvent: jest.fn() }));
+jest.mock('@/lib/membership/householdStatus', () => ({ raiseDeniedHouseholdActivity: jest.fn() }));
 
 jest.mock('@/lib/logger', () => {
     const actual = jest.requireActual('@/lib/logger');
@@ -82,6 +84,8 @@ const { loadAgreementPdf, stampWatermark, AgreementUnavailableError } = require(
 const { notifyReviewers, applyVolunteerFamilyStatus } = require('@/lib/membership/review');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { settleAfterEvent } = require('@/lib/membership/settleHouseholdBg');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { raiseDeniedHouseholdActivity } = require('@/lib/membership/householdStatus');
 
 // resetAllMocks, NOT clearAllMocks: clear wipes recorded calls but KEEPS
 // implementations, so a `mockResolvedValue` set in one test silently answers every
@@ -94,6 +98,7 @@ const { settleAfterEvent } = require('@/lib/membership/settleHouseholdBg');
 beforeEach(() => {
     jest.resetAllMocks();
     prisma.boardSettings.findUnique.mockResolvedValue(null); // signingMockActive: no dev override
+    prisma.$queryRaw.mockResolvedValue([{ householdId: 7, status: 'NONE' }]); // the membership row lock
     notifyReviewers.mockResolvedValue(undefined);
     applyVolunteerFamilyStatus.mockResolvedValue(undefined);
     config.zohoAvailable.mockReturnValue(true);
@@ -134,6 +139,24 @@ describe('setZohoEnvelope', () => {
 
         await expect(setZohoEnvelope(1, 'req-1', 5)).rejects.toMatchObject({ code: 'wrong_phase' });
         expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+});
+
+describe('raiseDeniedClosedSignature', () => {
+    it('raises a signature for a DENIED household\'s closed application, recording nothing', async () => {
+        prisma.orgMembershipProcess.findFirst.mockResolvedValue({ id: 9, orgMembership: { householdId: 7 } });
+        expect(await raiseDeniedClosedSignature('req-9')).toBe(true);
+        expect(prisma.orgMembershipProcess.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+            where: { zohoEnvelopeId: 'req-9', status: 'ARCHIVED', orgMembership: { status: 'DENIED' } },
+        }));
+        expect(raiseDeniedHouseholdActivity).toHaveBeenCalledWith(expect.objectContaining({ householdId: 7, processId: 9 }));
+        expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('raises nothing for any other request', async () => {
+        prisma.orgMembershipProcess.findFirst.mockResolvedValue(null);
+        expect(await raiseDeniedClosedSignature('req-9')).toBe(false);
+        expect(raiseDeniedHouseholdActivity).not.toHaveBeenCalled();
     });
 });
 
@@ -193,6 +216,17 @@ describe('advanceExternalIfComplete', () => {
 
         expect(applyVolunteerFamilyStatus).toHaveBeenCalledWith(prisma, 42, 7, false);
         expect(notifyReviewers).not.toHaveBeenCalled();
+    });
+
+    it('a DENIED household\'s application never advances: no write, no audit, no settle', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValueOnce(readyProcess);
+        prisma.$queryRaw.mockResolvedValue([{ householdId: 7, status: 'DENIED' }]);
+
+        expect(await advanceExternalIfComplete(20)).toEqual(readyProcess);
+
+        expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+        expect(prisma.auditLog.create).not.toHaveBeenCalled();
+        expect(settleAfterEvent).not.toHaveBeenCalled();
     });
 
     it('loser of the race (count 0): no allowlist match, no audit, no ping', async () => {
@@ -762,6 +796,30 @@ describe('markContractSigned', () => {
         expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith(expect.objectContaining({
             data: { contractSignedAt: expect.any(Date) },
         }));
+    });
+});
+
+describe('markContractSigned — a DENIED household', () => {
+    const app = { id: 20, kind: 'INITIAL', status: 'PENDING_EXTERNAL_ACTION', orgMembershipId: 42, paidAt: new Date(), contractSignedAt: null };
+
+    beforeEach(() => {
+        prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
+        prisma.$queryRaw.mockResolvedValue([{ householdId: 7, status: 'DENIED' }]);
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue(app);
+    });
+
+    it('a late Zoho signature records nothing and is raised for the board', async () => {
+        expect(await markContractSigned(20)).toEqual(app);
+        expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+        expect(prisma.auditLog.create).not.toHaveBeenCalled();
+        expect(settleAfterEvent).not.toHaveBeenCalled();
+        expect(raiseDeniedHouseholdActivity).toHaveBeenCalledWith(expect.objectContaining({ householdId: 7, processId: 20 }));
+    });
+
+    it('a board-recorded signature is refused with the reason, recording nothing', async () => {
+        await expect(markContractSigned(20, 9, true)).rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('Restore the household') });
+        expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+        expect(raiseDeniedHouseholdActivity).not.toHaveBeenCalled();
     });
 });
 

@@ -4,7 +4,7 @@ import { withArchivedHouseholds } from "@/lib/household/archived";
 jest.mock("@/lib/household/archived", () => ({ withArchivedHouseholds: jest.fn() }));
 jest.mock("@/lib/email", () => ({ sendEmail: jest.fn() }));
 jest.mock("@/lib/membership/archive", () => ({
-    closeForRestore: jest.fn(),
+    closeHouseholdApplications: jest.fn(),
     countOpenApplications: jest.fn().mockResolvedValue(0),
     lockOpenApplications: jest.fn().mockResolvedValue([]),
 }));

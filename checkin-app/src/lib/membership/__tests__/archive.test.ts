@@ -2,11 +2,12 @@
  * @jest-environment node
  */
 import prisma from '@/lib/prisma';
-import { archiveApplication, closeForRestore, unarchiveApplication } from '@/lib/membership/archive';
+import { archiveApplication, closeHouseholdApplications, unarchiveApplication } from '@/lib/membership/archive';
+import { personActor } from '@/lib/auditActor';
+import type { TxClient } from '@/lib/db-client';
 import type { OrgMembershipProcess } from '@/generated/prisma/client';
 import { settleAfterEvent } from '@/lib/membership/settleHouseholdBg';
 import { pickUpMissedSignature } from '@/lib/membership/external';
-import { personActor } from '@/lib/auditActor';
 
 const tx = {
     $queryRaw: jest.fn(),
@@ -42,6 +43,45 @@ jest.mocked(prisma.$transaction).mockImplementation(((cb: (t: typeof tx) => unkn
 function row(over: Partial<OrgMembershipProcess>): OrgMembershipProcess {
     return { id: 1, kind: 'INITIAL', status: 'PENDING_PAYMENT', orgMembershipId: 9, subjectPersonId: null, paidAt: null, archivedFromStatus: null, ...over } as OrgMembershipProcess;
 }
+
+describe('closeHouseholdApplications', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+    });
+    const client = tx as unknown as TxClient;
+    const paid = new Date('2026-11-01');
+    const open = [
+        { id: 1, status: 'INTAKE', paidAt: null },
+        { id: 2, status: 'PENDING_EXTERNAL_ACTION', paidAt: null },
+        { id: 3, status: 'PENDING_PAYMENT', paidAt: null },
+        { id: 4, status: 'BLOCKED', paidAt: null },
+        { id: 5, status: 'PENDING_BG_CLEARANCE', paidAt: paid },
+    ] as const;
+
+    it('a denial closes every unpaid application, BLOCKED included, from the step it held, and leaves a paid one open', async () => {
+        await closeHouseholdApplications(client, [...open], personActor(2), 'deny');
+        const closed = tx.orgMembershipProcess.updateMany.mock.calls.map(([arg]) => arg);
+        expect(closed.map((c) => c.where.id)).toEqual([1, 2, 3, 4]);
+        for (const c of closed) {
+            expect(c.where.paidAt).toBeNull();
+            expect(c.data).toMatchObject({ status: 'ARCHIVED', archivedFromStatus: c.where.status });
+        }
+        expect(tx.auditLog.create).toHaveBeenCalledTimes(4);
+        expect(tx.auditLog.create.mock.calls[3][0].data.newData).toEqual({ status: 'ARCHIVED', reason: 'household denied' });
+    });
+
+    it('an archive refuses while an application has a payment recorded, closing nothing', async () => {
+        await expect(closeHouseholdApplications(client, [...open], personActor(2), 'archive')).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect(tx.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('an archive closes every unpaid application with its own reason', async () => {
+        await closeHouseholdApplications(client, open.slice(0, 4), personActor(2), 'archive');
+        expect(tx.orgMembershipProcess.updateMany).toHaveBeenCalledTimes(4);
+        expect(tx.auditLog.create.mock.calls[0][0].data.newData).toEqual({ status: 'ARCHIVED', reason: 'household archived' });
+    });
+});
 
 describe('archiveApplication (Close application)', () => {
     beforeEach(() => jest.clearAllMocks());
@@ -84,7 +124,7 @@ describe('archiveApplication (Close application)', () => {
     });
 });
 
-describe('closeForRestore', () => {
+describe('closeHouseholdApplications, concurrent change', () => {
     beforeEach(() => jest.clearAllMocks());
 
     it('refuses when an application changed after it was read, after closing the ones before it', async () => {
@@ -93,7 +133,7 @@ describe('closeForRestore', () => {
             { id: 1, status: 'PENDING_PAYMENT' as const, paidAt: null },
             { id: 2, status: 'INTAKE' as const, paidAt: null },
         ];
-        await expect(closeForRestore(tx as unknown as Parameters<typeof closeForRestore>[0], open, personActor(3)))
+        await expect(closeHouseholdApplications(tx as unknown as TxClient, open, personActor(3), 'deny'))
             .rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('changed while you were acting on it') });
         expect(tx.orgMembershipProcess.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
             where: { id: 2, status: 'INTAKE', paidAt: null },
@@ -122,6 +162,23 @@ describe('unarchiveApplication (Reopen)', () => {
         expect(settleAfterEvent).toHaveBeenCalledWith(5, expect.any(String), {}, expect.anything());
     });
 
+    it('a BLOCKED application a denial closed reopens BLOCKED once the household is restored', async () => {
+        findUnique.mockResolvedValue(row({ status: 'ARCHIVED', archivedFromStatus: 'BLOCKED' }));
+        tx.orgMembership.findUnique.mockResolvedValue({ status: 'NONE' });
+        tx.orgMembershipProcess.findFirst.mockResolvedValue(null);
+        tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+        await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'BLOCKED' });
+        expect(tx.orgMembershipProcess.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ status: 'BLOCKED', archivedFromStatus: null }),
+        }));
+    });
+
+    it('a denied household reopens nothing', async () => {
+        findUnique.mockResolvedValue(row({ status: 'ARCHIVED', archivedFromStatus: 'BLOCKED' }));
+        tx.orgMembership.findUnique.mockResolvedValue({ status: 'DENIED' });
+        await expect(unarchiveApplication(1, 2)).rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringMatching(/Restore the household/) });
+        expect(tx.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+    });
 
     describe('signing request across a denial', () => {
         const reopen = async () => {
@@ -140,14 +197,21 @@ describe('unarchiveApplication (Reopen)', () => {
             expect(pickUpMissedSignature).toHaveBeenCalled();
         });
 
-        it('forgets the request in the reopen write when a denial, a restore or the restore close follows the close', async () => {
+        it("forgets the request in the reopen write when the close was a denial's, a refund's on a denied household or a restore's, or a denial follows it", async () => {
             tx.auditLog.findFirst.mockResolvedValueOnce({ id: 40 }).mockResolvedValueOnce({ id: 41 });
             expect(await reopen()).toMatchObject({ zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null });
             expect(pickUpMissedSignature).not.toHaveBeenCalled();
             expect(tx.auditLog.findFirst).toHaveBeenLastCalledWith(expect.objectContaining({
                 where: {
                     OR: [
-                        { id: 40, newData: { path: ['reason'], equals: 'household restored' } },
+                        {
+                            id: 40,
+                            OR: [
+                                { newData: { path: ['reason'], equals: 'household denied' } },
+                                { newData: { path: ['closeReason'], equals: 'household denied' } },
+                                { newData: { path: ['reason'], equals: 'household restored' } },
+                            ],
+                        },
                         expect.objectContaining({ tableName: 'OrgMembership', secondaryAffectedEntity: 5, id: { gt: 40 } }),
                     ],
                 },

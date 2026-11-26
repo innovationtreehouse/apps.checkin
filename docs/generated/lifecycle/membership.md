@@ -18,7 +18,8 @@ stateDiagram-v2
     ARCHIVED --> PENDING_EXTERNAL_ACTION: unarchiveApplication
     ARCHIVED --> PENDING_PAYMENT: unarchiveApplication
     ARCHIVED --> PENDING_RENEWAL: unarchiveApplication
-    BLOCKED --> ARCHIVED: closeForRestore
+    BLOCKED --> ARCHIVED: closeHouseholdApplications
+    BLOCKED --> ARCHIVED: recordRefund
     BLOCKED --> INTAKE: settleHouseholdBg
     BLOCKED --> PENDING_BG_CLEARANCE: boardResetReview · legacy
     BLOCKED --> PENDING_BG_CLEARANCE: settleHouseholdBg
@@ -31,9 +32,12 @@ stateDiagram-v2
     BLOCKED --> PENDING_PAYMENT: settleHouseholdBg
     BLOCKED --> PENDING_RENEWAL: settleHouseholdBg
     INTAKE --> ARCHIVED: archiveApplication
+    INTAKE --> ARCHIVED: closeHouseholdApplications
+    INTAKE --> ARCHIVED: recordRefund
     INTAKE --> BLOCKED: settleHouseholdBg
     INTAKE --> PENDING_EXTERNAL_ACTION: submitIntake · INITIAL
     PENDING_BG_CLEARANCE --> ACTIVE: settleHouseholdBg
+    PENDING_BG_CLEARANCE --> ARCHIVED: recordRefund
     PENDING_BG_CLEARANCE --> BLOCKED: settleHouseholdBg
     PENDING_BG_CLEARANCE --> PENDING_EXTERNAL_ACTION: settleHouseholdBg
     PENDING_BG_CLEARANCE --> PENDING_PAYMENT: recordRefund
@@ -41,7 +45,9 @@ stateDiagram-v2
     PENDING_BG_REVIEW --> ACTIVE: settleHouseholdBg · legacy
     PENDING_BG_REVIEW --> ARCHIVED: archiveApplication
     PENDING_BG_REVIEW --> ARCHIVED: attest names a person with an empty review · PERSON_BG
+    PENDING_BG_REVIEW --> ARCHIVED: closeHouseholdApplications
     PENDING_BG_REVIEW --> ARCHIVED: dismissCheckStarted · PERSON_BG
+    PENDING_BG_REVIEW --> ARCHIVED: recordRefund
     PENDING_BG_REVIEW --> ARCHIVED: settleHouseholdBg closes an unneeded unnamed review · PERSON_BG
     PENDING_BG_REVIEW --> BLOCKED: attest REJECT · PERSON_BG
     PENDING_BG_REVIEW --> BLOCKED: settleHouseholdBg
@@ -51,20 +57,28 @@ stateDiagram-v2
     PENDING_EXTERNAL_ACTION --> ACTIVE: markContractSigned · KEY_VOLUNTEER_AGREEMENT
     PENDING_EXTERNAL_ACTION --> ACTIVE: markContractSigned · PERSON_AGREEMENT
     PENDING_EXTERNAL_ACTION --> ARCHIVED: archiveApplication
+    PENDING_EXTERNAL_ACTION --> ARCHIVED: closeHouseholdApplications
     PENDING_EXTERNAL_ACTION --> ARCHIVED: closePersonAgreementOnLead · PERSON_AGREEMENT
+    PENDING_EXTERNAL_ACTION --> ARCHIVED: recordRefund
     PENDING_EXTERNAL_ACTION --> BLOCKED: settleHouseholdBg
     PENDING_EXTERNAL_ACTION --> PENDING_BG_CLEARANCE: advanceExternalIfComplete
     PENDING_EXTERNAL_ACTION --> PENDING_PAYMENT: advanceExternalIfComplete
     PENDING_PAYMENT --> ACTIVE: activate
     PENDING_PAYMENT --> ACTIVE: grantMembership
     PENDING_PAYMENT --> ARCHIVED: archiveApplication
+    PENDING_PAYMENT --> ARCHIVED: closeHouseholdApplications
+    PENDING_PAYMENT --> ARCHIVED: recordRefund
     PENDING_PAYMENT --> BLOCKED: settleHouseholdBg
     PENDING_PAYMENT --> PENDING_BG_CLEARANCE: activate
     PENDING_PAYMENT --> PENDING_EXTERNAL_ACTION: activate
     PENDING_RENEWAL --> ARCHIVED: archiveApplication
+    PENDING_RENEWAL --> ARCHIVED: closeHouseholdApplications
+    PENDING_RENEWAL --> ARCHIVED: recordRefund
     PENDING_RENEWAL --> BLOCKED: settleHouseholdBg
     PENDING_RENEWAL --> PENDING_EXTERNAL_ACTION: beginRenewal · RENEWAL
     RENEWAL_PENDING_BG --> ARCHIVED: archiveApplication · legacy
+    RENEWAL_PENDING_BG --> ARCHIVED: closeHouseholdApplications · legacy
+    RENEWAL_PENDING_BG --> ARCHIVED: recordRefund · legacy
     [*] --> INTAKE: startIntake · INITIAL
     [*] --> PENDING_BG_REVIEW: legacy household flag (no subject) · PERSON_BG · legacy
     [*] --> PENDING_BG_REVIEW: markCheckStarted · PERSON_BG
@@ -80,18 +94,18 @@ stateDiagram-v2
 
 A blank (`—`) cell is a **deliberate** absent edge — a decision to ratify, not an oversight.
 
-| state ╲ event | activate | advanceExternalIfComplete | archiveApplication | attest REJECT | attest change to APPROVE | attest names a person with an empty review | beginRenewal | boardResetReview | clearBackgroundCheck | closeForRestore | closePersonAgreementOnLead | createRenewalProcess | dismissCheckStarted | grantMembership | legacy household flag (no subject) | markCheckStarted | markContractSigned | openKvaIfNeeded | personAgreementTriggers | personBgTriggers | recordRefund | settleHouseholdBg | settleHouseholdBg closes an unneeded unnamed review | startIntake | submitIntake | unarchiveApplication |
+| state ╲ event | activate | advanceExternalIfComplete | archiveApplication | attest REJECT | attest change to APPROVE | attest names a person with an empty review | beginRenewal | boardResetReview | clearBackgroundCheck | closeHouseholdApplications | closePersonAgreementOnLead | createRenewalProcess | dismissCheckStarted | grantMembership | legacy household flag (no subject) | markCheckStarted | markContractSigned | openKvaIfNeeded | personAgreementTriggers | personBgTriggers | recordRefund | settleHouseholdBg | settleHouseholdBg closes an unneeded unnamed review | startIntake | submitIntake | unarchiveApplication |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ∅ | — | — | — | — | — | — | — | — | — | — | — | PENDING_RENEWAL | — | — | PENDING_BG_REVIEW | PENDING_BG_REVIEW | — | PENDING_EXTERNAL_ACTION | PENDING_EXTERNAL_ACTION | PENDING_BG_REVIEW | — | — | — | INTAKE | — | — |
-| INTAKE | — | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | BLOCKED | — | — | PENDING_EXTERNAL_ACTION | — |
-| PENDING_EXTERNAL_ACTION | — | PENDING_BG_CLEARANCE, PENDING_PAYMENT | ARCHIVED | — | — | — | — | — | — | — | ARCHIVED | — | — | — | — | — | ACTIVE | — | — | — | — | BLOCKED | — | — | — | — |
-| PENDING_BG_REVIEW | — | — | ARCHIVED | BLOCKED | — | ARCHIVED | — | — | ACTIVE | — | — | — | ARCHIVED | — | — | — | — | — | — | — | — | ACTIVE, BLOCKED, PENDING_BG_CLEARANCE, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT | ARCHIVED | — | — | — |
-| PENDING_PAYMENT | ACTIVE, PENDING_BG_CLEARANCE, PENDING_EXTERNAL_ACTION | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | ACTIVE | — | — | — | — | — | — | — | BLOCKED | — | — | — | — |
-| PENDING_BG_CLEARANCE | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | PENDING_PAYMENT | ACTIVE, BLOCKED, PENDING_EXTERNAL_ACTION | — | — | — | — |
+| INTAKE | — | — | ARCHIVED | — | — | — | — | — | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | ARCHIVED | BLOCKED | — | — | PENDING_EXTERNAL_ACTION | — |
+| PENDING_EXTERNAL_ACTION | — | PENDING_BG_CLEARANCE, PENDING_PAYMENT | ARCHIVED | — | — | — | — | — | — | ARCHIVED | ARCHIVED | — | — | — | — | — | ACTIVE | — | — | — | ARCHIVED | BLOCKED | — | — | — | — |
+| PENDING_BG_REVIEW | — | — | ARCHIVED | BLOCKED | — | ARCHIVED | — | — | ACTIVE | ARCHIVED | — | — | ARCHIVED | — | — | — | — | — | — | — | ARCHIVED | ACTIVE, BLOCKED, PENDING_BG_CLEARANCE, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT | ARCHIVED | — | — | — |
+| PENDING_PAYMENT | ACTIVE, PENDING_BG_CLEARANCE, PENDING_EXTERNAL_ACTION | — | ARCHIVED | — | — | — | — | — | — | ARCHIVED | — | — | — | ACTIVE | — | — | — | — | — | — | ARCHIVED | BLOCKED | — | — | — | — |
+| PENDING_BG_CLEARANCE | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | ARCHIVED, PENDING_PAYMENT | ACTIVE, BLOCKED, PENDING_EXTERNAL_ACTION | — | — | — | — |
 | ACTIVE | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
-| BLOCKED | — | — | — | — | PENDING_BG_REVIEW | — | — | PENDING_BG_CLEARANCE, PENDING_BG_REVIEW, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | — | INTAKE, PENDING_BG_CLEARANCE, PENDING_BG_REVIEW, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT, PENDING_RENEWAL | — | — | — | — |
-| PENDING_RENEWAL | — | — | ARCHIVED | — | — | — | PENDING_EXTERNAL_ACTION | — | — | — | — | — | — | — | — | — | — | — | — | — | — | BLOCKED | — | — | — | — |
-| RENEWAL_PENDING_BG | — | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
+| BLOCKED | — | — | — | — | PENDING_BG_REVIEW | — | — | PENDING_BG_CLEARANCE, PENDING_BG_REVIEW, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | ARCHIVED | INTAKE, PENDING_BG_CLEARANCE, PENDING_BG_REVIEW, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT, PENDING_RENEWAL | — | — | — | — |
+| PENDING_RENEWAL | — | — | ARCHIVED | — | — | — | PENDING_EXTERNAL_ACTION | — | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | ARCHIVED | BLOCKED | — | — | — | — |
+| RENEWAL_PENDING_BG | — | — | ARCHIVED | — | — | — | — | — | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | ARCHIVED | — | — | — | — | — |
 | ARCHIVED | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | BLOCKED, INTAKE, PENDING_BG_CLEARANCE, PENDING_BG_REVIEW, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT, PENDING_RENEWAL |
 
 ## Reachability
