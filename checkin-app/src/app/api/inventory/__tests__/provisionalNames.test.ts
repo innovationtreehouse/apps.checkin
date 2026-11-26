@@ -45,15 +45,19 @@ async function read(route: (req: NextRequestType, ctx: { params: Promise<Record<
 beforeAll(() => {
   configureLocalInventory({ auth: { getPrincipal: async () => null }, org: async () => ({ id: "treehouse", name: "Treehouse" }) });
 });
-beforeEach(() => mockProvisionalFind.mockReset().mockResolvedValue([provisional]));
+/** The row as the query's select returns it. */
+function selected({ select }: { select: Record<string, boolean> }) {
+  return Object.fromEntries(Object.entries(provisional).filter(([key]) => select[key]));
+}
+beforeEach(() => mockProvisionalFind.mockReset().mockImplementation(async (args: { select: Record<string, boolean> }) => [selected(args)]));
 
 describe("provisional part names on the stock and receiving reads", () => {
   it.each([
     ["the org-items list", listOrgItems],
     ["an org item", getOrgItem],
-  ])("%s gives a viewer the provisional's public fields only", async (_, route) => {
+  ])("%s gives a viewer the provisional's GTIN, name and status", async (_, route) => {
     const body = await read(route, viewer);
-    expect(body.InventoryProvisionalItem).toEqual([{ id: 9, provisionalGtin13: PROVISIONAL, name: "Widget", usageBehavior: "consumable", status: "rejected" }]);
+    expect(body.InventoryProvisionalItem).toEqual([{ provisionalGtin13: PROVISIONAL, name: "Widget", status: "rejected" }]);
     expect(mockProvisionalFind).toHaveBeenCalledWith(expect.objectContaining({ where: { orgId: "treehouse", provisionalGtin13: { in: [PROVISIONAL] } } }));
   });
 

@@ -359,4 +359,18 @@ describeDb("ReceiveQueueService", () => {
     expect(await svc.listQueue(TEST_ORG_ID)).toHaveLength(1);
     expect(await db.inventoryLog.count({ where: { gtin13: item.gtin13 } })).toBe(0);
   });
+
+  it("openBackordersByReceipt counts only this org's open lines when another org shares the receipt id", async () => {
+    const svc = makeReceiveQueueService();
+    const line = (orgId: string, lineItemId: number) =>
+      createReceiveQueueRepository(db).create({
+        orgId, gtin13: `rq-shared-${lineItemId}`, quantity: 1, receiptId: "shared-receipt", lineItemId, queuedAt: new Date(), fulfilledAt: null,
+      });
+    await line(TEST_ORG_ID, 1);
+    await line(TEST_ORG_ID_2, 2);
+    await line(TEST_ORG_ID_2, 3);
+
+    expect(await svc.openBackordersByReceipt(TEST_ORG_ID, ["shared-receipt"])).toEqual(new Map([["shared-receipt", 1]]));
+    expect(await svc.openBackordersByReceipt(TEST_ORG_ID_2, ["shared-receipt"])).toEqual(new Map([["shared-receipt", 2]]));
+  });
 });

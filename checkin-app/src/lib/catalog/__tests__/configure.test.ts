@@ -1,4 +1,4 @@
-import type { CatalogRuntimeConfig } from "@checkin/global-catalog";
+import type { CatalogPrincipal, CatalogRuntimeConfig } from "@checkin/global-catalog";
 
 const findUnique = jest.fn();
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: { org: { findUnique } } }));
@@ -7,6 +7,8 @@ jest.mock("@/lib/prisma", () => ({ __esModule: true, default: { org: { findUniqu
 // jest env does not build; only configureCatalog is needed, to capture the config.
 const configureCatalog = jest.fn<void, [CatalogRuntimeConfig]>();
 jest.mock("@checkin/global-catalog", () => ({ configureCatalog }));
+const getPrincipal = jest.fn<Promise<CatalogPrincipal | null>, []>();
+jest.mock("@/lib/components/host", () => ({ ...jest.requireActual<object>("@/lib/components/host"), getPrincipal }));
 const consumeCatalogEvent = jest.fn();
 const inventoryOnOrgEvents = jest.fn();
 const workflowOnOrgEvents = jest.fn();
@@ -41,6 +43,12 @@ describe("configureCatalogRuntime", () => {
     findUnique.mockResolvedValue(org);
     await expect((await boot()).org()).resolves.toEqual(org);
     expect(findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "treehouse" } }));
+  });
+
+  it("gives the catalog the host's principal", async () => {
+    const principal = { id: 7, name: "Reviewer" };
+    getPrincipal.mockResolvedValue(principal);
+    await expect((await boot()).auth.getPrincipal()).resolves.toEqual(principal);
   });
 });
 

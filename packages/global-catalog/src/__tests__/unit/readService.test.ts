@@ -1,21 +1,24 @@
 import { beforeAll, beforeEach, expect, it } from "vitest";
 import { describeDb, resetDb } from "../helpers/db";
 import { initDb, prisma } from "../../db";
+import { buildGtin13 } from "../../lib/gtin";
 import { getActiveItem, getItem, getOrgProvisionalItem, searchItems, searchOrgProvisionalItems } from "../../services/readService";
 
 beforeAll(async () => { await initDb(); });
 
+const [DRILL, BITS, OLD_DRILL, HAMMER] = [1, 2, 3, 4].map((sequence) => buildGtin13("T", 1, sequence));
+
 async function seedItems() {
   const category = await prisma.category.create({ data: { name: "Tools", letter: "T" } });
   const sub = await prisma.subcategory.create({ data: { name: "Power", number: 1, categoryId: category.id } });
-  const item = (gtin13: string, name: string, archivedAt: Date | null = null) =>
+  const item = (gtin13: string, sequence: number, name: string, archivedAt: Date | null = null) =>
     prisma.item.create({
-      data: { gtin13, name, categoryId: category.id, subcategoryId: sub.id, sequence: 1, usageBehavior: "Durable", archivedAt },
+      data: { gtin13, name, categoryId: category.id, subcategoryId: sub.id, sequence, usageBehavior: "Durable", archivedAt },
     });
-  await item("0011111111116", "Cordless Drill");
-  await item("0022222222223", "Drill Bits");
-  await item("0033333333330", "Old Drill", new Date());
-  await item("0044444444447", "Hammer");
+  await item(DRILL, 1, "Cordless Drill");
+  await item(BITS, 2, "Drill Bits");
+  await item(OLD_DRILL, 3, "Old Drill", new Date());
+  await item(HAMMER, 4, "Hammer");
 }
 
 describeDb("readService (X3/X10)", () => {
@@ -25,13 +28,13 @@ describeDb("readService (X3/X10)", () => {
   });
 
   it("getItem includes the name beside the category ids", async () => {
-    expect(await getItem("0011111111116")).toMatchObject({ gtin13: "0011111111116", name: "Cordless Drill" });
+    expect(await getItem(DRILL)).toMatchObject({ gtin13: DRILL, name: "Cordless Drill" });
     expect(await getItem("0000000000000")).toBeNull();
   });
 
   it("getActiveItem returns an approved item and null for an archived or unknown GTIN", async () => {
-    expect(await getActiveItem("0011111111116")).toEqual({ gtin13: "0011111111116", name: "Cordless Drill" });
-    expect(await getActiveItem("0033333333330")).toBeNull();
+    expect(await getActiveItem(DRILL)).toEqual({ gtin13: DRILL, name: "Cordless Drill" });
+    expect(await getActiveItem(OLD_DRILL)).toBeNull();
     expect(await getActiveItem("0000000000000")).toBeNull();
   });
 
@@ -49,8 +52,8 @@ describeDb("readService (X3/X10)", () => {
       data: [
         { ...base, provisionalGtin13: "0200002700001", proposedName: "Shelf bracket", status: "rejected" },
         { ...base, provisionalGtin13: "0200002700018", proposedName: "Shelf pin", status: "pending" },
-        { ...base, provisionalGtin13: "0200002700025", proposedName: "Shelf board", status: "approved", resultGtin13: "0011111111116" },
-        { ...base, provisionalGtin13: "0200002700032", proposedName: "Shelf rail", status: "mapped_to_existing", resultGtin13: "0022222222223" },
+        { ...base, provisionalGtin13: "0200002700025", proposedName: "Shelf board", status: "approved", resultGtin13: DRILL },
+        { ...base, provisionalGtin13: "0200002700032", proposedName: "Shelf rail", status: "mapped_to_existing", resultGtin13: BITS },
         { ...base, provisionalGtin13: "0200002700049", proposedName: "Shelf clip", status: "pending", orgId: "org-b" },
       ],
     });
@@ -81,17 +84,24 @@ describeDb("readService (X3/X10)", () => {
 
   it("searchItems matches active items by name (any case) or GTIN, returning gtin13 and name", async () => {
     expect(await searchItems("drill")).toEqual([
-      { gtin13: "0011111111116", name: "Cordless Drill" },
-      { gtin13: "0022222222223", name: "Drill Bits" },
+      { gtin13: DRILL, name: "Cordless Drill" },
+      { gtin13: BITS, name: "Drill Bits" },
     ]);
-    expect(await searchItems("004444")).toEqual([{ gtin13: "0044444444447", name: "Hammer" }]);
+    expect(await searchItems("000047")).toEqual([{ gtin13: HAMMER, name: "Hammer" }]);
+  });
+
+  it("searchItems matches an active reference's part number in any case, and not an archived one's", async () => {
+    await prisma.itemReference.create({ data: { gtin13: HAMMER, partNumber: "HX-20N0001" } });
+    await prisma.itemReference.create({ data: { gtin13: BITS, partNumber: "OLD-555", archivedAt: new Date() } });
+    expect(await searchItems(" hx-20n ")).toEqual([{ gtin13: HAMMER, name: "Hammer" }]);
+    expect(await searchItems("old-555")).toEqual([]);
   });
 
   it("searchItems matches the category and subcategory names in any case, like the item route", async () => {
     const active = [
-      { gtin13: "0011111111116", name: "Cordless Drill" },
-      { gtin13: "0022222222223", name: "Drill Bits" },
-      { gtin13: "0044444444447", name: "Hammer" },
+      { gtin13: DRILL, name: "Cordless Drill" },
+      { gtin13: BITS, name: "Drill Bits" },
+      { gtin13: HAMMER, name: "Hammer" },
     ];
     expect(await searchItems("TOOLS")).toEqual(active);
     expect(await searchItems("owe")).toEqual(active);

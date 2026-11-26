@@ -200,6 +200,14 @@ describeDb("a reference that changes while a write is on its way", () => {
     expect(result).toMatchObject({ status: "rejected", reason: { status: 409 } });
     expect((await prisma.itemReference.findUniqueOrThrow({ where: { id: ref.id } })).gtin13).toBe(G1);
   });
+
+  it("a resolve against the item the part just moved away from gets a 409 and leaves the conflict open", async () => {
+    const { ref, conflict } = await seed({ gtin13: G1, partNumber: "OTHER", manufacturer: "Acme" });
+    const result = await racing(movedToG2(ref.id), () => resolveConflict(conflict.id, 1, "keep_existing", G1));
+    expect(result).toMatchObject({ status: "rejected", reason: { status: 409 } });
+    expect((await prisma.itemReference.findUniqueOrThrow({ where: { id: ref.id } })).gtin13).toBe(G2);
+    expect((await prisma.referenceConflict.findUniqueOrThrow({ where: { id: conflict.id } })).resolvedAt).toBeNull();
+  });
 });
 
 describeDb("conversion challenges", () => {
