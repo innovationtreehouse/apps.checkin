@@ -62,8 +62,6 @@ export const POST = withAuth({}, async (req, auth) => {
             "Scholarship review-team notify failed (membership request):",
         );
 
-        // Responses carry only success, never the process row (internal-tier
-        // zoho/shopify ids and stage timestamps).
         if (process.isPaymentPlanRequested) {
             // A repeat with a new kind corrects the kind and tells the review team; anything else changes nothing.
             if (!kind || kind === process.scholarshipRequestKind) return NextResponse.json({ success: true });

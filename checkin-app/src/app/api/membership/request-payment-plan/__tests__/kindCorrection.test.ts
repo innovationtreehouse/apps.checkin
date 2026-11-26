@@ -85,6 +85,11 @@ it("the losing half of two concurrent corrections sends nothing", async () => {
     const res = await post({ kind: "UNSURE" });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ success: true });
+
+    expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledTimes(1);
+    const { where, data } = jest.mocked(prisma.orgMembershipProcess.updateMany).mock.calls[0][0];
+    expect(where).toMatchObject({ id: 7, status: "PENDING_PAYMENT", isPaymentPlanRequested: true, scholarshipRequestKind: "PAYMENT_PLAN" });
+    expect(data).toEqual({ scholarshipRequestKind: "UNSURE" });
     expect(notifyReviewTeam).not.toHaveBeenCalled();
     expect(sendScholarshipAck).not.toHaveBeenCalled();
 });
