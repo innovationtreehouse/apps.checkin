@@ -9,7 +9,12 @@
 
 import { deleteAndReleaseHold, withdrawParticipant } from '@/lib/program/capacity';
 import prisma from '@/lib/prisma';
+import type { Prisma } from '@/generated/prisma/client';
 import { systemActor } from '@/lib/auditActor';
+import { DELETE } from '@/app/api/programs/[id]/participants/route';
+import { getServerSession } from 'next-auth/next';
+
+jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
 const TAG = 'exit-audit-tx-test';
 
@@ -65,5 +70,50 @@ describe('participant exit and its audit commit together', () => {
 
         expect(await enrollment()).toBeNull();
         expect(await audits()).toBe(1);
+    });
+
+    describe('DELETE /api/programs/[id]/participants', () => {
+        let adminId: number;
+        let restore: () => void = () => {};
+
+        /** Make the audit write inside every transaction throw. */
+        function breakTransactionAudits() {
+            const fail = () => Promise.reject(new Error('audit write failed'));
+            const realTransaction = prisma.$transaction.bind(prisma) as (fn: (tx: Prisma.TransactionClient) => unknown, options?: unknown) => unknown;
+            const spy = jest.spyOn(prisma, '$transaction').mockImplementation(((fn: (tx: Prisma.TransactionClient) => unknown, options?: unknown) =>
+                realTransaction((client) =>
+                    fn(new Proxy(client, { get: (target, prop) => (prop === 'auditLog' ? { create: fail } : Reflect.get(target, prop)) })),
+                options)) as unknown as typeof prisma.$transaction);
+            return () => spy.mockRestore();
+        }
+
+        const remove = (mode: 'remove' | 'withdraw') => DELETE(
+            new Request(`http://localhost:4000/api/programs/${programId}/participants`, {
+                method: 'DELETE',
+                body: JSON.stringify({ participantId: personId, mode }),
+            }) as unknown as import('next/server').NextRequest,
+            { params: Promise.resolve({ id: String(programId) }) } as unknown as never,
+        );
+
+        beforeEach(async () => {
+            adminId = (await prisma.person.create({ data: { email: `admin-${TAG}@example.com`, name: 'admin', isSysadmin: true, household: { create: { name: TAG } } } })).id;
+            await prisma.programParticipant.update({ where: { programId_personId: { programId, personId } }, data: { status: 'PENDING', shopifyOrderId: null } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            jest.spyOn(console, 'error').mockImplementation(() => {});
+            restore = breakTransactionAudits();
+        });
+
+        afterEach(() => {
+            restore();
+            jest.restoreAllMocks();
+        });
+
+        it.each(['remove', 'withdraw'] as const)('answers 500 and keeps the place when its %s audit cannot be written', async (mode) => {
+            const res = await remove(mode);
+            expect(res.status).toBe(500);
+
+            expect((await enrollment())?.status).toBe('PENDING');
+            expect(await audits()).toBe(0);
+        });
     });
 });

@@ -1060,6 +1060,26 @@ describe('Program Participants API Integration Tests', () => {
                 expect(res2.status).toBe(200);
                 expect(await placeOf(commonId)).toBeNull();
             });
+
+            it("lets the program leader and a board member remove their own household's unpaid place", async () => {
+                await prisma.programParticipant.update({
+                    where: { programId_personId: { programId: ledProgramId, personId: depId } },
+                    data: { status: 'PENDING' },
+                });
+                const res = await removeAs({ id: boardNonLeadId }, depId);
+                expect(res.status).toBe(200);
+                expect(await placeOf(depId)).toBeNull();
+
+                await prisma.programParticipant.create({ data: { programId: ledProgramId, personId: depId, status: 'PENDING' } });
+                await prisma.person.update({ where: { id: boardId }, data: { isBoardMember: true } });
+                try {
+                    const res2 = await removeAs({ id: boardId, isBoardMember: true }, depId);
+                    expect(res2.status).toBe(200);
+                    expect(await placeOf(depId)).toBeNull();
+                } finally {
+                    await prisma.person.update({ where: { id: boardId }, data: { isBoardMember: false } });
+                }
+            });
         });
 
         // A youth may not withdraw themselves: beyond matching the enroll gate,
@@ -1190,6 +1210,38 @@ describe('Program Participants API Integration Tests', () => {
                  expect(await prisma.programParticipant.findUnique({
                      where: { programId_personId: { programId: freeProgramId, personId: commonId } },
                  })).not.toBeNull();
+             } finally {
+                 await prisma.programParticipant.deleteMany({ where: { programId: freeProgramId, personId: commonId } });
+             }
+        });
+
+        it('refuses the leader and a non-Board sysadmin removing an order-paid place on a now-free program', async () => {
+             // Paid while priced (order on the place), then the Board zeroed the price.
+             await prisma.programParticipant.upsert({
+                 where: { programId_personId: { programId: freeProgramId, personId: commonId } },
+                 create: { programId: freeProgramId, personId: commonId, status: 'ACTIVE', shopifyOrderId: '9900124' },
+                 update: { status: 'ACTIVE', shopifyOrderId: '9900124', endedAt: null },
+             });
+             const removeAs = (user: Record<string, unknown>) => {
+                 (getServerSession as jest.Mock).mockResolvedValue({ user });
+                 return DELETE(
+                     new Request(`http://localhost:4000/api/programs/${freeProgramId}/participants`, {
+                         method: 'DELETE',
+                         body: JSON.stringify({ participantId: commonId, reason: 'Family request' }),
+                     }) as unknown as import("next/server").NextRequest,
+                     createParams(freeProgramId) as unknown as never,
+                 );
+             };
+             try {
+                 for (const user of [{ id: leadId }, { id: adminId, isSysadmin: true }]) {
+                     const res = await removeAs(user);
+                     expect(res.status).toBe(403);
+                     expect((await res.json()).error).toBe('Only the Board removes a paid place.');
+                 }
+                 const row = await prisma.programParticipant.findUnique({
+                     where: { programId_personId: { programId: freeProgramId, personId: commonId } },
+                 });
+                 expect(row?.status).toBe('ACTIVE');
              } finally {
                  await prisma.programParticipant.deleteMany({ where: { programId: freeProgramId, personId: commonId } });
              }

@@ -156,6 +156,27 @@ it("keeps the parent's email on the program roster for the lead mentor", async (
     expect(under13?.person.household?.householdMembers[0].email).toBe(PARENT.email);
 });
 
+describe("a core volunteer on the program", () => {
+    const CORE_ID = 61;
+
+    beforeEach(() => {
+        db.program.findUnique.mockResolvedValue({
+            ...programRow(),
+            volunteers: [{ programId: PROGRAM_ID, personId: CORE_ID, isCore: true, person: { id: CORE_ID, name: "Core", email: "core@example.com" } }],
+        });
+        db.programVolunteer.findMany.mockResolvedValue([{ programId: PROGRAM_ID, program: { participants: KIDS.map(k => ({ personId: k.id })) } }]);
+        mockSession.mockResolvedValue({ user: { ...ROLES, id: CORE_ID, householdId: 9 } });
+    });
+
+    it("has under 13 and unknown DOB withheld on the program roster, like the lead mentor", async () => {
+        expect(emails(await programRoster())).toEqual({
+            [UNDER_13.id]: null,
+            [EXACTLY_13.id]: EXACTLY_13.email,
+            [UNKNOWN_DOB.id]: null,
+        });
+    });
+});
+
 describe("an enrolled participant who is also a household lead", () => {
     const lead = ({ id, email }: { id: number; email: string }) => ({ id, householdId: HOUSEHOLD_ID, isHouseholdLead: true, name: `Kid ${id}`, email, phone: "5125551234" });
     const leadList = async () => {

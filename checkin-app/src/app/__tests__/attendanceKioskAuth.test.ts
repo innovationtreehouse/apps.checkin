@@ -106,6 +106,7 @@ describe('GET /api/attendance — real kiosk signature wiring', () => {
         headers['x-kiosk-signature'] = '00'.repeat(64);
         const res = await GET(attendanceReq(headers));
         expect(res.status).toBe(401);
+        expect((await res.json()).error).toBe('Invalid signature');
     });
 
     it('a web read reports the building reachable only after a verified kiosk request', async () => {
