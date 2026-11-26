@@ -7,8 +7,9 @@ const PAYOUT_BY_SOURCE: FinanceViewModel = { field: 'source', map: { shopify: 'S
 // Reads and the settings PATCH admit FINANCE or BOARD; resolve, run, category
 // mapping and exclusion writes are FINANCE-only. The library, not the gate, lets
 // FINANCE only lower a settings cap; raising one takes BOARD. Every income field
-// except a row's `id` is `internal`, so both roles get the full internal view. No sysadmin view: Finance Ops
-// excludes sysadmins.
+// except a row's `id` is `internal`, so both roles get the full internal view,
+// apart from a failed post's QuickBooks fault text, which is `finance`. No
+// sysadmin view: Finance Ops excludes sysadmins.
 //
 // QB exclusions are GET + POST only — an exclusion is permanent, so there is no
 // DELETE. No audit-log route: nothing reads the audit log yet.
@@ -19,11 +20,16 @@ const FINANCE_OR_BOARD_VIEW: readonly OrderedViewEntry[] = [
 const FINANCE_VIEW: readonly OrderedViewEntry[] = [
     ['isFinance', ['everyones:internal', 'public']],
 ];
+// The payout page and the queue also give finance alone the `finance` tier: a failed post's QuickBooks fault text.
+const RECONCILIATION_READ_VIEW: readonly OrderedViewEntry[] = [
+    ['isFinance', ['everyones:internal', 'everyones:finance', 'public']],
+    ['isBoardMember', ['everyones:internal', 'public']],
+];
 
 // FINANCE or BOARD — the reads, then the settings write.
 defineRoute({ endpoint: 'GET /api/income/payouts', authorize: 'finance-or-board', envelope: null, returns: ['IncomePayoutView'], orderedView: FINANCE_OR_BOARD_VIEW, financeView: { records: [{ key: 'IncomePayoutView', id: 'payoutGid', model: 'ShopPayout' }] } });
-defineRoute({ endpoint: 'GET /api/income/payouts/[gid]', authorize: 'finance-or-board', envelope: null, returns: ['IncomePayoutView', 'IncomeBalanceTxnView', 'PayoutReconciliation'], orderedView: FINANCE_OR_BOARD_VIEW, financeView: { records: [{ key: 'IncomePayoutView', id: 'payoutGid', model: 'ShopPayout' }, { key: 'IncomeBalanceTxnView', id: { param: 'gid' }, model: 'ShopPayout' }, { key: 'PayoutReconciliation', id: 'payoutGid', model: PAYOUT_BY_SOURCE }] } });
-defineRoute({ endpoint: 'GET /api/income/reconciliation', authorize: 'finance-or-board', envelope: null, returns: ['PayoutReconciliation'], orderedView: FINANCE_OR_BOARD_VIEW, financeView: { records: [{ key: 'PayoutReconciliation', id: 'payoutGid', model: PAYOUT_BY_SOURCE }] } });
+defineRoute({ endpoint: 'GET /api/income/payouts/[gid]', authorize: 'finance-or-board', envelope: null, returns: ['IncomePayoutView', 'IncomeBalanceTxnView', 'PayoutReconciliation'], orderedView: RECONCILIATION_READ_VIEW, financeView: { records: [{ key: 'IncomePayoutView', id: 'payoutGid', model: 'ShopPayout' }, { key: 'IncomeBalanceTxnView', id: { param: 'gid' }, model: 'ShopPayout' }, { key: 'PayoutReconciliation', id: 'payoutGid', model: PAYOUT_BY_SOURCE }] } });
+defineRoute({ endpoint: 'GET /api/income/reconciliation', authorize: 'finance-or-board', envelope: null, returns: ['PayoutReconciliation'], orderedView: RECONCILIATION_READ_VIEW, financeView: { records: [{ key: 'PayoutReconciliation', id: 'payoutGid', model: PAYOUT_BY_SOURCE }] } });
 defineRoute({ endpoint: 'GET /api/income/reconciliation/count', authorize: 'finance-or-board', envelope: null, returns: ['IncomeReconciliationCount'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/income/items', authorize: 'finance-or-board', envelope: null, returns: ['IncomeItemView'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/income/qb-exclusions', authorize: 'finance-or-board', envelope: null, returns: ['IncomeQbMatchExclusion'], orderedView: FINANCE_OR_BOARD_VIEW });

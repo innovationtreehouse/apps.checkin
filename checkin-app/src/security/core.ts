@@ -10,8 +10,9 @@
  *                             'member' and 'public'; anon holds only 'public'.
  *   'roster'                — flat; the view receives the rows of the route's
  *                             `rosterModels`. A view without it gets none of them.
- *   '<scope>:<tier>'        — tier ∈ {pii, personal, internal, hardship}; the
- *                             grant applies on rows where the caller holds <scope>
+ *   '<scope>:<tier>'        — tier ∈ {pii, personal, internal, hardship,
+ *                             finance}; the grant applies on rows where the
+ *                             caller holds <scope>
  *
  * Sensitive-tier SEMANTICS (which fields go where):
  *   'pii'      — contact-identity band (email, phone, googleId). Routinely
@@ -28,6 +29,9 @@
  *                or was refused help with a fee (a payment plan, a scholarship,
  *                a comp). Board and finance views only, plus the family's own
  *                rows; never a sysadmin or another staff role by default.
+ *   'finance'  — text only finance may read, such as a QuickBooks fault's own
+ *                words. Registration accepts 'everyones:finance' on an
+ *                isFinance view entry only, and no outbound surface carries it.
  *   scope = 'everyones'     — broad grant; held on every row by default, but a
  *                             row-scoped model missing its scope key fails
  *                             closed and does NOT hold it (see scopesHeld)
@@ -40,7 +44,7 @@
  *   - field.tier === 'secret'        → never
  *   - field.tier === 'public'        → iff view includes 'public'
  *   - field.tier === 'member'        → iff view includes 'member'
- *   - otherwise (pii/personal/internal/hardship):
+ *   - otherwise (pii/personal/internal/hardship/finance):
  *       iff view includes 'everyones:<tier>',
  *       OR view includes '<scope>:<tier>' for some <scope> the caller holds
  *       on this row.
@@ -59,7 +63,7 @@ export { CLASSIFICATION_SOURCES, classifications, relations, marks } from './cla
 export type Models = keyof typeof classifications;
 export type FieldsOf<M extends Models> = keyof (typeof classifications)[M];
 
-export type SensitiveTier = 'pii' | 'personal' | 'internal' | 'hardship';
+export type SensitiveTier = 'pii' | 'personal' | 'internal' | 'hardship' | 'finance';
 export type Tier = 'public' | 'member' | SensitiveTier | 'secret';
 
 const SCOPES = [
@@ -118,7 +122,10 @@ export const ROLES = [
 export type Role = (typeof ROLES)[number];
 
 const SCOPE_NAMES: ReadonlySet<string> = new Set(SCOPES);
-const VALID_SENSITIVE_TIERS = new Set<SensitiveTier>(['pii', 'personal', 'internal', 'hardship']);
+const VALID_SENSITIVE_TIERS = new Set<SensitiveTier>(['pii', 'personal', 'internal', 'hardship', 'finance']);
+type OutboundTier = Exclude<SensitiveTier, 'finance'>;
+// The finance tier never leaves the app.
+const OUTBOUND_TIERS: ReadonlySet<string> = new Set<OutboundTier>(['pii', 'personal', 'internal', 'hardship']);
 
 export function parseToken(
     t: string,
@@ -280,7 +287,7 @@ export interface RouteSpec {
  */
 export interface OutboundSpec {
     surface: string;
-    tiers: readonly ('public' | SensitiveTier)[];
+    tiers: readonly ('public' | OutboundTier)[];
 }
 
 /**
@@ -478,6 +485,14 @@ const _fileRoutes = new Map<string, RegisteredFileRoute>();
 const _fileOnlyFields = new Set<string>();
 const _outbounds = new Map<string, OutboundSpec>();
 
+/** Why a view entry may not hold this token, or null: the finance tier is finance's alone, on every row. */
+export function financeTokenError(role: Role, token: ReturnType<typeof parseToken>): string | null {
+    if (token === null || typeof token === 'string' || token.tier !== 'finance') return null;
+    if (role !== 'isFinance') return `the finance tier is granted only to the isFinance view, not '${role}'`;
+    if (token.scope !== 'everyones') return `the finance tier is granted only as 'everyones:finance', not '${token.scope}:finance'`;
+    return null;
+}
+
 function assertValidRegistration(endpoint: string, orderedView: readonly OrderedViewEntry[]): void {
     if (_routes.has(endpoint) || _fileRoutes.has(endpoint)) {
         throw new Error(`Duplicate route registration: ${endpoint}`);
@@ -492,9 +507,12 @@ function assertValidRegistration(endpoint: string, orderedView: readonly Ordered
         }
         seenRoles.add(role);
         for (const tok of tokens) {
-            if (parseToken(tok) === null) {
+            const parsed = parseToken(tok);
+            if (parsed === null) {
                 throw new Error(`Route ${endpoint}: invalid token '${tok}'`);
             }
+            const error = financeTokenError(role, parsed);
+            if (error) throw new Error(`Route ${endpoint}: ${error}`);
         }
     }
 }
@@ -567,7 +585,7 @@ export function defineOutbound(spec: OutboundSpec): OutboundSpec {
         throw new Error(`Duplicate outbound surface: ${spec.surface}`);
     }
     for (const t of spec.tiers) {
-        if (t !== 'public' && !VALID_SENSITIVE_TIERS.has(t as SensitiveTier)) {
+        if (t !== 'public' && !OUTBOUND_TIERS.has(t)) {
             throw new Error(`Outbound ${spec.surface}: invalid tier '${t}'`);
         }
     }

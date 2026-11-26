@@ -31,6 +31,11 @@ const APPROVER_VIEW: readonly OrderedViewEntry[] = [
     ['isBoardMember', FULL],
     ['authenticated', ['everyones:internal']],
 ];
+// The detail page also gives finance alone the `finance` tier: a failed post's QuickBooks fault text.
+const DETAIL_VIEW: readonly OrderedViewEntry[] = [
+    ['isFinance', [...FULL, 'everyones:finance']],
+    ...APPROVER_VIEW.slice(1),
+];
 
 const EXPENSE_DETAIL = ['Expense', 'ExpenseLineItem', 'LineItemOwnerApproval', 'ExpenseLineSignoff', 'ExpenseHold', 'ExpenseAuditLog', 'ExpenseFlag', 'ExpenseQueueReason', 'ExpenseWaitingOn'] as const;
 
@@ -38,7 +43,7 @@ const EXPENSE_DETAIL = ['Expense', 'ExpenseLineItem', 'LineItemOwnerApproval', '
 // handler-filtered to the caller's buckets. Sign-off admits every seat holder.
 defineRoute({ endpoint: 'GET /api/expense/expenses', authorize: 'expense-approver', envelope: null, returns: ['Expense', 'ExpenseWaitingOn'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/expenses/count', authorize: 'expense-approver', envelope: null, returns: ['ExpenseListCount'], orderedView: APPROVER_VIEW });
-defineRoute({ endpoint: 'GET /api/expense/expenses/[id]', authorize: 'expense-approver', envelope: null, returns: EXPENSE_DETAIL, orderedView: APPROVER_VIEW, financeView: { records: [{ key: 'Expense', id: { param: 'id' }, model: 'Expense' }, { key: 'ExpenseQueueReason', id: { param: 'id' }, model: 'Expense' }] } });
+defineRoute({ endpoint: 'GET /api/expense/expenses/[id]', authorize: 'expense-approver', envelope: null, returns: EXPENSE_DETAIL, orderedView: DETAIL_VIEW, financeView: { records: [{ key: 'Expense', id: { param: 'id' }, model: 'Expense' }, { key: 'ExpenseQueueReason', id: { param: 'id' }, model: 'Expense' }] } });
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/line-item-approvals', authorize: 'expense-approver', envelope: null, returns: ['LineItemOwnerApproval', 'ExpenseBucketView'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/approve', authorize: 'expense-approver', envelope: null, returns: ['LineItemOwnerApproval'], orderedView: APPROVER_VIEW });
 // Approve All: every line the caller approves on the expense, or none. The
