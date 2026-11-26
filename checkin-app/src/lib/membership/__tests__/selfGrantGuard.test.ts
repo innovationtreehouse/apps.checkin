@@ -100,4 +100,17 @@ describe("self-grant writers", () => {
     it.each(writers.map((w) => [w.rel, w.src]))("%s calls refuseSelfGrant", (_rel, src) => {
         expect(src).toMatch(/\brefuseSelfGrant\(/);
     });
+
+    // A file-level match passes a second, unguarded write in a file that is already
+    // guarded, so each file's write sites are pinned: a new site fails here until a
+    // reviewer confirms the guard covers it and updates the count.
+    it("pins each writer's grant write sites", () => {
+        const sites = (src: string) => WRITES_GRANT.reduce((n, re) => n + [...src.matchAll(new RegExp(re.source, "g"))].length, 0);
+        expect(Object.fromEntries(writers.map((w) => [w.rel, sites(w.src)]))).toEqual({
+            "app/api/membership-ops/households/[id]/route.ts": 2,
+            "app/api/programs/[id]/volunteers/route.ts": 3,
+            "app/api/settings/membership/volunteer-designations/route.ts": 3,
+            "lib/membership/review.ts": 4,
+        });
+    });
 });

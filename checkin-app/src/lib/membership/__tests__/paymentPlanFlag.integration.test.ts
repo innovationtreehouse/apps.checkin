@@ -29,6 +29,7 @@ const TAG = 'payment-plan-flag-test';
 
 describe('payment-plan request ends when the application moves on', () => {
     let boardId: number;
+    let secondBoardId: number;
     let seq = 0;
 
     async function requestedProcess(fields: { bgConsentAt?: Date; bgClearedAt?: Date } = { bgConsentAt: new Date() }) {
@@ -81,6 +82,10 @@ describe('payment-plan request ends when the application moves on', () => {
             data: { name: 'Flag Board', email: `board-${TAG}@example.com`, isBoardMember: true, household: { create: { name: `Board ${TAG}` } } },
         });
         boardId = board.id;
+        const secondBoard = await prisma.person.create({
+            data: { name: 'Flag Board Two', email: `board2-${TAG}@example.com`, isBoardMember: true, household: { create: { name: `Board Two ${TAG}` } } },
+        });
+        secondBoardId = secondBoard.id;
     });
 
     afterAll(async () => {
@@ -146,6 +151,19 @@ describe('payment-plan request ends when the application moves on', () => {
         await activateByProcessId(processId, `order-noitem-${TAG}-${processId}`, null);
         await attest(boardId, reviewId, { result: 'APPROVE', subjectPersonIds: [adultId] });
         await boardResetReview(reviewId, boardId, { reason: 'misclick' });
+
+        const row = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId } });
+        expect(row.status).toBe('PENDING_PAYMENT');
+        expect(row.isPaymentPlanRequested).toBe(true);
+        expect(await queueIds()).toContain(processId);
+    });
+
+    it('a check cleared by two reviewers keeps the open request', async () => {
+        const { processId, householdId, adultId } = await requestedProcess();
+        const reviewId = await reviewOf(householdId);
+        await attest(boardId, reviewId, { result: 'APPROVE', subjectPersonIds: [adultId] });
+        await attest(secondBoardId, reviewId, { result: 'APPROVE' });
+        expect((await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: reviewId } })).bgClearedAt).not.toBeNull();
 
         const row = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId } });
         expect(row.status).toBe('PENDING_PAYMENT');

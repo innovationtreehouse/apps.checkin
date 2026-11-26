@@ -121,8 +121,14 @@ describe('POST /api/membership-ops/households — Deny Membership', () => {
         await holder.$transaction(async (tx) => {
             await setRoleFlag(tx, grantee.id, 'isBoardMember', true, { id: boardId, isBoardMember: true, isSysadmin: false });
             deny = post({ householdId: grantee.householdId, deny: true });
-            await new Promise((resolve) => setTimeout(resolve, 300));
-        });
+            // Commit only once the deny is queued behind this transaction's lock.
+            let waiting = 0;
+            for (let i = 0; i < 250 && waiting === 0; i++) {
+                await new Promise((resolve) => setTimeout(resolve, 20));
+                [{ waiting }] = await tx.$queryRaw<{ waiting: number }[]>`SELECT count(*)::int AS waiting FROM pg_locks WHERE NOT granted`;
+            }
+            expect(waiting).toBeGreaterThan(0);
+        }, { timeout: 10_000 });
 
         const res = await deny!;
         expect(res.status).toBe(409);

@@ -2,10 +2,11 @@
  * @jest-environment node
  */
 import prisma from '@/lib/prisma';
-import { archiveApplication, unarchiveApplication } from '@/lib/membership/archive';
+import { archiveApplication, closeForRestore, unarchiveApplication } from '@/lib/membership/archive';
 import type { OrgMembershipProcess } from '@/generated/prisma/client';
 import { settleAfterEvent } from '@/lib/membership/settleHouseholdBg';
 import { pickUpMissedSignature } from '@/lib/membership/external';
+import { personActor } from '@/lib/auditActor';
 
 const tx = {
     $queryRaw: jest.fn(),
@@ -80,6 +81,24 @@ describe('archiveApplication (Close application)', () => {
         tx.orgMembershipProcess.findUnique.mockResolvedValue({ status: 'ARCHIVED' });
         await expect(archiveApplication(1, 2)).resolves.toEqual({ status: 'ARCHIVED' });
         expect(tx.auditLog.create).not.toHaveBeenCalled();
+    });
+});
+
+describe('closeForRestore', () => {
+    beforeEach(() => jest.clearAllMocks());
+
+    it('refuses when an application changed after it was read, after closing the ones before it', async () => {
+        tx.orgMembershipProcess.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+        const open = [
+            { id: 1, status: 'PENDING_PAYMENT' as const, paidAt: null },
+            { id: 2, status: 'INTAKE' as const, paidAt: null },
+        ];
+        await expect(closeForRestore(tx as unknown as Parameters<typeof closeForRestore>[0], open, personActor(3)))
+            .rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('changed while you were acting on it') });
+        expect(tx.orgMembershipProcess.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+            where: { id: 2, status: 'INTAKE', paidAt: null },
+        }));
+        expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
     });
 });
 
