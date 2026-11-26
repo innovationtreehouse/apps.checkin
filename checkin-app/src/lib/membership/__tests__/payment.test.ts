@@ -277,7 +277,7 @@ describe('payments that land on nothing awaiting them', () => {
         household.status = 'DENIED';
         expect((await activateByProcessId(PROCESS_ID, 'order-2', { appliesToYear: 2026 })).outcome).toBe('denied');
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
-        expect(raiseDeniedHouseholdActivity).toHaveBeenCalledWith(expect.objectContaining({ householdId: 3, processId: PROCESS_ID }));
+        expect(raiseDeniedHouseholdActivity).toHaveBeenCalledWith(expect.objectContaining({ householdId: 3, processId: PROCESS_ID, shopifyOrderId: 'order-2' }));
         expect(emailHouseholdLeads).not.toHaveBeenCalled();
     });
 
@@ -286,7 +286,7 @@ describe('payments that land on nothing awaiting them', () => {
         household.status = 'DENIED';
         expect((await activateByProcessId(PROCESS_ID, 'order-2', { appliesToYear: 2026 })).outcome).toBe('denied');
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
-        expect(raiseDeniedHouseholdActivity).toHaveBeenCalledWith(expect.objectContaining({ householdId: 3, processId: PROCESS_ID }));
+        expect(raiseDeniedHouseholdActivity).toHaveBeenCalledWith(expect.objectContaining({ householdId: 3, processId: PROCESS_ID, shopifyOrderId: 'order-2' }));
     });
 
     it('a redelivery of the recorded order on a DENIED household stays a noop', async () => {

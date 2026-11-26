@@ -151,6 +151,8 @@ export async function raiseDeniedHouseholdActivity(ref: {
     householdId: number;
     processId?: number | null;
     personId?: number | null;
+    /** The Shopify order that carried the money, so the row dedupes and stays resolved per order. */
+    shopifyOrderId?: string | null;
     what: string;
 }): Promise<void> {
     // Lazy so the table above stays importable without the DB client (generator CLI, pages).
@@ -170,6 +172,7 @@ export async function raiseDeniedHouseholdActivity(ref: {
               select: { id: true },
           }))?.id ?? null;
     await raisePaymentException("DENIED_HOUSEHOLD_ACTIVITY", {
+        shopifyOrderId: ref.shopifyOrderId ?? null,
         processId: ref.processId ?? null,
         personId,
         severity: "CRITICAL",
