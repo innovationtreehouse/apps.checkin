@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { ZodError } from "zod";
-import { DonatedCapitalLineSchema, DONOR_NAME_MAX, InKindDonorSchema, type CompletedReceipt } from "@checkin/receipt-types";
+import { DONOR_NAME_MAX, InKindDonorSchema, type CompletedReceipt } from "@checkin/receipt-types";
 import { bulkDonationRuntime, configureBulkDonation, getInventoryApply, getOwnerDirectory, NotWiredError } from "../../runtime";
 import { getCatalogItem, ingestInKind, recordInKindDonor, recordInKindWithoutReceipt, searchCatalog, withdrawInKind } from "../../inKind";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_QUANTITY, MAX_IN_KIND_LINE_VALUE_CENTS, type ManualInKindInput } from "../../services/manualInKindService";
-import { CapitalReviewLineSchema, InKindDonorSchema as BulkDonorSchema, inventorySourceKey } from "../../contract";
+import { InKindDonorSchema as BulkDonorSchema, inventorySourceKey } from "../../contract";
 import { inKindService } from "../../services/inKindService";
 
 vi.mock("../../services/inKindService", () => ({
@@ -105,10 +105,6 @@ describe("X13 recordInKindDonor / withdrawInKind (callees)", () => {
 
   it("checks the donor with the shared schema", () => {
     expect(BulkDonorSchema).toBe(InKindDonorSchema);
-  });
-
-  it("checks capital-send lines with the shared schema", () => {
-    expect(CapitalReviewLineSchema).toBe(DonatedCapitalLineSchema);
   });
 
   it("rejects an empty receipt id", async () => {

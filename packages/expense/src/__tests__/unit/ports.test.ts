@@ -9,7 +9,6 @@ import { approveLine } from "../../services/approvalService";
 import { resolveDonatedPartAccounts } from "../../services/donatedPartAccounts";
 import { lookupCatalogInfo } from "../../lib/expense-qb-processor";
 import { qbPostingOnAt } from "../../lib/expense-qb-poster";
-import { donatedAssetLineIds, giftsAwaitingCapitalReview } from "../../services/donatedCapitalService";
 import { FLAG_AUDIENCE, FLAG_KINDS, RETIRED_FLAG_KINDS, isFlagKind, taxNeedsFinance, type StoredReceiptReview } from "../../lib/flags";
 import { finance } from "../../routes";
 import { bindPorts, catalogResolving, ORG, principal } from "../helpers/seed";
@@ -111,8 +110,6 @@ describe("runtime", () => {
   });
 
   it.each([
-    ["giftsAwaitingCapitalReview", () => giftsAwaitingCapitalReview("org-other")],
-    ["donatedAssetLineIds", () => donatedAssetLineIds("org-other", { giftSource: "receipt", giftId: 1 })],
     ["qbPostingOnAt", () => qbPostingOnAt("org-other")],
     ["resolveDonatedPartAccounts", () => resolveDonatedPartAccounts("org-other", [])],
   ])("%s refuses another org as a wiring bug, before any read", async (_name, call) => {

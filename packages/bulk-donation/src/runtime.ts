@@ -55,9 +55,6 @@ const INERT_CAPITAL: InKindCapital = {
     setPeriod: notWired("InKindCapital.review.setPeriod"),
   },
   register: notWired("InKindCapital.register"),
-  submit: async () => {},
-  awaitingReview: async () => [],
-  assetLineIds: async () => [],
 };
 
 /** Unbound, no part resolves, so every gift line waits for finance to set its account. */

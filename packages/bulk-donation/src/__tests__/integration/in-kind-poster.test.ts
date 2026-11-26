@@ -158,9 +158,6 @@ function configure() {
       registered.push(line.giftLineId);
       return [`ITFA${line.giftLineId}`];
     },
-    submit: notCalled,
-    awaitingReview: notCalled,
-    assetLineIds: notCalled,
   };
   const rules: InKindAccounts = {
     resolve: async (_org, parts) => {
@@ -248,7 +245,6 @@ async function zeroLineManualGift(values = [3000, 0]): Promise<number> {
       budgetOwnerId: 1,
       bucketAssignedByUserId: FINANCE,
       bucketAssignedAt: now,
-      capitalSubmittedAt: now,
       lines: { create: values.map((valueCents) => ({ gtin13: "0011111111116", quantity: 1, valueCents })) },
     },
   });
