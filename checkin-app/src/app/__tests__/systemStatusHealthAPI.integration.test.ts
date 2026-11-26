@@ -14,7 +14,7 @@
 
 import { GET } from '@/app/api/system-status/health/route';
 import prisma from '@/lib/prisma';
-import { orgToday } from '@/lib/appSettings';
+import { resolveDisplayTimezone } from '@/lib/appSettings';
 import { getServerSession } from 'next-auth/next';
 
 jest.mock('next-auth/next', () => ({
@@ -84,7 +84,8 @@ describe('System status health API', () => {
         const data = await res.json();
         expect(data.days).toHaveLength(30);
 
-        const todayStr = (await orgToday()).toISOString().split('T')[0];
+        // en-CA formats as yyyy-mm-dd, independent of the route's calendarDayIn helper.
+        const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: await resolveDisplayTimezone() }).format(new Date());
         const today = data.days.find((d: { date: string }) => d.date === todayStr);
         expect(today).toBeDefined();
         expect(today.count).toBe(3); // the 'other_metric' row must not count

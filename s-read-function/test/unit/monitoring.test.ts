@@ -30,6 +30,15 @@ describe("buildHeartbeatSink", () => {
     expect(logError).toHaveBeenCalledWith(expect.stringContaining("MONITORING_ENV is required"), {});
   });
 
+  it("disables the sink and logs an error when MONITORING_ENV is an empty string", () => {
+    const sink = buildHeartbeatSink({
+      MONITORING_DATABASE_URL: "postgresql://localhost/monitoring",
+      MONITORING_ENV: "",
+    } as NodeJS.ProcessEnv);
+    expect(sink).toBeUndefined();
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining("MONITORING_ENV is required"), {});
+  });
+
   it("returns a sink function when MONITORING_DATABASE_URL and MONITORING_ENV are set", () => {
     const sink = buildHeartbeatSink({
       MONITORING_DATABASE_URL: "postgresql://localhost/monitoring",

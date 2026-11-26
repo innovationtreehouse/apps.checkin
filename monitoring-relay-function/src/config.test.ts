@@ -25,6 +25,10 @@ describe("loadRelayConfig — config-missing (negative paths)", () => {
     ).toThrow(/MONITORING_ENV/);
   });
 
+  it("throws when MONITORING_ENV is an empty string", () => {
+    expect(() => loadRelayConfig(env({ MONITORING_ENV: "" }))).toThrow(/MONITORING_ENV/);
+  });
+
   it("throws on a non-numeric RELAY_BATCH_LIMIT", () => {
     expect(() => loadRelayConfig(env({ RELAY_BATCH_LIMIT: "abc" }))).toThrow();
   });
