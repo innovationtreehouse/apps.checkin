@@ -153,6 +153,7 @@ describe('Admin Participant Household API Integration Tests', () => {
             try {
                 const res = await POST(moveReq(testParticipantId, { householdId: testHouseholdId }), { params: Promise.resolve({ id: String(testParticipantId) }) });
                 expect(res.status).toBe(409);
+                expect((await res.json()).error).toMatch(/moved to another household while you were working/);
             } finally {
                 spy.mockRestore();
             }

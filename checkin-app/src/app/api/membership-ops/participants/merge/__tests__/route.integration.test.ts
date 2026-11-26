@@ -423,6 +423,81 @@ describe("Merge Participants API", () => {
             expect(await prisma.rawBadgeLog.count({ where: { personId: pMergeId } })).toBe(0);
         });
 
+        type TxHook = { model: string; method: string; before: (tx: TxClient) => Promise<unknown> };
+
+        /** Runs the merge on its own transaction client, with each hook's `before` run ahead of the first call it names. */
+        function hookMergeTransaction(hooks: TxHook[]): jest.SpyInstance {
+            const bound = (target: object, prop: string | symbol): unknown => {
+                const value: unknown = Reflect.get(target, prop);
+                return typeof value === "function" ? value.bind(target) : value;
+            };
+            const pending = new Set(hooks);
+            const withHooks = (tx: TxClient) => new Proxy(tx, {
+                get(target, prop) {
+                    const modelHooks = [...pending].filter(h => h.model === prop);
+                    if (modelHooks.length === 0) return bound(target, prop);
+                    return new Proxy(Reflect.get(target, prop) as object, {
+                        get(delegate, method) {
+                            const hook = modelHooks.find(h => h.method === method && pending.has(h));
+                            if (!hook) return bound(delegate, method);
+                            const call = bound(delegate, method) as (...args: unknown[]) => Promise<unknown>;
+                            return async (...args: unknown[]) => {
+                                pending.delete(hook);
+                                await hook.before(target);
+                                return call(...args);
+                            };
+                        },
+                    });
+                },
+            });
+            const realTransaction = prisma.$transaction.bind(prisma) as (fn: (tx: TxClient) => Promise<unknown>) => Promise<unknown>;
+            return jest.spyOn(prisma, "$transaction").mockImplementation((async (fn: (tx: TxClient) => Promise<unknown>) =>
+                realTransaction((tx) => fn(withHooks(tx)))) as unknown as typeof prisma.$transaction);
+        }
+
+        // A level change between the in-lock recheck and the dedupe leaves the row behind.
+        it("refuses with 409 before archiving when a same-level tool pair changes level after the recheck", async () => {
+            const tool = await prisma.tool.create({ data: { name: "Merge Raced Level Tool" } });
+            createdToolId = tool.id;
+            await prisma.toolStatus.create({ data: { toolId: tool.id, personId: pKeepId, level: "CERTIFIED" } });
+            await prisma.toolStatus.create({ data: { toolId: tool.id, personId: pMergeId, level: "CERTIFIED" } });
+            let archived = false;
+            const spy = hookMergeTransaction([
+                {
+                    model: "toolStatus", method: "deleteMany",
+                    before: (tx) => tx.toolStatus.update({ where: { personId_toolId: { personId: pMergeId, toolId: tool.id } }, data: { level: "BASIC" } }),
+                },
+                { model: "personMerge", method: "create", before: async () => { archived = true; } },
+            ]);
+            try {
+                const res = await POST(mergeReq(pKeepId, pMergeId));
+                expect(res.status).toBe(409);
+                expect((await res.json()).error).toContain("changed while merging");
+            } finally {
+                spy.mockRestore();
+            }
+            expect(archived).toBe(false);
+            await expectNotMerged(pMergeId);
+            expect(await prisma.toolStatus.findUnique({ where: { personId_toolId: { personId: pMergeId, toolId: tool.id } } })).toMatchObject({ level: "CERTIFIED" });
+        });
+
+        it("refuses with 409 when the merged-away record opens a visit after the recheck while the keeper has one open", async () => {
+            await prisma.visit.create({ data: { personId: pKeepId, arrivedAt: new Date(Date.now() - 3600000) } });
+            const spy = hookMergeTransaction([{
+                model: "visit", method: "updateMany",
+                before: (tx) => tx.visit.create({ data: { personId: pMergeId, arrivedAt: new Date() } }),
+            }]);
+            try {
+                const res = await POST(mergeReq(pKeepId, pMergeId));
+                expect(res.status).toBe(409);
+                expect((await res.json()).error).toContain("both records now have an open visit");
+            } finally {
+                spy.mockRestore();
+            }
+            await expectNotMerged(pMergeId);
+            expect(await prisma.visit.count({ where: { personId: pMergeId } })).toBe(0);
+        });
+
         // A→B then B→C. The archive answers "where is this person now", so A's row
         // follows B to C; leaving it on B would also pin B's Person row via the
         // RESTRICT on toId, blocking B's delete.
