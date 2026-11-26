@@ -116,6 +116,16 @@ describe('household archive coverage beyond direct reads', () => {
         await expect(
             prisma.household.update({ where: { id }, data: { archivedAt: new Date() } }),
         ).rejects.toThrow();
+        // Prisma drops the pg code, so the same write as the DML role on a bare connection names the cause.
+        const dml = new Client({ connectionString: process.env.DML_DATABASE_URL });
+        await dml.connect();
+        try {
+            await expect(
+                dml.query(`UPDATE "Household" SET "archivedAt" = now() WHERE id = $1`, [id]),
+            ).rejects.toMatchObject({ code: '42501' });
+        } finally {
+            await dml.end();
+        }
 
         await withArchivedHouseholds((tx) =>
             tx.household.update({ where: { id }, data: { archivedAt: new Date() } }),

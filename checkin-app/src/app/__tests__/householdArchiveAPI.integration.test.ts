@@ -47,10 +47,10 @@ async function household(status?: 'NONE' | 'ACTIVE' | 'DENIED' | 'REVOKED') {
     return { householdId: person.householdId, personId: person.id, membershipId: membership?.id ?? 0 };
 }
 
-async function program() {
+async function program(data: { phase?: 'FINISHED'; leadMentorId?: number } = {}) {
     const now = new Date();
     return prisma.program.create({
-        data: { name: `Program ${TAG}`, startAt: now, endAt: new Date(now.getTime() + 30 * 86400000), appliesToYear: now.getUTCFullYear() },
+        data: { name: `Program ${TAG}`, startAt: now, endAt: new Date(now.getTime() + 30 * 86400000), appliesToYear: now.getUTCFullYear(), ...data },
     });
 }
 
@@ -91,6 +91,7 @@ afterAll(async () => {
     await prisma.orgMembershipProcess.deleteMany({ where: { subjectPersonId: { in: personIds } } });
     await prisma.programParticipant.deleteMany({ where: { personId: { in: personIds } } });
     await prisma.programVolunteer.deleteMany({ where: { personId: { in: personIds } } });
+    await prisma.programInstance.deleteMany({ where: { program: { name: `Program ${TAG}` } } });
     await prisma.program.deleteMany({ where: { name: `Program ${TAG}` } });
     await prisma.personRole.deleteMany({ where: { personId: { in: personIds } } });
     await prisma.budgetOwnerTreasurer.deleteMany({ where: { budgetOwner: { name: `Bucket ${TAG}` } } });
@@ -141,6 +142,30 @@ describe('archive refusals', () => {
         const { householdId, personId } = await household();
         await prisma.programVolunteer.create({ data: { programId: (await program()).id, personId } });
         await expectRefused(householdId, 'volunteers on or leads');
+    });
+
+    it('refuses a household whose member leads a program not yet finished', async () => {
+        const { householdId, personId } = await household();
+        await program({ leadMentorId: personId });
+        await expectRefused(householdId, 'volunteers on or leads');
+    });
+
+    it('refuses a household whose member leads a program run not yet finished', async () => {
+        const { householdId, personId } = await household();
+        const finished = await program({ phase: 'FINISHED' });
+        await prisma.programInstance.create({ data: { programId: finished.id, name: `Run ${TAG}`, leadMentorId: personId } });
+        await expectRefused(householdId, 'volunteers on or leads');
+    });
+
+    it('archives a household whose member was enrolled in, volunteered on and led only finished programs', async () => {
+        const { householdId, personId } = await household();
+        const finished = await program({ phase: 'FINISHED', leadMentorId: personId });
+        await prisma.programParticipant.create({ data: { programId: finished.id, personId } });
+        await prisma.programVolunteer.create({ data: { programId: finished.id, personId } });
+        await prisma.programInstance.create({ data: { programId: finished.id, name: `Run ${TAG}`, leadMentorId: personId, phase: 'FINISHED' } });
+        asBoard();
+        expect((await post(householdId, { archive: true })).status).toBe(200);
+        expect((await archivedAt(householdId))?.archivedAt).not.toBeNull();
     });
 
     it('refuses a household whose member owns a bucket', async () => {
