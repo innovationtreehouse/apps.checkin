@@ -5,9 +5,8 @@ import { ORG_DOMAIN } from './config';
  * rather than a real member family. Prefer the verified Google hosted-domain (`hd`)
  * claim; fall back to the email suffix when `hd` isn't present (e.g. credential login).
  *
- * Used to block staff from building out a household with extra members via self-service.
- * The admin participant-add flow (isSysadmin/isBoardMember acting on a household's behalf)
- * is deliberately NOT gated by this.
+ * A Treehouse account's household holds only that account: nobody, the Board and
+ * sysadmins included, adds, moves or merges anyone into it (lib/household/treehouseAccount.ts).
  */
 export function isOrgAccount(user: { hd?: string | null; email?: string | null }): boolean {
     if (user.hd === ORG_DOMAIN) return true;

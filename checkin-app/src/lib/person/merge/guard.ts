@@ -63,6 +63,16 @@ export function membershipMergeBlock(
 }
 
 /**
+ * Why this merge must be refused because it brings the merged-away record into a
+ * Treehouse account's household, or null. That household holds only the Treehouse
+ * account, and the keeper stays in its own household.
+ */
+export function treehouseMergeBlock(keepHouseholdIsTreehouse: boolean, sameHousehold: boolean): string | null {
+    if (sameHousehold || !keepHouseholdIsTreehouse) return null;
+    return "Cannot merge: the kept record is in a Treehouse account's household, which holds only that account, and the merged-away record is in another household.";
+}
+
+/**
  * Why moving the merged-away record's roles onto the keeper must be refused, or
  * null. The merge moves each role with `setRoleFlag` (revoke from the merged-away
  * record, grant to the keeper), so it must pass that function's refusals; checking them

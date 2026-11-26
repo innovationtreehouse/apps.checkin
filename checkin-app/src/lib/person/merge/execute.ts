@@ -15,7 +15,8 @@ import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { anyMergedAway } from "@/lib/person/archivedPeople";
 import { isBlankEmail, leadsUnfinishedProgram, LEADER_EMAIL_REQUIRED, LEADER_NEEDS_EMAIL } from "@/lib/programs/leaderEligibility";
-import { bgSubjectKey, disputedCheckBlock, type CheckSide } from "./guard";
+import { isTreehouseHousehold } from "@/lib/household/treehouseAccount";
+import { bgSubjectKey, disputedCheckBlock, treehouseMergeBlock, type CheckSide } from "./guard";
 import {
     KEEP_INCLUDE,
     MERGE_INCLUDE,
@@ -127,7 +128,7 @@ export async function prepareMerge(
         }
     }
 
-    const subjectBlock = subjectRefusal(keep, merge, actor);
+    const subjectBlock = subjectRefusal(keep, merge, actor) ?? await treehouseMergeRefusal(prisma, keep, merge);
     if (subjectBlock) return { refused: subjectBlock };
 
     const collisionBlock = await collisionRefusal(prisma, keep, merge);
@@ -169,6 +170,13 @@ async function leaderEmailMergeRefusal(db: DbClient, keep: KeepSubject, merge: M
     if (!isBlankEmail(keep.email) && await leadsUnfinishedProgram(db, [keep.id])) return { status: 409, error: LEADER_EMAIL_REQUIRED };
     if (await leadsUnfinishedProgram(db, [merge.id])) return { status: 409, error: LEADER_NEEDS_EMAIL };
     return null;
+}
+
+/** A merge that brings the merged-away record into a Treehouse account's household, as a refusal, or null. */
+async function treehouseMergeRefusal(db: DbClient, keep: KeepSubject, merge: MergeSubject): Promise<MergeRefusal | null> {
+    const sameHousehold = keep.householdId === merge.householdId;
+    const error = treehouseMergeBlock(!sameHousehold && await isTreehouseHousehold(db, keep.householdId), sameHousehold);
+    return error ? { status: 409, error } : null;
 }
 
 /** A merge that would change a disputed person's check facts, as a refusal, or null. */
@@ -345,7 +353,7 @@ async function recheckSubjects(tx: TxClient, plan: MergePlan, actor: Authenticat
     // The actor's household is re-read under the Household locks, so an actor who joined either household since the plan is refused.
     const selfGrant = actor ? await ownHouseholdRefusal(tx, actor, keep, merge) : null;
     if (selfGrant) throw new SelfGrantMergeRefusedError(selfGrant);
-    const refusal = subjectRefusal(keep, merge, actor) ?? await collisionRefusal(tx, keep, merge);
+    const refusal = subjectRefusal(keep, merge, actor) ?? await treehouseMergeRefusal(tx, keep, merge) ?? await collisionRefusal(tx, keep, merge);
     if (refusal) throw new MergeRefusedError(refusal);
     const parsed = parseFieldChoices(keep, merge, plan.choices);
     const keeperUpdate = 'error' in parsed ? parsed : planKeeperUpdate(keep, merge, parsed.choices);

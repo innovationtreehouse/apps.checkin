@@ -4,7 +4,8 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { anyMergedAway } from "@/lib/person/archivedPeople";
-import { bgSubjectKey, householdMembershipStatus, membershipMergeBlock } from "@/lib/person/merge/guard";
+import { bgSubjectKey, householdMembershipStatus, membershipMergeBlock, treehouseMergeBlock } from "@/lib/person/merge/guard";
+import { isTreehouseHousehold } from "@/lib/household/treehouseAccount";
 import { carriedComplianceDate } from "@/lib/person/merge/plan";
 
 export const dynamic = 'force-dynamic';
@@ -102,6 +103,9 @@ export const GET = withAuth(
             });
             const a = subject(pA);
             const b = subject(pB);
+            const sameHousehold = pA.household?.id === pB.household?.id;
+            const inTreehouseHousehold = (p: typeof pA) => !sameHousehold && !!p.household && isTreehouseHousehold(prisma, p.household.id);
+            const [aTreehouse, bTreehouse] = await Promise.all([inTreehouseHousehold(pA), inTreehouseHousehold(pB)]);
 
             // Collision detection — direction-independent (collisions block either way).
             // A background-check collision names its attestation ids so a sysadmin can find the rows.
@@ -206,8 +210,8 @@ export const GET = withAuth(
             return NextResponse.json({
                 participants: [pA, pB],
                 membershipBlock: {
-                    aAsKeeper: membershipMergeBlock(a, b),
-                    bAsKeeper: membershipMergeBlock(b, a),
+                    aAsKeeper: membershipMergeBlock(a, b) ?? treehouseMergeBlock(aTreehouse, sameHousehold),
+                    bAsKeeper: membershipMergeBlock(b, a) ?? treehouseMergeBlock(bTreehouse, sameHousehold),
                 },
                 bgNotice: { aAsKeeper: bgNotice(bgA, bgB), bAsKeeper: bgNotice(bgB, bgA) },
                 collisions,

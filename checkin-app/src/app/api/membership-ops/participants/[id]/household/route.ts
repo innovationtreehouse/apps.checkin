@@ -10,6 +10,7 @@ import { findSelfGrantRefusal, recordSelfGrantRefusal, type SelfGrantRefusal } f
 import { lockBoardRoles } from "@/lib/roles";
 import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { TreehouseHouseholdError, isTreehouseHousehold } from "@/lib/household/treehouseAccount";
 import { personActor, recordAudit } from "@/lib/auditActor";
 
 /** The person's row was deleted, by a merge or otherwise, between the pre-check and the write. */
@@ -118,6 +119,10 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
             if (denied !== null) throw new DeniedHouseholdMoveError(denied, participantId);
             // Nobody moves into or out of an archived household.
             await lockLiveHouseholds(tx, requestedHouseholdId === null ? [participant.householdId] : [participant.householdId, requestedHouseholdId]);
+            if (requestedHouseholdId !== null && requestedHouseholdId !== participant.householdId
+                && await isTreehouseHousehold(tx, requestedHouseholdId)) {
+                throw new TreehouseHouseholdError();
+            }
             // Re-read under the Household locks, so an actor who joined either household since the check above is refused.
             const lockedRefusal = await moveSelfGrantRefusal(tx, auth.user.id, participant, to);
             if (lockedRefusal) throw new SelfGrantMoveError(lockedRefusal);
@@ -190,7 +195,7 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
         if (error instanceof StaleSourceHouseholdError || error instanceof HouseholdLeadMismatchError) {
             return apiError("This person was moved to another household while you were working. Reload and try again.", 409);
         }
-        if (error instanceof ArchivedHouseholdError) {
+        if (error instanceof ArchivedHouseholdError || error instanceof TreehouseHouseholdError) {
             return apiError(error.message, error.status);
         }
         if (error instanceof DeniedHouseholdMoveError) {
