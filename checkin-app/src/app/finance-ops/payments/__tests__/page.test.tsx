@@ -46,7 +46,7 @@ function mockSync(
     gets: GetReply[],
     before: GetReply = { status: 200, body: previousRun },
     check: GetReply | GetReply[] = { status: 200, body: CHECKED },
-    status: GetReply = { status: 200, body: { scheduled: null, laterRepair: null } },
+    status: GetReply = { status: 200, body: { scheduled: null, running: null, laterRepair: null } },
 ) {
     let i = 0;
     let checks = 0;
@@ -118,27 +118,44 @@ async function loadWithStatus(body: unknown) {
 
 describe("finance-ops/payments — last-sync line", () => {
     it("shows a failing daily read and the completed repair after it", async () => {
-        const line = await loadWithStatus({ scheduled: finished("INCREMENTAL", "FAILED", 5), laterRepair: finished("ADMIN", "COMPLETED", 2) });
+        const line = await loadWithStatus({ scheduled: finished("INCREMENTAL", "FAILED", 5), running: null, laterRepair: finished("ADMIN", "COMPLETED", 2) });
 
         expect(line).toHaveTextContent("Last daily Shopify read: 5 hr ago (failed).");
         expect(screen.getByText("Repaired by a sysadmin 2 hr ago (completed).")).toBeInTheDocument();
     });
 
     it("shows one line for a completed daily read with no later repair", async () => {
-        const line = await loadWithStatus({ scheduled: finished("INCREMENTAL", "COMPLETED", 3), laterRepair: null });
+        const line = await loadWithStatus({ scheduled: finished("INCREMENTAL", "COMPLETED", 3), running: null, laterRepair: null });
 
         expect(line).toHaveTextContent("Last daily Shopify read: 3 hr ago (completed).");
         expect(screen.queryByText(/Repaired by|Backfilled/)).not.toBeInTheDocument();
     });
 
     it("says never when no daily read has finished", async () => {
-        const line = await loadWithStatus({ scheduled: null, laterRepair: null });
+        const line = await loadWithStatus({ scheduled: null, running: null, laterRepair: null });
 
+        expect(line).toHaveTextContent("Last daily Shopify read: never.");
+        expect(screen.queryByText(/running, started/)).not.toBeInTheDocument();
+    });
+
+    it("shows a daily read still running, and still shows how the last one ended", async () => {
+        const inFlight = { status: "RUNNING", kind: "INCREMENTAL", startedAt: new Date(Date.now() - 2 * HOUR).toISOString(), finishedAt: null, error: null };
+        const line = await loadWithStatus({ scheduled: finished("INCREMENTAL", "FAILED", 5), running: inFlight, laterRepair: null });
+
+        expect(screen.getByText("Daily Shopify read running, started 2 hr ago.")).toBeInTheDocument();
+        expect(line).toHaveTextContent("Last daily Shopify read: 5 hr ago (failed).");
+    });
+
+    it("shows a running first daily read as running, alongside never", async () => {
+        const inFlight = { status: "RUNNING", kind: "INCREMENTAL", startedAt: new Date(Date.now() - 2 * HOUR).toISOString(), finishedAt: null, error: null };
+        const line = await loadWithStatus({ scheduled: null, running: inFlight, laterRepair: null });
+
+        expect(screen.getByText("Daily Shopify read running, started 2 hr ago.")).toBeInTheDocument();
         expect(line).toHaveTextContent("Last daily Shopify read: never.");
     });
 
     it("names a later backfill as a backfill", async () => {
-        await loadWithStatus({ scheduled: finished("INCREMENTAL", "ABANDONED", 30), laterRepair: finished("BACKFILL", "COMPLETED", 1) });
+        await loadWithStatus({ scheduled: finished("INCREMENTAL", "ABANDONED", 30), running: null, laterRepair: finished("BACKFILL", "COMPLETED", 1) });
 
         expect(screen.getByText("Backfilled 1 hr ago (completed).")).toBeInTheDocument();
     });
