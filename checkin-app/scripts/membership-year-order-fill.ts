@@ -4,6 +4,7 @@
  * row takes the year of the membership-year variant on its store order, or the
  * year a Board member picks. No year is ever worked out from a date. Read-only
  * against Shopify; writes only `appliesToYear` and its audit row.
+ * It stops before reading anything unless the Shopify app holds `read_all_orders`.
  *
  *   npx tsx scripts/membership-year-order-fill.ts                      dry run: order matches + Board list
  *   npx tsx scripts/membership-year-order-fill.ts --write              write the order matches
@@ -124,7 +125,34 @@ type OrderLinesBody = {
     errors?: { message?: string }[];
 };
 
-export type GraphqlPost = (query: string, variables: Record<string, unknown>) => Promise<OrderLinesBody>;
+export type GraphqlPost = <T>(query: string, variables: Record<string, unknown>) => Promise<T>;
+
+const ACCESS_SCOPES_QUERY = `query AccessScopes { currentAppInstallation { accessScopes { handle } } }`;
+
+type AccessScopesBody = {
+    data?: { currentAppInstallation: { accessScopes: { handle: string }[] } | null };
+    errors?: { message?: string }[];
+};
+
+/** `read_all_orders` lets the app read orders older than Shopify's 60-day window. */
+export const REQUIRED_SCOPES = ["read_orders", "read_all_orders"] as const;
+
+/** Throws unless the app holds every required scope, so an old order is never listed as "not found" for want of one. */
+export async function assertOrderScopes(post: GraphqlPost): Promise<void> {
+    const body = await post<AccessScopesBody>(ACCESS_SCOPES_QUERY, {});
+    if (body.errors?.length) throw new Error(`Shopify access-scope read failed: ${body.errors[0].message ?? "unknown error"}`);
+    const granted = body.data?.currentAppInstallation?.accessScopes;
+    if (!granted) throw new Error("Shopify returned no access scopes for this app.");
+    const handles = new Set(granted.map((s) => s.handle));
+    const missing = REQUIRED_SCOPES.filter((s) => !handles.has(s));
+    if (missing.length) {
+        throw new Error(
+            `The Shopify app is missing the ${missing.join(" and ")} Admin API scope. Without read_all_orders Shopify reports orders older than 60 days as not found. Grant it and re-run; nothing was read or written.`,
+        );
+    }
+}
+
+export type ShopifyAccess = { assertScopes: () => Promise<void>; readOrder: ReadOrder };
 
 /** Reads every line of an order, page by page, through the Admin GraphQL API. */
 export function orderReader(post: GraphqlPost): ReadOrder {
@@ -132,7 +160,7 @@ export function orderReader(post: GraphqlPost): ReadOrder {
         const lineVariantIds: (string | null)[] = [];
         let after: string | null = null;
         for (;;) {
-            const body: OrderLinesBody = await post(ORDER_LINES_QUERY, { id: `gid://shopify/Order/${shopifyOrderId}`, after });
+            const body: OrderLinesBody = await post<OrderLinesBody>(ORDER_LINES_QUERY, { id: `gid://shopify/Order/${shopifyOrderId}`, after });
             if (body.errors?.length) throw new Error(`Shopify order ${shopifyOrderId} read failed: ${body.errors[0].message ?? "unknown error"}`);
             const order = body.data?.order;
             if (!order) {
@@ -148,17 +176,17 @@ export function orderReader(post: GraphqlPost): ReadOrder {
     };
 }
 
-async function shopifyGraphqlPost(query: string, variables: Record<string, unknown>): Promise<OrderLinesBody> {
+async function shopifyGraphqlPost<T>(query: string, variables: Record<string, unknown>): Promise<T> {
     const storeDomain = config.shopifyStoreDomain();
     const token = await getAccessToken();
     if (!storeDomain || !token) throw new Error("Shopify isn't configured: SHOPIFY_STORE_DOMAIN, SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET are required.");
     const res = await shopifyFetch(
         `https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
         { method: "POST", headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token }, body: JSON.stringify({ query, variables }) },
-        "Shopify read order lines",
+        "Shopify Admin read",
     );
-    if (!res.ok) throw new Error(`Shopify order read responded with status ${res.status}`);
-    return (await res.json()) as OrderLinesBody;
+    if (!res.ok) throw new Error(`Shopify Admin read responded with status ${res.status}`);
+    return (await res.json()) as T;
 }
 
 /** Parses the Board's picks file. Throws listing every bad line, so a partly wrong file writes nothing. */
@@ -254,10 +282,11 @@ export function parseArgs(argv: string[]): Args {
 }
 
 /** Runs the fill and returns its report lines. Writes only when `args.write` is set. */
-export async function run(db: FillDb, readOrder: ReadOrder, args: Args, readPicksFile: (path: string) => string): Promise<string[]> {
+export async function run(db: FillDb, shopify: ShopifyAccess, args: Args, readPicksFile: (path: string) => string): Promise<string[]> {
     const out: string[] = [];
+    await shopify.assertScopes();
     const candidates = await loadCandidates(db);
-    const resolutions = await resolveAll(candidates, await loadVariantYears(db), readOrder);
+    const resolutions = await resolveAll(candidates, await loadVariantYears(db), shopify.readOrder);
     const matches = resolutions.filter((r): r is Extract<Resolution, { outcome: "order" }> => r.outcome === "order");
     const boardList = formatBoardList(resolutions);
 
@@ -296,7 +325,7 @@ export async function run(db: FillDb, readOrder: ReadOrder, args: Args, readPick
 async function main() {
     const args = parseArgs(process.argv.slice(2));
     try {
-        const lines = await run(prisma, orderReader(shopifyGraphqlPost), args, (path) => readFileSync(path, "utf8"));
+        const lines = await run(prisma, { assertScopes: () => assertOrderScopes(shopifyGraphqlPost), readOrder: orderReader(shopifyGraphqlPost) }, args, (path) => readFileSync(path, "utf8"));
         console.log(lines.join("\n"));
     } finally {
         await prisma.$disconnect();

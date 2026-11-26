@@ -4,6 +4,7 @@ import {
     type GraphqlPost,
     type OrderRead,
     type ReadOrder,
+    assertOrderScopes,
     checkPicks,
     formatBoardList,
     orderReader,
@@ -24,6 +25,10 @@ const PROGRAM_VARIANT = "5551";
 
 function candidate(over: Partial<Candidate> = {}): Candidate {
     return { id: 1, kind: "RENEWAL", paidAt: new Date("2025-07-30T15:00:00Z"), shopifyOrderId: "777", householdId: 40, householdName: "Rivera", ...over };
+}
+
+function access(readOrder: ReadOrder) {
+    return { assertScopes: async () => undefined, readOrder };
 }
 
 function ordersReader(orders: Record<string, (string | null)[]>): ReadOrder & jest.Mock {
@@ -137,6 +142,26 @@ describe("orderReader", () => {
     });
 });
 
+describe("assertOrderScopes", () => {
+    const scopes = (...handles: string[]) => ({ data: { currentAppInstallation: { accessScopes: handles.map((handle) => ({ handle })) } } });
+
+    it("passes when the app holds read_orders and read_all_orders", async () => {
+        const post: GraphqlPost & jest.Mock = jest.fn().mockResolvedValue(scopes("read_products", "read_orders", "read_all_orders"));
+        await expect(assertOrderScopes(post)).resolves.toBeUndefined();
+        expect(post.mock.calls[0][0]).toMatch(/currentAppInstallation\s*\{\s*accessScopes/);
+    });
+
+    it("names read_all_orders when it is missing", async () => {
+        const post: GraphqlPost = jest.fn().mockResolvedValue(scopes("read_orders"));
+        await expect(assertOrderScopes(post)).rejects.toThrow(/missing the read_all_orders Admin API scope/);
+    });
+
+    it("throws when Shopify can't say which scopes the app holds", async () => {
+        const post: GraphqlPost = jest.fn().mockResolvedValue({ errors: [{ message: "Access denied" }] });
+        await expect(assertOrderScopes(post)).rejects.toThrow(/Access denied/);
+    });
+});
+
 describe("parsePicks", () => {
     it("reads one pick per line under the header", () => {
         expect(parsePicks("processId,year,boardPersonId\n12,2024,7\r\n13, 2025 ,7\n\n")).toEqual([
@@ -220,7 +245,7 @@ describe("run", () => {
 
     it("writes nothing on a dry run", async () => {
         const { db, rows, audits, updateMany } = fakeDb([row({ id: 1 }), row({ id: 2, shopifyOrderId: null })]);
-        const out = await run(db, ordersReader({ "777": [V2024] }), { write: false, picksPath: null }, noFile);
+        const out = await run(db, access(ordersReader({ "777": [V2024] })), { write: false, picksPath: null }, noFile);
 
         expect(updateMany).not.toHaveBeenCalled();
         expect(audits).toEqual([]);
@@ -232,7 +257,7 @@ describe("run", () => {
 
     it("with --write, writes each order's year with a system audit row naming the order and variant", async () => {
         const { db, rows, audits } = fakeDb([row({ id: 1 }), row({ id: 2, shopifyOrderId: "778" }), row({ id: 3, shopifyOrderId: null })]);
-        await run(db, ordersReader({ "777": [V2024], "778": [V2024, V2025] }), { write: true, picksPath: null }, noFile);
+        await run(db, access(ordersReader({ "777": [V2024], "778": [V2024, V2025] })), { write: true, picksPath: null }, noFile);
 
         expect(rows.map((r) => r.appliesToYear)).toEqual([2024, null, null]);
         expect(audits).toEqual([
@@ -256,7 +281,7 @@ describe("run", () => {
             rows[0].appliesToYear = 2025;
             return { found: true, lineVariantIds: [V2024] };
         };
-        const out = await run(db, read, { write: true, picksPath: null }, noFile);
+        const out = await run(db, access(read), { write: true, picksPath: null }, noFile);
 
         expect(updateMany).toHaveBeenCalledTimes(1);
         expect(rows[0].appliesToYear).toBe(2025);
@@ -267,7 +292,7 @@ describe("run", () => {
     it("with --picks and --write, writes each pick with the picking Board member as the actor", async () => {
         const { db, rows, audits } = fakeDb([row({ id: 1 }), row({ id: 2, shopifyOrderId: null }), row({ id: 3, shopifyOrderId: "404" })], { boardMemberIds: [7] });
         const picks = "processId,year,boardPersonId\n2,2025,7";
-        const out = await run(db, ordersReader({ "777": [V2024] }), { write: true, picksPath: "picks.csv" }, () => picks);
+        const out = await run(db, access(ordersReader({ "777": [V2024] })), { write: true, picksPath: "picks.csv" }, () => picks);
 
         expect(rows.map((r) => r.appliesToYear)).toEqual([null, 2025, null]);
         expect(audits).toEqual([
@@ -286,11 +311,28 @@ describe("run", () => {
         expect(out.join("\n")).toMatch(/Still on the Board list with no pick: 1\n {2}application 3 /);
     });
 
+    it.each([
+        ["a dry run", { write: false, picksPath: null }],
+        ["a write run", { write: true, picksPath: null }],
+        ["a picks run", { write: true, picksPath: "picks.csv" }],
+    ])("stops %s before reading any order or row when a scope is missing", async (_label, args) => {
+        const { db, updateMany } = fakeDb([row({ id: 1 })], { boardMemberIds: [7] });
+        const readOrder = ordersReader({ "777": [V2024] });
+        const assertScopes = jest.fn(async () => {
+            throw new Error("The Shopify app is missing the read_all_orders Admin API scope.");
+        });
+
+        await expect(run(db, { assertScopes, readOrder }, args, () => "processId,year,boardPersonId\n1,2024,7")).rejects.toThrow(/read_all_orders/);
+        expect(readOrder).not.toHaveBeenCalled();
+        expect(db.orgMembershipProcess.findMany).not.toHaveBeenCalled();
+        expect(updateMany).not.toHaveBeenCalled();
+    });
+
     it("writes no pick at all when any pick is refused", async () => {
         const { db, rows, updateMany } = fakeDb([row({ id: 2, shopifyOrderId: null }), row({ id: 3, shopifyOrderId: null })], { boardMemberIds: [7] });
         const picks = "processId,year,boardPersonId\n2,2025,7\n3,2025,8";
 
-        await expect(run(db, ordersReader({}), { write: true, picksPath: "picks.csv" }, () => picks)).rejects.toThrow(/person 8/);
+        await expect(run(db, access(ordersReader({})), { write: true, picksPath: "picks.csv" }, () => picks)).rejects.toThrow(/person 8/);
         expect(updateMany).not.toHaveBeenCalled();
         expect(rows.map((r) => r.appliesToYear)).toEqual([null, null]);
     });
