@@ -88,24 +88,6 @@ export const classifications = {
     personId: "pii",
     name: "pii",
   },
-  // A donated gift line in capital review: the gift's value and finance's
-  // decision. The reviewer's id is `pii`; there is no donor field.
-  DonatedCapitalLineView: {
-    id: "internal",
-    orgId: "internal",
-    giftSource: "internal",
-    giftId: "internal",
-    giftLineId: "internal",
-    description: "internal",
-    quantity: "internal",
-    costCents: "internal",
-    acquisitionDate: "internal",
-    budgetOwnerId: "internal",
-    isCapital: "internal",
-    depreciationYears: "internal",
-    reviewedByUserId: "pii",
-    reviewedAt: "internal",
-  },
   // GET /api/expense/finance-queue?tab=…: one record waiting on finance or the Board.
   // The row's reasons hold codes, fixed text and links. A failed intake's row also
   // carries the stored error text, `personal` like the ReceivedExpensePayload
@@ -159,7 +141,6 @@ export const relations = {
 // Finance marks: the fields whose presence in a response makes it a logged finance view.
 export const marks = {
   ExpenseQbCandidateView: ["totalCents"],
-  DonatedCapitalLineView: ["costCents"],
   FinanceQueueRow: ["vendorName", "amountCents"],
   ExpenseQueueReason: ["amountCents"],
 } as const;
