@@ -37,6 +37,7 @@ stateDiagram-v2
     INTAKE --> BLOCKED: settleHouseholdBg
     INTAKE --> PENDING_EXTERNAL_ACTION: submitIntake · INITIAL
     PENDING_BG_CLEARANCE --> ACTIVE: settleHouseholdBg
+    PENDING_BG_CLEARANCE --> ARCHIVED: closeHouseholdApplications
     PENDING_BG_CLEARANCE --> ARCHIVED: recordRefund
     PENDING_BG_CLEARANCE --> BLOCKED: settleHouseholdBg
     PENDING_BG_CLEARANCE --> PENDING_EXTERNAL_ACTION: settleHouseholdBg
@@ -101,7 +102,7 @@ A blank (`—`) cell is a **deliberate** absent edge — a decision to ratify, n
 | PENDING_EXTERNAL_ACTION | — | PENDING_BG_CLEARANCE, PENDING_PAYMENT | ARCHIVED | — | — | — | — | — | — | ARCHIVED | ARCHIVED | — | — | — | — | — | ACTIVE | — | — | — | ARCHIVED | BLOCKED | — | — | — | — |
 | PENDING_BG_REVIEW | — | — | ARCHIVED | BLOCKED | — | ARCHIVED | — | — | ACTIVE | ARCHIVED | — | — | ARCHIVED | — | — | — | — | — | — | — | ARCHIVED | ACTIVE, BLOCKED, PENDING_BG_CLEARANCE, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT | ARCHIVED | — | — | — |
 | PENDING_PAYMENT | ACTIVE, PENDING_BG_CLEARANCE, PENDING_EXTERNAL_ACTION | — | ARCHIVED | — | — | — | — | — | — | ARCHIVED | — | — | — | ACTIVE | — | — | — | — | — | — | ARCHIVED | BLOCKED | — | — | — | — |
-| PENDING_BG_CLEARANCE | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | ARCHIVED, PENDING_PAYMENT | ACTIVE, BLOCKED, PENDING_EXTERNAL_ACTION | — | — | — | — |
+| PENDING_BG_CLEARANCE | — | — | — | — | — | — | — | — | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | ARCHIVED, PENDING_PAYMENT | ACTIVE, BLOCKED, PENDING_EXTERNAL_ACTION | — | — | — | — |
 | ACTIVE | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
 | BLOCKED | — | — | — | — | PENDING_BG_REVIEW | — | — | PENDING_BG_CLEARANCE, PENDING_BG_REVIEW, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | ARCHIVED | INTAKE, PENDING_BG_CLEARANCE, PENDING_BG_REVIEW, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT, PENDING_RENEWAL | — | — | — | — |
 | PENDING_RENEWAL | — | — | ARCHIVED | — | — | — | PENDING_EXTERNAL_ACTION | — | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | ARCHIVED | BLOCKED | — | — | — | — |

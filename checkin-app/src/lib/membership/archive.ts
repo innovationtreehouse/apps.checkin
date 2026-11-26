@@ -113,10 +113,11 @@ export function countOpenApplications(tx: TxClient, orgMembershipId: number) {
 
 /**
  * Closes the open applications of a household the board is denying or archiving, so
- * nothing decided before carries across. A deny leaves a paid application open, to
- * carry the refund owed; it closes once that refund is recorded. An archive refuses,
- * rolling back the caller's transaction, while one still has a payment recorded.
- * Either refuses at a step this cannot close.
+ * nothing decided before carries across. A deny never refuses: it closes every unpaid
+ * application and leaves a paid one open, to carry the refund owed; that one closes
+ * once its refund is recorded. An archive refuses, rolling back the caller's
+ * transaction, while one still has a payment recorded or sits at a step
+ * `HOUSEHOLD_CLOSABLE_STATUSES` leaves out.
  */
 export async function closeHouseholdApplications(
     tx: TxClient,
@@ -128,8 +129,8 @@ export async function closeHouseholdApplications(
         throw new ReviewError("wrong_phase", "This household has an application with a payment recorded. Refund it in Shopify and record the refund first, then archive the household.");
     }
     const closing = open.filter((p) => !p.paidAt);
-    if (closing.some((p) => !(HOUSEHOLD_CLOSABLE_STATUSES as readonly string[]).includes(p.status))) {
-        throw new ReviewError("wrong_phase", `This household has an application at a step a ${action === "deny" ? "denial" : "archive"} cannot close. Resolve that application first, then ${action} the household.`);
+    if (action === "archive" && closing.some((p) => !(HOUSEHOLD_CLOSABLE_STATUSES as readonly string[]).includes(p.status))) {
+        throw new ReviewError("wrong_phase", "This household has an application at a step an archive cannot close. Resolve that application first, then archive the household.");
     }
     for (const p of closing) {
         const { count } = await tx.orgMembershipProcess.updateMany({

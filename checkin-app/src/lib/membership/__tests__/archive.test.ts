@@ -76,6 +76,19 @@ describe('closeHouseholdApplications', () => {
         expect(tx.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
 
+    it('a denial never refuses: it closes an unpaid clearance wait too', async () => {
+        await closeHouseholdApplications(client, [{ id: 6, status: 'PENDING_BG_CLEARANCE', paidAt: null }], personActor(2), 'deny');
+        expect(tx.orgMembershipProcess.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ id: 6, paidAt: null }),
+            data: expect.objectContaining({ status: 'ARCHIVED', archivedFromStatus: 'PENDING_BG_CLEARANCE' }),
+        }));
+    });
+
+    it('an archive refuses an unpaid clearance wait, closing nothing', async () => {
+        await expect(closeHouseholdApplications(client, [open[0], { id: 6, status: 'PENDING_BG_CLEARANCE', paidAt: null }], personActor(2), 'archive')).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect(tx.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+    });
+
     it('an archive closes every unpaid application with its own reason', async () => {
         await closeHouseholdApplications(client, open.slice(0, 4), personActor(2), 'archive');
         expect(tx.orgMembershipProcess.updateMany).toHaveBeenCalledTimes(4);

@@ -356,8 +356,8 @@ export const ARCHIVABLE_STATUSES = [
 export const CLOSABLE_STATUSES = [...ARCHIVABLE_STATUSES, "RENEWAL_PENDING_BG"] as const satisfies readonly ProcessStatus[];
 
 /**
- * What a household denial or archive closes, unpaid only: a BLOCKED application
- * closes too (its rejection stays in the audit row).
+ * What a household archive closes, unpaid only: a BLOCKED application closes too (its
+ * rejection stays in the audit row). A denial closes these and an unpaid clearance wait.
  */
 export const HOUSEHOLD_CLOSABLE_STATUSES = [...CLOSABLE_STATUSES, "BLOCKED"] as const satisfies readonly ProcessStatus[];
 
@@ -510,6 +510,8 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
             ...(from === "RENEWAL_PENDING_BG" ? { legacy: true } : {}),
         }),
     ),
+    // A denial closes an unpaid clearance wait too; an archive refuses it.
+    { from: "PENDING_BG_CLEARANCE", to: "ARCHIVED", event: "closeHouseholdApplications", actor: "board", guardSite: "archive.ts closeHouseholdApplications: updateMany CAS (status read, paidAt null), in the household deny transaction only" },
     // Reopen — back to the step the close captured. ARCHIVED rests but is not sealed.
     ...ARCHIVABLE_STATUSES.map(
         (to): Transition<TState, string, ProcessKind> => ({

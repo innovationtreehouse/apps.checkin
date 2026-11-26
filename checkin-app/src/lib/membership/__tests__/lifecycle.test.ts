@@ -221,19 +221,19 @@ describe('isLegalTransition covers the declared edges', () => {
         expect(isLegalTransition('BLOCKED', 'ACTIVE')).toBe(false);
     });
 
-    test('close only from the unpaid, long-idle steps — never active; blocked only by a household denial or archive; paid only by a refund', () => {
+    test('close only from the unpaid, long-idle steps — never active; blocked only by a household denial or archive; a clearance wait only by a denial or a refund', () => {
         for (const from of ['INTAKE', 'PENDING_EXTERNAL_ACTION', 'PENDING_BG_REVIEW', 'PENDING_PAYMENT', 'PENDING_RENEWAL'] as ProcessStatus[]) {
             expect(isLegalTransition(from, 'ARCHIVED')).toBe(true);
         }
         expect(isLegalTransition('ACTIVE', 'ARCHIVED')).toBe(false);
-        expect(TRANSITIONS.filter((t) => t.from === 'PENDING_BG_CLEARANCE' && t.to === 'ARCHIVED').map((t) => t.event)).toEqual(['recordRefund']);
+        expect(TRANSITIONS.filter((t) => t.from === 'PENDING_BG_CLEARANCE' && t.to === 'ARCHIVED').map((t) => t.event).sort()).toEqual(['closeHouseholdApplications', 'recordRefund']);
         expect(TRANSITIONS.filter((t) => t.from === 'BLOCKED' && t.to === 'ARCHIVED').map((t) => t.event).sort()).toEqual(['closeHouseholdApplications', 'recordRefund']);
     });
 
-    test('a denial or archive closes every unpaid open step but a clearance wait', () => {
+    test('a denial closes every unpaid open step; an archive every one but a clearance wait', () => {
         const closes = TRANSITIONS.filter((t) => t.event === 'closeHouseholdApplications');
         expect(closes.every((t) => t.to === 'ARCHIVED')).toBe(true);
-        expect(closes.map((t) => t.from).sort()).toEqual([...HOUSEHOLD_CLOSABLE_STATUSES].sort());
+        expect(closes.map((t) => t.from).sort()).toEqual([...openProcess.statuses].sort());
         expect((openProcess.statuses as readonly string[]).filter((s) => !(HOUSEHOLD_CLOSABLE_STATUSES as readonly string[]).includes(s))).toEqual(['PENDING_BG_CLEARANCE']);
     });
 
