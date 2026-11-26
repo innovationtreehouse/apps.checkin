@@ -126,7 +126,7 @@ beforeAll(async () => {
     process.env.SHOPIFY_READ_DATABASE_URL = urlFor(MIRROR_DB);
 
     restoreBoardSettings = await snapshotBoardSettings();
-    const settings = { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null };
+    const settings = { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null, shopifyReconcileCursorGid: null };
     await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, ...settings }, update: settings });
     await prisma.membershipYearVariant.create({ data: { membershipYear: MEMBERSHIP_YEAR, shopifyVariantId: MEMBERSHIP_VARIANT } });
 }, 60_000);

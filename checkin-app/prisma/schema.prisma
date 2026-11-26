@@ -835,11 +835,13 @@ model BoardSettings {
   shopifyOrgMembershipProductId String?
   /// @sensitivity:internal
   shopifyPriceSyncedAt       DateTime?
-  /// High-water mark for the daily Shopify reconciler (lib/finance/reconcile.ts):
-  /// the mirror `updatedAt` of the newest order it has already processed. Only
-  /// orders changed after this are re-scanned each run. Null = scan from the start.
+  /// High-water mark for the Shopify reconciler (lib/finance/reconcile/): the mirror
+  /// `lastSyncedAt` and GID of the last order it has processed. Each run reads the
+  /// orders synced after that pair. Null = scan from the start.
   /// @sensitivity:internal
   shopifyReconcileCursorAt   DateTime?
+  /// @sensitivity:internal
+  shopifyReconcileCursorGid  String?
   /// Lease that lets one Shopify reconcile pass run at a time (the daily cron or
   /// the payments page's refresh). @sensitivity:internal
   shopifyReconcileLeaseUntil DateTime?

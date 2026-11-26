@@ -101,7 +101,8 @@ describe('wiring', () => {
         expect(client.isConfigured()).toBe(false);
         expect(await client.latestSyncRun()).toBeNull();
         expect(await client.scheduledReadState()).toBeNull();
-        expect(await client.ordersChangedSince(null)).toEqual([]);
+        expect(await client.ordersSyncedAfter(null)).toEqual([]);
+        expect(await client.mirrorNow()).toBeNull();
         expect(await client.ordersByLegacyIds(['123'])).toEqual([]);
         expect(await client.minRealOrderLegacyId()).toBeNull();
         await expect(client.countSyncRuns()).rejects.toThrow(/not configured/);
@@ -239,6 +240,7 @@ describe('order reads', () => {
         discountCodes: [],
         cancelledAt: null,
         updatedAt: new Date('2026-07-01T00:00:00Z'),
+        lastSyncedAt: new Date('2026-07-01T00:05:00Z'),
         noteAttributes: [{ key: 'Program_ID', value: '7' }, { key: 'Odd', value: 5 }, 'junk'],
     };
 
@@ -257,19 +259,31 @@ describe('order reads', () => {
         expect((await freshClient().ordersByLegacyIds(['1']))[0].noteAttributes).toBeNull();
     });
 
-    it('ordersChangedSince skips test and injected orders and reads oldest-first past the cursor', async () => {
-        const since = new Date('2026-07-01T00:00:00Z');
-        await freshClient().ordersChangedSince(since, 50);
+    it('ordersSyncedAfter skips test and injected orders and reads past the cursor by sync stamp then GID', async () => {
+        const syncedAt = new Date('2026-07-01T00:00:00Z');
+        await freshClient().ordersSyncedAfter({ syncedAt, orderGid: 'gid://shopify/Order/5' }, 50);
         const args = db.shopOrder.findMany.mock.calls[0][0];
 
-        expect(args.where).toEqual({ test: false, ...API_SOURCE, updatedAt: { gt: since } });
-        expect(args.orderBy).toEqual({ updatedAt: { sort: 'asc', nulls: 'first' } });
+        expect(args.where).toEqual({
+            test: false,
+            AND: [
+                API_SOURCE,
+                { OR: [{ lastSyncedAt: { gt: syncedAt } }, { lastSyncedAt: syncedAt, shopifyGid: { gt: 'gid://shopify/Order/5' } }] },
+            ],
+        });
+        expect(args.orderBy).toEqual([{ lastSyncedAt: 'asc' }, { shopifyGid: 'asc' }]);
         expect(args.take).toBe(50);
     });
 
-    it('ordersChangedSince(null) reads from the beginning', async () => {
-        await freshClient().ordersChangedSince(null);
-        expect(whereOf(db.shopOrder.findMany)).toEqual({ test: false, ...API_SOURCE });
+    it('ordersSyncedAfter(null) reads from the beginning', async () => {
+        await freshClient().ordersSyncedAfter(null);
+        expect(whereOf(db.shopOrder.findMany)).toEqual({ test: false, AND: [API_SOURCE, {}] });
+    });
+
+    it("mirrorNow reads the mirror database's clock", async () => {
+        const now = new Date('2026-11-24T12:00:00Z');
+        db.$queryRaw.mockResolvedValue([{ now }]);
+        expect(await freshClient().mirrorNow()).toBe(now);
     });
 
     it('ordersByLegacyIds ignores test and injected orders and short-circuits an empty list', async () => {

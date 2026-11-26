@@ -18,7 +18,8 @@ jest.mock("@/lib/logger", () => ({ logger: { info: jest.fn(), warn: jest.fn(), e
 jest.mock("@/lib/shopifyRead/client", () => ({
     isConfigured: () => true,
     orderAttr: (o: MirrorOrder, key: string) => o.noteAttributes?.find((a) => a.key === key)?.value ?? null,
-    ordersChangedSince: jest.fn(),
+    ordersSyncedAfter: jest.fn(),
+    mirrorNow: jest.fn().mockResolvedValue(new Date("2026-10-16T10:00:00Z")),
     orderLines: jest.fn().mockResolvedValue([{ variantId: "V1", quantity: 1, currentQuantity: 1 }]),
     ordersByLegacyIds: jest.fn().mockResolvedValue([]),
     orderDisputeCounts: jest.fn().mockResolvedValue(new Map()),
@@ -49,7 +50,8 @@ function order(sig: string | null): MirrorOrder {
     return {
         orderGid: "gid://shopify/Order/900", legacyId: "900", customerEmail: null, financialStatus: "PAID",
         totalCents: 5000, subtotalCents: 5000, totalRefundedCents: 0, discountCents: 0, discountCodes: [],
-        processedAt: null, cancelledAt: null, updatedAt: new Date("2026-10-16T09:00:00Z"), noteAttributes,
+        processedAt: null, cancelledAt: null, updatedAt: new Date("2026-10-16T09:00:00Z"),
+        lastSyncedAt: new Date("2026-10-16T09:00:00Z"), noteAttributes,
     };
 }
 
@@ -74,7 +76,7 @@ beforeEach(() => {
 
 async function reconcile(o: MirrorOrder, householdOfChild: number) {
     childHouseholds.mockResolvedValue([{ householdId: householdOfChild }]);
-    (mirror.ordersChangedSince as jest.Mock).mockResolvedValue([o]);
+    (mirror.ordersSyncedAfter as jest.Mock).mockResolvedValue([o]);
     const result = await runReconcile();
     expect(result.failed).toBe(0);
 }

@@ -70,6 +70,12 @@ export interface ReconcileResult {
 /** How long one pass may hold the lease; a pass that crashed frees it when this runs out. */
 const RECONCILE_LEASE_MS = 15 * 60_000;
 
+/**
+ * How far behind the mirror's clock the cursor stays. A sync stamps a row moments before
+ * its transaction commits, so a row stamped later than this may not be visible yet.
+ */
+const CURSOR_HOLD_BACK_MS = 5 * 60_000;
+
 /** Writes made with the lease claim, such as the audit row of the run it starts. */
 export type RecordStart = (tx: TxClient) => Promise<unknown>;
 
@@ -100,13 +106,13 @@ async function takeReconcileLease(recordStart?: RecordStart): Promise<string | n
  * Free the lease, writing the new cursor in the same statement so only the lease
  * holder ever moves it. A pass whose lease expired and was taken writes nothing.
  */
-async function releaseReconcileLease(token: string, advanceTo: Date | null): Promise<void> {
+async function releaseReconcileLease(token: string, advanceTo: mirror.MirrorCursor | null): Promise<void> {
     const { count } = await prisma.boardSettings.updateMany({
         where: { id: 1, shopifyReconcileLeaseToken: token },
         data: {
             shopifyReconcileLeaseUntil: null,
             shopifyReconcileLeaseToken: null,
-            ...(advanceTo ? { shopifyReconcileCursorAt: advanceTo } : {}),
+            ...(advanceTo ? { shopifyReconcileCursorAt: advanceTo.syncedAt, shopifyReconcileCursorGid: advanceTo.orderGid } : {}),
         },
     });
     if (count !== 1) logger.error("[reconcile] the lease expired before the pass finished; the cursor was not advanced");
@@ -114,8 +120,8 @@ async function releaseReconcileLease(token: string, advanceTo: Date | null): Pro
 
 /**
  * One reconciliation pass. No-op (configured:false) when the mirror isn't wired, and
- * `leaseHeld` when another pass is running. `recordStart` commits with the lease claim. Advances BoardSettings.shopifyReconcileCursorAt
- * to the newest order it processed so the next run only re-scans changed orders.
+ * `leaseHeld` when another pass is running. `recordStart` commits with the lease claim. Advances the
+ * BoardSettings cursor past the orders it processed so the next run reads only orders synced since.
  */
 export async function runReconcile(recordStart?: RecordStart): Promise<ReconcileResult> {
     if (!mirror.isConfigured()) return { configured: false, ordersScanned: 0, reversalsRaised: 0, failed: 0 };
@@ -123,7 +129,7 @@ export async function runReconcile(recordStart?: RecordStart): Promise<Reconcile
     const token = await takeReconcileLease(recordStart);
     if (!token) return { configured: true, ordersScanned: 0, reversalsRaised: 0, failed: 0, leaseHeld: true };
 
-    let advanceTo: Date | null = null;
+    let advanceTo: mirror.MirrorCursor | null = null;
     try {
         const pass = await reconcilePass();
         advanceTo = pass.advanceTo;
@@ -137,16 +143,22 @@ export async function runReconcile(recordStart?: RecordStart): Promise<Reconcile
 }
 
 /** The pass itself, under the lease. `advanceTo` is the cursor to write, or null to leave it. */
-async function reconcilePass(): Promise<{ result: ReconcileResult; advanceTo: Date | null }> {
-    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { shopifyReconcileCursorAt: true } });
-    const cursor = settings?.shopifyReconcileCursorAt ?? null;
+async function reconcilePass(): Promise<{ result: ReconcileResult; advanceTo: mirror.MirrorCursor | null }> {
+    const settings = await prisma.boardSettings.findUnique({
+        where: { id: 1 },
+        select: { shopifyReconcileCursorAt: true, shopifyReconcileCursorGid: true },
+    });
+    const cursor = settings?.shopifyReconcileCursorAt
+        ? { syncedAt: settings.shopifyReconcileCursorAt, orderGid: settings.shopifyReconcileCursorGid ?? "" }
+        : null;
 
-    const orders = await mirror.ordersChangedSince(cursor);
-    let newCursor = cursor;
-    // Stop advancing the cursor at the first order whose pass throws: advancing past
-    // it would skip that order FOREVER (the forward pass is cursor-once). Later
-    // orders in this batch still get processed (idempotent, so re-scanning them
-    // tomorrow is harmless); only the watermark holds back until the bad order heals.
+    const now = await mirror.mirrorNow();
+    const settledBy = now ? new Date(now.getTime() - CURSOR_HOLD_BACK_MS) : null;
+    const orders = await mirror.ordersSyncedAfter(cursor);
+    let advanceTo: mirror.MirrorCursor | null = null;
+    // Orders arrive in cursor order, so the cursor stops at the last order before the
+    // first one whose pass throws, and the next run retries from there. Later orders
+    // are still processed; re-reading them is harmless.
     let cursorFrozen = false;
     let failed = 0;
     for (const order of orders) {
@@ -158,16 +170,10 @@ async function reconcilePass(): Promise<{ result: ReconcileResult; advanceTo: Da
             logger.error(`[reconcile] forward pass failed for order ${order.legacyId ?? order.orderGid}:`, e);
             failed++;
             cursorFrozen = true;
-            // The watermark may ALREADY sit at this order's updatedAt — an earlier
-            // order in the batch with the same timestamp succeeded and advanced it.
-            // ordersChangedSince compares with a strict `updated_at >`, so leaving
-            // the cursor there would skip this order forever. Pull it back below
-            // the failed order so the next run re-fetches it.
-            if (order.updatedAt && newCursor && newCursor >= order.updatedAt) {
-                newCursor = new Date(order.updatedAt.getTime() - 1);
-            }
         }
-        if (!cursorFrozen && order.updatedAt && (!newCursor || order.updatedAt > newCursor)) newCursor = order.updatedAt;
+        if (!cursorFrozen && settledBy && order.lastSyncedAt <= settledBy) {
+            advanceTo = { syncedAt: order.lastSyncedAt, orderGid: order.orderGid };
+        }
     }
 
     // A throw here leaves the cursor where it was, so the next run re-scans.
@@ -175,6 +181,6 @@ async function reconcilePass(): Promise<{ result: ReconcileResult; advanceTo: Da
 
     return {
         result: { configured: true, ordersScanned: orders.length, reversalsRaised, failed },
-        advanceTo: newCursor && newCursor !== cursor ? newCursor : null,
+        advanceTo,
     };
 }
