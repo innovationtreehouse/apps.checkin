@@ -356,6 +356,30 @@ describe("the receiving page for one receipt", () => {
         body: JSON.stringify({ gtin13: hub.gtin13, conversionFactor: 1 }),
       })));
     });
+
+    it("re-associates a linked line from its Change form", async () => {
+      detail = {
+        ...baseDetail,
+        ReceivedReceiptLineStatus: [
+          { ...baseDetail.ReceivedReceiptLineStatus[0], recognitionStatus: "recognized", assignedGtin13: "0011111111116" },
+          baseDetail.ReceivedReceiptLineStatus[1],
+        ],
+      };
+      mockApi.mockImplementation(async (path: string) => {
+        if (path.startsWith("/provisional-parts")) return [];
+        if (path.startsWith("/api/catalog/items/")) return { gtin13: "0011111111116", name: "Old glue" };
+        return null;
+      });
+      global.fetch = jest.fn(async () => ({ ok: true, status: 200, text: async () => JSON.stringify([hub]) })) as unknown as typeof fetch;
+      wrap();
+      fireEvent.click(within(screen.getByRole("row", { name: /Wood glue/ })).getByRole("button", { name: "Change" }));
+      fireEvent.change(screen.getByPlaceholderText(SEARCH), { target: { value: "power" } });
+      fireEvent.click(await screen.findByRole("radio", { name: /Power Hub/ }));
+      fireEvent.click(within(screen.getByRole("region", { name: "Line 1 details" })).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/receipts/7/lines/11/associate", expect.objectContaining({
+        body: JSON.stringify({ gtin13: hub.gtin13, conversionFactor: 1 }),
+      })));
+    });
   });
 
   describe("the org's local-only and pending parts in the associate search", () => {

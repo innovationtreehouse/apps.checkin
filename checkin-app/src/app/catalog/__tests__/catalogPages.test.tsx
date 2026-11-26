@@ -43,6 +43,13 @@ describe("catalog pages", () => {
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
   });
 
+  it("says so when no item reference proposals are pending", async () => {
+    renderWithProviders(<ItemReferenceProposals />);
+    expect(await screen.findByText("No pending item reference proposals.")).toBeInTheDocument();
+    expect(fetched().some((u) => u.includes("/proposals/item-references?"))).toBe(true);
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
   it("refreshes the nav counts after an item reference proposal is approved", async () => {
     global.fetch = jest.fn(async (url: string) => new Response(
       JSON.stringify(url.includes("/proposals/item-references?")
