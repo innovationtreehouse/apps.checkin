@@ -46,7 +46,7 @@ export function activityScore(p: ParticipantMergeView): number {
   return s;
 }
 
-// Per-field conflict radios — mirrors the server's CONFLICT_FIELDS (route.ts).
+// Per-field conflict radios — mirrors the server's CONFLICT_FIELDS (lib/person/merge/plan.ts).
 // email/googleId/emailVerified are NOT here: they're the login identity, minted
 // together at sign-in and resolved as ONE unit under the `identity` key (never
 // split field-by-field). image/lastBackgroundCheck/lastWaiverSign auto-resolve.
