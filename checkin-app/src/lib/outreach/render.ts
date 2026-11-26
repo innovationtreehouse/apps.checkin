@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { config } from "@/lib/config";
-import { nextBoundary } from "@/lib/membership/renewal";
+import { upcomingBoundary } from "@/lib/membership/renewal";
+import { orgToday } from "@/lib/appSettings";
 import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
 
 export type EmailType = "opening" | "reminder";
@@ -18,14 +19,14 @@ export class BoundaryNotSetError extends Error {
     }
 }
 
-/** The next occurrence of the board's configured membership-year boundary, or throws. */
+/** The board's configured membership-year boundary, next after the org's calendar day at `now`, or throws. */
 export async function resolveBoundary(now: Date): Promise<Date> {
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },
         select: { orgMembershipYearBoundary: true },
     });
     if (!settings?.orgMembershipYearBoundary) throw new BoundaryNotSetError();
-    return nextBoundary(settings.orgMembershipYearBoundary, now);
+    return upcomingBoundary(settings.orgMembershipYearBoundary, await orgToday(now));
 }
 
 /** One recipient's token values; `{{deadline}}` is the boundary's date, YYYY-MM-DD. */

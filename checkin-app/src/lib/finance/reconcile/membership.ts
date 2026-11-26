@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
 import { activateByProcessId, type ActivateOutcome, type MembershipLine } from "@/lib/membership/payment";
 import { liveMembershipYear } from "@/lib/membership/renewal";
+import { orgToday } from "@/lib/appSettings";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
@@ -93,7 +94,7 @@ async function raisePaidWhileBlocked(ref: { shopifyOrderId: string | null; proce
  * rule. Exported so matchAudit.ts consumes the same keys as the item gate; a variant
  * missed in a private copy would silently VANISH from the audit (filtered out in
  * SQL), not show as a gap. The dev-mock variant (when the Shopify mock is active)
- * sells the live year at `paidAt` unless a row claims it.
+ * sells the live year on the org calendar day of `paidAt` unless a row claims it.
  */
 export async function membershipVariantYears(
     settings: { orgMembershipYearBoundary: Date | null } | null,
@@ -102,7 +103,7 @@ export async function membershipVariantYears(
     const rows = await prisma.membershipYearVariant.findMany({ select: { shopifyVariantId: true, membershipYear: true } });
     const years = new Map<string, number | null>(rows.map((r) => [r.shopifyVariantId, r.membershipYear]));
     if (config.shopifyMockActive() && !years.has(DEV_MOCK_MEMBERSHIP_VARIANT_ID)) {
-        years.set(DEV_MOCK_MEMBERSHIP_VARIANT_ID, liveMembershipYear(settings?.orgMembershipYearBoundary, paidAt));
+        years.set(DEV_MOCK_MEMBERSHIP_VARIANT_ID, liveMembershipYear(settings?.orgMembershipYearBoundary, await orgToday(paidAt)));
     }
     return years;
 }

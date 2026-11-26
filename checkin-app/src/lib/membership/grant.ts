@@ -7,6 +7,7 @@ import type { DbClient } from "@/lib/db-client";
 import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { ensureHouseholdMembership, type HouseholdStatus } from "@/lib/membership/householdStatus";
 import { householdApplicationOpenOrBlockedWhere, createRenewalProcess, liveMembershipYear } from "@/lib/membership/renewal";
+import { orgToday } from "@/lib/appSettings";
 
 /**
  * Board grant of one membership year: money only.
@@ -90,7 +91,7 @@ export async function grantMembership(
 /** A lapsed ACTIVE household renews; one already paid for the live year has nothing to pay. */
 async function openRenewal(orgMembershipId: number): Promise<GrantResult> {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-    const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, new Date());
+    const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, await orgToday());
     const settled = await prisma.orgMembershipProcess.findFirst({ where: { orgMembershipId, ...settledThisCycleWhere(liveYear) }, select: { id: true } });
     if (settled) throw new PaymentError("wrong_phase", "This household has already paid for the current membership year.");
     const process = await createRenewalProcess(orgMembershipId);

@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { config } from "@/lib/config";
 import { liveYearVariantId } from "@/lib/membership/payment";
+import { orgToday } from "@/lib/appSettings";
 import { logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { checkoutVariantId } from "@/lib/programs/variants";
@@ -76,7 +77,7 @@ async function fireMembership(processId: number, refundedInShopify: boolean): Pr
     // Echo the variant the family's checkout would sell, so the inbound handler finds
     // the membership line. The mock is active here, so this is never null.
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-    const variantId = await liveYearVariantId(settings?.orgMembershipYearBoundary, new Date());
+    const variantId = await liveYearVariantId(settings?.orgMembershipYearBoundary, await orgToday());
 
     // Shape mirrors the subset the inbound handler reads: note_attributes (where
     // Shopify maps cart attributes) + line_items + an order id. Stable id so two
