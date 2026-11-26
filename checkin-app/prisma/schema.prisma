@@ -2005,6 +2005,10 @@ enum PaymentExceptionKind {
   // A paid membership order on an application whose year is already settled
   // (paid in the store, plan certified, or year granted). A refund may be due.
   DUPLICATE_MEMBERSHIP_PAYMENT
+  // The daily check could not process an order; it moved past it, so the board checks it by hand.
+  CHECK_FAILED
+  // The daily check stopped: CHECK_FAILED reached its limit, so the check itself needs fixing.
+  CHECK_STOPPED
 }
 
 enum PaymentExceptionSeverity {

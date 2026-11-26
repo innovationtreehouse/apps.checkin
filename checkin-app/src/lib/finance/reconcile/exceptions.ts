@@ -20,11 +20,13 @@ export type PaymentExceptionKind =
     | "DUPLICATE_PAYMENT"
     | "UNCLAIMED_SEATS"
     | "MIXED_HOUSEHOLDS"
-    | "DUPLICATE_MEMBERSHIP_PAYMENT";
+    | "DUPLICATE_MEMBERSHIP_PAYMENT"
+    | "CHECK_FAILED"
+    | "CHECK_STOPPED";
 
 type Severity = "WARN" | "CRITICAL";
 
-const CRITICAL_KINDS = new Set<PaymentExceptionKind>(["CHARGEBACK"]);
+const CRITICAL_KINDS = new Set<PaymentExceptionKind>(["CHARGEBACK", "CHECK_STOPPED"]);
 
 interface ExceptionRef {
     shopifyOrderId?: string | null;
