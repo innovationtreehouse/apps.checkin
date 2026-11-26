@@ -67,7 +67,7 @@ function cronSecretFor(endpoint: string): string {
     return value;
 }
 
-type Gate = 'public' | 'session' | 'household-member' | 'anyRole' | 'certifier' | 'program-scoped' | 'catalog-viewer' | 'receipt-submitter' | 'inventory-manager' | 'finance' | 'finance-or-board' | 'expense-approver' | 'expense-signer' | 'cron-secret' | 'unhandled';
+type Gate = 'public' | 'session' | 'household-member' | 'household-lead' | 'anyRole' | 'certifier' | 'program-scoped' | 'catalog-viewer' | 'receipt-submitter' | 'inventory-manager' | 'finance' | 'finance-or-board' | 'expense-approver' | 'expense-signer' | 'cron-secret' | 'unhandled';
 
 interface RoutePlan {
     endpoint: string;
@@ -82,6 +82,7 @@ function planAuthorize(authorize: Authorize): { gate: Gate; requiredRoles: Sessi
     if (authorize === 'public') return { gate: 'public', requiredRoles: null };
     if (authorize === 'authenticated' || authorize === 'self') return { gate: 'session', requiredRoles: null };
     if (authorize === 'household-member') return { gate: 'household-member', requiredRoles: null };
+    if (authorize === 'household-lead') return { gate: 'household-lead', requiredRoles: null };
     if (authorize === 'certifier') return { gate: 'certifier', requiredRoles: null };
     if (typeof authorize === 'object' && authorize !== null && 'anyRole' in authorize) {
         return { gate: 'anyRole', requiredRoles: [...authorize.anyRole] };
@@ -108,7 +109,7 @@ function planAuthorize(authorize: Authorize): { gate: Gate; requiredRoles: Sessi
     if (typeof authorize === 'object' && authorize !== null && 'cronSecret' in authorize) {
         return { gate: 'cron-secret', requiredRoles: null };
     }
-    // household-lead / kiosk: not in the current registry. Surfaced as
+    // kiosk: not in the current registry. Surfaced as
     // 'unhandled' so a future route can't be silently skipped — it'll fail the
     // explicit guard test below.
     return { gate: 'unhandled', requiredRoles: null };
@@ -369,6 +370,13 @@ describe('Registry route admission gates', () => {
                     expect((await call(plan)).status).toBe(403);
                 });
             }
+            if (plan.gate === 'household-lead') {
+                itServed('rejects an authenticated caller who leads no household with 403', async () => {
+                    // plainUser leads no household and is not sysadmin/board.
+                    mockSession.mockResolvedValue({ user: plainUser });
+                    expect((await call(plan)).status).toBe(403);
+                });
+            }
             if (plan.gate === 'cron-secret') {
                 itServed('rejects a sysadmin session holding no secret with 403', async () => {
                     mockSession.mockResolvedValue({ user: { ...plainUser, isSysadmin: true } });
@@ -416,6 +424,8 @@ describe('Registry route admission gates', () => {
                     // handler fn adds an inline staff-only roster gate the registry grammar
                     // can't express ([id] is an event id). An admin clears that inline gate.
                     mockSession.mockResolvedValue({ user: { ...plainUser, isSysadmin: true } });
+                } else if (plan.gate === 'household-lead') {
+                    mockSession.mockResolvedValue({ user: { ...leadUser, householdLead: true } });
                 } else if (plan.routePath === '/api/membership/not-renewing' || plan.endpoint === 'PATCH /api/household') {
                     mockSession.mockResolvedValue({ user: leadUser });
                 } else {

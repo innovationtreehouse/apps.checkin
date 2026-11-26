@@ -1204,6 +1204,112 @@ defineRoute({
     orderedView: [],
 });
 
+// Attendance trends: per-period counts and hours, no person or visit row.
+// Sysadmin, board and operations, the set withAuth admits today; operations'
+// reach into attendance is aggregate, and this is that aggregate.
+const FACILITY_TRENDS_TOKENS = ['everyones:internal', 'public'] as const;
+
+defineRoute({
+    endpoint: 'GET /api/facility/trends',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember', 'isOperations'] },
+    envelope: null,
+    // Bag: { FacilityTrends } with buckets and totals (FacilityTrendBucket).
+    returns: ['FacilityTrends', 'FacilityTrendBucket'],
+    orderedView: [
+        ['isSysadmin',    FACILITY_TRENDS_TOKENS],
+        ['isBoardMember', FACILITY_TRENDS_TOKENS],
+        ['isOperations',  FACILITY_TRENDS_TOKENS],
+    ],
+});
+
+// Front-desk emergency contact sheet: every household with a member, its
+// emergency contacts, its leads' phone and email, and who is in the building.
+// Keyholders read it on shift, so they hold the same grant as the board:
+// contacts are `personal`, lead phone and email `pii`, the kiosk link and a
+// contact's `invalid` flag `internal`.
+const SAFETY_CONTACTS_TOKENS = ['everyones:pii', 'everyones:personal', 'everyones:internal', 'public'] as const;
+
+defineRoute({
+    endpoint: 'GET /api/safety/emergency-contacts',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember', 'isKeyholder'] },
+    envelope: null,
+    // Bag: { SafetyContactSheet } with households (SafetyContactHousehold →
+    // emergencyContacts SafetyEmergencyContact, householdMembers
+    // SafetyHouseholdMember, leads HouseholdContactPerson) and building (BuildingLink).
+    returns: ['SafetyContactSheet', 'SafetyContactHousehold', 'SafetyEmergencyContact', 'SafetyHouseholdMember', 'HouseholdContactPerson', 'BuildingLink'],
+    orderedView: [
+        ['isSysadmin',    SAFETY_CONTACTS_TOKENS],
+        ['isBoardMember', SAFETY_CONTACTS_TOKENS],
+        ['isKeyholder',   SAFETY_CONTACTS_TOKENS],
+    ],
+});
+
+// Membership audit: households with no valid emergency contact, with the
+// phone and email of the leads the board chases. Sysadmin and board.
+defineRoute({
+    endpoint: 'GET /api/membership-audit/households-missing-contact',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: 'households',
+    // Bag: { MissingContactHousehold } with leads (HouseholdContactPerson).
+    returns: ['MissingContactHousehold', 'HouseholdContactPerson'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:pii', 'public']],
+        ['isBoardMember', ['everyones:pii', 'public']],
+    ],
+});
+
+// Membership audit: households no lead has claimed, or with no lead, and the
+// email of each member who has one. Sysadmin and board.
+defineRoute({
+    endpoint: 'GET /api/membership-audit/unclaimed-households',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: 'households',
+    // Bag: { UnclaimedHousehold } with members (HouseholdContactPerson).
+    returns: ['UnclaimedHousehold', 'HouseholdContactPerson'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:pii', 'public']],
+        ['isBoardMember', ['everyones:pii', 'public']],
+    ],
+});
+
+// The caller's membership fee, checkout link and finance contact. Admits a
+// household lead, a sysadmin or the board. The route body still refuses a
+// caller with no household who is not on the board, which this gate cannot
+// express. The link embeds the volunteer-family discount code, so the view
+// reaches `internal`; the handler answers only for the caller's own household.
+const MEMBERSHIP_PAYMENT_TOKENS = ['everyones:internal', 'public'] as const;
+
+defineRoute({
+    endpoint: 'GET /api/membership/payment',
+    authorize: 'household-lead',
+    envelope: null,
+    // Bag: { MembershipPaymentLink }.
+    returns: ['MembershipPaymentLink'],
+    orderedView: [
+        ['isBoardMember', MEMBERSHIP_PAYMENT_TOKENS],
+        ['isSysadmin',    MEMBERSHIP_PAYMENT_TOKENS],
+        ['householdLead', MEMBERSHIP_PAYMENT_TOKENS],
+    ],
+});
+
+// The login-time renewal banner: whether the caller's household has a renewal
+// awaiting confirmation, when it is due and whether the household said it
+// won't renew. Any session is admitted and the handler reads only the caller's
+// own household. Renewal is lead-driven, so only a lead's view reaches the
+// `internal` flags; anyone else keeps `public` alone, and the clients read a
+// missing `renewalDue` as false.
+defineRoute({
+    endpoint: 'GET /api/membership/renewal-status',
+    authorize: 'authenticated',
+    envelope: null,
+    // Bag: { RenewalStatus }.
+    returns: ['RenewalStatus'],
+    orderedView: [
+        ['householdLead', ['everyones:internal', 'public']],
+        ['authenticated', ['public']],
+    ],
+});
+
 // ─── Outbound surfaces ─────────────────────────────────────────────────────
 // A surface's tiers are enforced only for a caller that goes through
 // outboundCall(), and an entry's comment says when that is so. Every other
