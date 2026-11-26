@@ -179,7 +179,7 @@ Household:
 | **Lapsed** | an active membership whose valid-through date has passed with no renewal paid. The status stays `ACTIVE` and the household still counts as a Treehouse Member; ending it is the Board's call | `ACTIVE` with `isMembershipLapsed()` true | "lapsed" |
 | **Revoked** | a former Treehouse Member household: the Board ended its membership. It keeps app access and loses facility privileges | `OrgMembershipStatus` `REVOKED` | "Revoked" on status badges; **"former member"** in prose |
 | **Denied** | the Board refused the household membership. Every person in it is locked out of sign-in. A household with a Board Member in it can't be denied | `OrgMembershipStatus` `DENIED` | "denied" |
-| **Archived** | the Board's way to hide an idle family from its lists. It sits beside the membership status and changes nothing about it, so a denied household stays locked out. Nothing about an archived household can change; a household member's sign-in unarchives it, and so can the Board | `Household.archivedAt` set | "archived" |
+| **Archived** | the Board's way to hide an idle family from its lists. It sits beside the membership status and changes nothing about it, so a denied household stays locked out. While archived, the app refuses any change to it. A household member's own sign-in unarchives it, unless its membership is denied; the Board can unarchive it too | `Household.archivedAt` set | "archived" |
 
 Application and person:
 

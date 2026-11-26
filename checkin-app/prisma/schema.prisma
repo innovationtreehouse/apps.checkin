@@ -357,7 +357,8 @@ model Household {
   intakeNotes String? @ignore
 
   /// When the Board archived this idle family to hide it from its lists; null
-  /// means not archived. A household member's sign-in unarchives it.
+  /// means not archived. A household member's sign-in unarchives it unless its
+  /// membership is DENIED.
   /// @sensitivity:public
   archivedAt DateTime?
 
