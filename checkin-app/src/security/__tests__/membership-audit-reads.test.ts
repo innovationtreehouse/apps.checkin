@@ -184,14 +184,19 @@ describe(PAYMENT, () => {
 describe(RENEWAL, () => {
     const due = { renewalDue: true, dueDate: '2027-01-01', notRenewing: false };
 
-    it.each([
-        ['a household lead', { householdId: 7, householdLead: true }],
-        ['a household member who is not a lead', { householdId: 7, householdLead: false }],
-        ['a person with no household', {}],
-    ] as const)('lets %s read the banner state', async (_who, claims) => {
-        const { res } = await call(RENEWAL, claims, { RenewalStatus: due });
+    it('lets a household lead read the banner state', async () => {
+        const { res } = await call(RENEWAL, { householdId: 7, householdLead: true }, { RenewalStatus: due });
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual(due);
+    });
+
+    it.each([
+        ['a household member who is not a lead', { householdId: 7, householdLead: false }],
+        ['a person with no household', {}],
+    ] as const)('keeps the renewal flags from %s', async (_who, claims) => {
+        const { res } = await call(RENEWAL, claims, { RenewalStatus: due });
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ dueDate: due.dueDate });
     });
 
     it('401s a signed-out caller', async () => {

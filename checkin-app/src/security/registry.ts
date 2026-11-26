@@ -1294,8 +1294,10 @@ defineRoute({
 
 // The login-time renewal banner: whether the caller's household has a renewal
 // awaiting confirmation, when it is due and whether the household said it
-// won't renew. Any session; the handler reads the caller's own household and
-// answers `renewalDue: false` to anyone who does not lead one.
+// won't renew. Any session is admitted and the handler reads only the caller's
+// own household. Renewal is lead-driven, so only a lead's view reaches the
+// `internal` flags; anyone else keeps `public` alone, and the clients read a
+// missing `renewalDue` as false.
 defineRoute({
     endpoint: 'GET /api/membership/renewal-status',
     authorize: 'authenticated',
@@ -1303,7 +1305,8 @@ defineRoute({
     // Bag: { RenewalStatus }.
     returns: ['RenewalStatus'],
     orderedView: [
-        ['authenticated', ['everyones:internal', 'public']],
+        ['householdLead', ['everyones:internal', 'public']],
+        ['authenticated', ['public']],
     ],
 });
 
