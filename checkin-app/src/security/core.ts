@@ -31,7 +31,8 @@
  *                rows; never a sysadmin or another staff role by default.
  *   'finance'  — text only finance may read, such as a QuickBooks fault's own
  *                words. Registration accepts 'everyones:finance' on an
- *                isFinance view entry only, and no outbound surface carries it.
+ *                isFinance view entry only, and no file route or outbound
+ *                surface carries it.
  *   scope = 'everyones'     — broad grant; held on every row by default, but a
  *                             row-scoped model missing its scope key fails
  *                             closed and does NOT hold it (see scopesHeld)
@@ -540,6 +541,9 @@ export function defineFileRoute(spec: FileRouteSpec): FileRouteSpec {
         throw new Error(`File route ${endpoint}: authorize '${authorize}' is not allowed`);
     }
     assertValidRegistration(endpoint, spec.orderedView);
+    if (spec.orderedView.some(([, tokens]) => tokens.some((t) => t.endsWith(':finance')))) {
+        throw new Error(`File route ${endpoint}: the finance tier is text, never a served file`);
+    }
     if (spec.orderedView.some(([, tokens]) => tokens.includes('roster'))) {
         throw new Error(`File route ${endpoint}: the 'roster' token has no meaning on a file route`);
     }
@@ -550,6 +554,9 @@ export function defineFileRoute(spec: FileRouteSpec): FileRouteSpec {
     }
     if (tier === 'secret') {
         throw new Error(`File route ${endpoint}: ${file.model}.${file.field} is secret and never leaves`);
+    }
+    if (tier === 'finance') {
+        throw new Error(`File route ${endpoint}: ${file.model}.${file.field} is in the finance tier, which is text, never a served file`);
     }
     _fileRoutes.set(endpoint, { ...spec, ctxNeeds: deriveCtxNeeds({ ...spec, returns: [file.model] }) });
     _fileOnlyFields.add(`${file.model}.${file.field}`);

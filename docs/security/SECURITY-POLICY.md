@@ -41,7 +41,7 @@ Schema annotations classify *data*. Registry views grant *access* in the form of
 | `personal` | Private but not identifying (Household.address, emergency contacts) |
 | `internal` | Role/audit metadata (sysadmin flag, lastBackgroundCheck, audit logs) |
 | `hardship` | Whether a person or household asked for, holds, was granted or was refused help with a fee: a payment plan, a scholarship, a comp. Granted only to Board and finance views, and to a family on its own rows |
-| `finance` | Text only finance may read, such as a QuickBooks fault's own words. Granted only as `everyones:finance`, only to an `isFinance` view entry, and never to an outbound surface; registration refuses any other grant |
+| `finance` | Text only finance may read, such as a QuickBooks fault's own words. Granted only as `everyones:finance`, only to an `isFinance` view entry of a JSON route, and never to a file route or an outbound surface; registration refuses any other grant |
 | `secret` | Cryptographic — never returned to any client (oauth tokens) |
 
 **Scope** (per-row, computed by the handler for each row in the response):

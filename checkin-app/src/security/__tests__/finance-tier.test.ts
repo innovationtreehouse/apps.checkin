@@ -9,6 +9,7 @@ import type { CallerContext } from '@/security/access-resolvers';
 import {
     allFileRoutes,
     allRoutes,
+    defineFileRoute,
     defineOutbound,
     defineRoute,
     fieldVisible,
@@ -76,8 +77,13 @@ describe('the finance tier', () => {
                 }
             }
         }
-        expect(holders.length).toBeGreaterThan(0);
-        for (const holder of holders) expect(holder).toMatch(/ isFinance everyones:finance$/);
+        expect(holders.sort()).toEqual([
+            'GET /api/donations/in-kind/manual/[id] isFinance everyones:finance',
+            'GET /api/donations/in-kind/receipt/[id] isFinance everyones:finance',
+            'GET /api/expense/expenses/[id] isFinance everyones:finance',
+            'GET /api/income/payouts/[gid] isFinance everyones:finance',
+            'GET /api/income/reconciliation isFinance everyones:finance',
+        ]);
     });
 
     it.each([
@@ -100,6 +106,12 @@ describe('the finance tier', () => {
     it('accepts everyones:finance on the isFinance entry', () => {
         expect(financeTokenError('isFinance', parseToken('everyones:finance'))).toBeNull();
         expect(financeTokenError('isBoardMember', parseToken('everyones:internal'))).toBeNull();
+    });
+
+    it('is refused on a file route, as a token and as the served field\'s tier', () => {
+        const base = { authorize: 'finance', file: { model: 'UploadedFile', field: 'fileBlob' } } as const;
+        expect(() => defineFileRoute({ ...base, endpoint: 'GET /api/test/finance-tier/file-token', orderedView: [['isFinance', ['everyones:finance', 'everyones:internal']]] })).toThrow(/finance tier/);
+        expect(() => defineFileRoute({ ...base, endpoint: 'GET /api/test/finance-tier/file-field', file: { model: 'InKindGiftDetailView', field: 'qbFaultText' }, orderedView: [['isFinance', ['everyones:internal']]] })).toThrow(/finance tier/);
     });
 
     it('is refused on an outbound surface', () => {
