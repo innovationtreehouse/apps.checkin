@@ -151,6 +151,20 @@ describe('GET merge/analyze Treehouse account household', () => {
         expect(membershipBlock).toEqual({ aAsKeeper: null, bAsKeeper: null });
     });
 
+    it("blocks a keeper with no sign-in in a family's household from taking a Treehouse sign-in", async () => {
+        db.person.findUnique.mockImplementation(async ({ where, select }: { where: { id: number }; select: Record<string, unknown> }) => {
+            if ('lastBackgroundCheck' in select) return { lastBackgroundCheck: null };
+            const email = where.id === 2 ? 'front-desk@innovationtreehouse.org' : null;
+            const household = { id: where.id * 10, name: 'HH', orgMembership: null, householdMembers: [{ id: where.id, name: 'P', isHouseholdLead: true }] };
+            return { id: where.id, name: `Person ${where.id}`, email, googleId: null, household, _count: {} };
+        });
+        db.person.findMany.mockImplementation(async ({ where }: { where: { householdId: number } }) =>
+            where.householdId === 20 ? [{ email: 'front-desk@innovationtreehouse.org' }] : []);
+        const { membershipBlock } = await analyze();
+        expect(membershipBlock.aAsKeeper).toMatch(/Treehouse account's sign-in/);
+        expect(membershipBlock.bAsKeeper).toBeNull();
+    });
+
     it('blocks neither direction for two ordinary households', async () => {
         mockHouseholds(['family-a@example.com'], 20);
         const { membershipBlock } = await analyze();

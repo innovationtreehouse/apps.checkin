@@ -1,9 +1,10 @@
 /**
  * @jest-environment node
  *
- * A Treehouse account's household holds only that account: the Board and sysadmins
- * cannot add, move or merge anyone into it, while the same actions on an ordinary
- * household still go through.
+ * A Treehouse account's household holds only that account, and no family household
+ * holds a Treehouse account: the Board and sysadmins cannot add, move or merge anyone
+ * into it, nor give someone in a family's household a Treehouse sign-in, while the
+ * same actions on an ordinary household still go through.
  */
 import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth/next";
@@ -13,7 +14,8 @@ import { POST as moveParticipant } from "@/app/api/membership-ops/participants/[
 import { POST as mergeParticipants } from "@/app/api/membership-ops/participants/merge/route";
 import { GET as analyzeMerge } from "@/app/api/membership-ops/participants/merge/analyze/route";
 import { PATCH as addHouseholdMember } from "@/app/api/household/route";
-import { TREEHOUSE_HOUSEHOLD_REFUSAL } from "@/lib/household/treehouseAccount";
+import { PUT as editParticipant } from "@/app/api/membership-ops/participants/[id]/route";
+import { TREEHOUSE_HOUSEHOLD_REFUSAL, TREEHOUSE_SIGN_IN_REFUSAL } from "@/lib/household/treehouseAccount";
 
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/email", () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
@@ -110,8 +112,8 @@ describe("Board household move", () => {
 });
 
 describe("Board person merge", () => {
-    const merge = (keepId: number, mergeId: number) =>
-        mergeParticipants(jsonReq("/api/membership-ops/participants/merge", "POST", { keepId, mergeId, fieldChoices: { name: "keep" } }));
+    const merge = (keepId: number, mergeId: number, fieldChoices: Record<string, string> = { name: "keep" }) =>
+        mergeParticipants(jsonReq("/api/membership-ops/participants/merge", "POST", { keepId, mergeId, fieldChoices }));
     const analyze = (a: number, b: number) => analyzeMerge(jsonReq(`/api/membership-ops/participants/merge/analyze?a=${a}&b=${b}`, "GET"));
 
     it("refuses merging a record that shares a household with others into a Treehouse account, and analyze reports it", async () => {
@@ -135,6 +137,24 @@ describe("Board person merge", () => {
         expect(await prisma.person.count({ where: { householdId: staffHouseholdId } })).toBe(1);
     });
 
+    it("refuses a merge that hands a family-household record with no sign-in the Treehouse account's, and analyze reports it", async () => {
+        const preview = await (await analyze(loneId, staffId)).json();
+        expect(preview.membershipBlock.aAsKeeper).toMatch(/Treehouse account's sign-in/);
+
+        const res = await merge(loneId, staffId);
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toMatch(/Treehouse account's sign-in/);
+        expect(await prisma.person.findUnique({ where: { id: staffId }, select: { id: true } })).not.toBeNull();
+    });
+
+    it("refuses a merge where a family-household keeper chooses the Treehouse account's sign-in", async () => {
+        const res = await merge(familyLeadId, staffId, { name: "keep", identity: "merge" });
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toMatch(/Treehouse account's sign-in/);
+        const lead = await prisma.person.findUniqueOrThrow({ where: { id: familyLeadId }, select: { email: true } });
+        expect(lead.email).toBe(`lead-${TAG}@example.com`);
+    });
+
     it("still merges a record from another household into an ordinary household", async () => {
         const preview = await (await analyze(familyLeadId, loneId)).json();
         expect(preview.membershipBlock.aAsKeeper).toBeNull();
@@ -142,6 +162,31 @@ describe("Board person merge", () => {
         const res = await merge(familyLeadId, loneId);
         expect(res.status).toBe(200);
         expect(await prisma.person.findUnique({ where: { id: loneId }, select: { id: true } })).toBeNull();
+    });
+});
+
+describe("Board email edit", () => {
+    const edit = (personId: number, email: string) =>
+        editParticipant(jsonReq(`/api/membership-ops/participants/${personId}`, "PUT", { email, emailChangeReason: "Address changed" }), { params: Promise.resolve({ id: String(personId) }) });
+
+    it("refuses giving someone in a family's household a Treehouse address", async () => {
+        const res = await edit(familyLeadId, `lead-${TAG}@innovationtreehouse.org`);
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toBe(TREEHOUSE_SIGN_IN_REFUSAL);
+        const lead = await prisma.person.findUniqueOrThrow({ where: { id: familyLeadId }, select: { email: true } });
+        expect(lead.email).toBe(`lead-${TAG}@example.com`);
+    });
+
+    it("still changes a family member's email to an ordinary address", async () => {
+        const res = await edit(familyLeadId, `lead-new-${TAG}@example.com`);
+        expect(res.status).toBe(200);
+        const lead = await prisma.person.findUniqueOrThrow({ where: { id: familyLeadId }, select: { email: true } });
+        expect(lead.email).toBe(`lead-new-${TAG}@example.com`);
+    });
+
+    it("still changes the Treehouse account's own address", async () => {
+        const res = await edit(staffId, `desk-${TAG}@innovationtreehouse.org`);
+        expect(res.status).toBe(200);
     });
 });
 

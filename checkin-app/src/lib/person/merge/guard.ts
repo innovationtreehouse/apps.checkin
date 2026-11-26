@@ -65,6 +65,9 @@ export function membershipMergeBlock(
 export const TREEHOUSE_MERGE_REFUSAL =
     "Cannot merge: the kept record is in a Treehouse account's household, which holds only that account, and the merged-away record shares a household with other people.";
 
+export const TREEHOUSE_SIGN_IN_MERGE_REFUSAL =
+    "Cannot merge: the kept record is in a family's household and would take a Treehouse account's sign-in. A Treehouse sign-in stays on a record of its own; keep the Treehouse account's record instead.";
+
 /**
  * Whether a merge into a Treehouse account's household would be refused: the keeper
  * stays in its own household, so a merged-away record from another household lands in
