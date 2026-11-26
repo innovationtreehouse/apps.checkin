@@ -389,7 +389,7 @@ export async function releaseDepartedRejection(processId: number, actorId: numbe
         });
         return to;
     });
-    return { status, steps: await settleHouseholdBg(householdId) };
+    return { status, steps: await settleAfterEvent(householdId, "release from a departed person's rejection", {}, { processId }) };
 }
 
 const notReleasable = () =>
