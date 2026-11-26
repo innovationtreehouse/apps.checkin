@@ -6,6 +6,7 @@ import { reconcileAndWarn } from "@/lib/emergencyContacts/service";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { isOrgAccount } from "@/lib/orgAccount";
+import { TREEHOUSE_SIGN_IN_REFUSAL, joinsWithTreehouseSignIn } from "@/lib/household/treehouseAccount";
 import { HOUSEHOLD_PEER_SELECT, HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT } from "@/lib/household/participantProjection";
 import { householdLeadship, setsHouseholdAges } from "@/lib/household/leads";
 import { isEmailLocked } from "@/lib/person/emailLock";
@@ -106,6 +107,8 @@ export const PATCH = handler('PATCH /api/household', async ({ req, auth }) => {
     if (!hh.canManage) throw forbidden("Only household leads can add members");
 
     if (memberEmail && !isValidEmail(memberEmail)) throw badRequest("Invalid email format");
+
+    if (joinsWithTreehouseSignIn(memberEmail)) throw new ApiResponseError(409, TREEHOUSE_SIGN_IN_REFUSAL);
 
     if (memberEmail && await isDesignatedEmail(prisma, memberEmail)) {
         throw badRequest(await designatedEmailRefusalForBoard());

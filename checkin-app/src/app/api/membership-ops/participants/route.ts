@@ -18,7 +18,7 @@ import { findSelfGrantRefusal, recordSelfGrantRefusal, type SelfGrantRefusal } f
 import { lockBoardRoles } from "@/lib/roles";
 import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
-import { TREEHOUSE_HOUSEHOLD_REFUSAL, TreehouseHouseholdError, isTreehouseHousehold } from "@/lib/household/treehouseAccount";
+import { TREEHOUSE_HOUSEHOLD_REFUSAL, TREEHOUSE_SIGN_IN_REFUSAL, TreehouseHouseholdError, isTreehouseHousehold, joinsWithTreehouseSignIn } from "@/lib/household/treehouseAccount";
 import { isOrgAccount } from "@/lib/orgAccount";
 
 /** The household the person would join is DENIED. */
@@ -81,6 +81,11 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
         if (!dob && !over25) {
             return NextResponse.json({ error: AGE_REQUIRED_REFUSAL, fields: ["dob"] }, { status: 400 });
+        }
+
+        // A Treehouse sign-in stays in a household of its own.
+        if ((parentEmail || householdId) && joinsWithTreehouseSignIn(email)) {
+            return NextResponse.json({ error: TREEHOUSE_SIGN_IN_REFUSAL, fields: ["email"] }, { status: 409 });
         }
 
         // A Treehouse account parent would make the participant a member of its household.

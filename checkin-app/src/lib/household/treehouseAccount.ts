@@ -25,6 +25,11 @@ export async function putsTreehouseSignInInFamily(db: DbClient, householdId: num
     return typeof email === "string" && isOrgAccount({ email }) && !(await isTreehouseHousehold(db, householdId));
 }
 
+/** Whether a new member with `email` would bring a Treehouse account into a household; it never may. */
+export function joinsWithTreehouseSignIn(email: unknown): boolean {
+    return typeof email === "string" && isOrgAccount({ email });
+}
+
 /** A person was refused a place in a Treehouse account's household. */
 export class TreehouseHouseholdError extends Error {
     readonly status = 409;

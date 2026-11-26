@@ -14,6 +14,7 @@ import { POST as moveParticipant } from "@/app/api/membership-ops/participants/[
 import { POST as mergeParticipants } from "@/app/api/membership-ops/participants/merge/route";
 import { GET as analyzeMerge } from "@/app/api/membership-ops/participants/merge/analyze/route";
 import { PATCH as addHouseholdMember } from "@/app/api/household/route";
+import { PATCH as editHouseholdMember } from "@/app/api/household/member/route";
 import { PUT as editParticipant } from "@/app/api/membership-ops/participants/[id]/route";
 import { TREEHOUSE_HOUSEHOLD_REFUSAL, TREEHOUSE_SIGN_IN_REFUSAL } from "@/lib/household/treehouseAccount";
 
@@ -82,6 +83,19 @@ describe("Board participant add", () => {
         const res = await add({ name: `${TAG} Kid`, dob: "2015-01-01", parentEmail: `front-desk-${TAG}@innovationtreehouse.org` });
         expect(res.status).toBe(409);
         expect(await prisma.person.count({ where: { householdId: staffHouseholdId } })).toBe(1);
+    });
+
+    it("refuses adding a person with a Treehouse address to a family's household", async () => {
+        const res = await add({ name: `${TAG} Kid`, over25: true, email: `kid-${TAG}@innovationtreehouse.org`, householdId: familyHouseholdId });
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toBe(TREEHOUSE_SIGN_IN_REFUSAL);
+        expect(await prisma.person.count({ where: { householdId: familyHouseholdId } })).toBe(1);
+    });
+
+    it("still adds a person with an ordinary address to a family's household", async () => {
+        const res = await add({ name: `${TAG} Kid`, over25: true, email: `kid-${TAG}@example.com`, householdId: familyHouseholdId });
+        expect(res.status).toBe(200);
+        expect(await prisma.person.count({ where: { householdId: familyHouseholdId } })).toBe(2);
     });
 
     it("still adds a person to an ordinary household", async () => {
@@ -187,6 +201,44 @@ describe("Board email edit", () => {
     it("still changes the Treehouse account's own address", async () => {
         const res = await edit(staffId, `desk-${TAG}@innovationtreehouse.org`);
         expect(res.status).toBe(200);
+    });
+});
+
+describe("a lead's self-service member add and email edit", () => {
+    const signInAsLead = () => session.mockResolvedValue({ user: { id: familyLeadId, email: `lead-${TAG}@example.com` } });
+    const addMember = (memberEmail: string) =>
+        addHouseholdMember(jsonReq("/api/household", "PATCH", { memberName: `${TAG} Kid`, memberOver25: true, memberEmail }));
+    const editEmail = (participantId: number, email: string) =>
+        editHouseholdMember(jsonReq("/api/household/member", "PATCH", { participantId, email }));
+
+    beforeEach(signInAsLead);
+
+    it("refuses adding a member with a Treehouse address", async () => {
+        const res = await addMember(`kid-${TAG}@innovationtreehouse.org`);
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toBe(TREEHOUSE_SIGN_IN_REFUSAL);
+        expect(await prisma.person.count({ where: { householdId: familyHouseholdId } })).toBe(1);
+    });
+
+    it("still adds a member with an ordinary address", async () => {
+        const res = await addMember(`kid-${TAG}@example.com`);
+        expect(res.status).toBe(200);
+        expect(await prisma.person.count({ where: { householdId: familyHouseholdId } })).toBe(2);
+    });
+
+    it("refuses changing a member's email to a Treehouse address", async () => {
+        const kin = await prisma.person.create({ data: { name: `${TAG} Kin`, isDeclaredAdult: true, email: `kin-${TAG}@example.com`, householdId: familyHouseholdId } });
+        const res = await editEmail(kin.id, `kin-${TAG}@innovationtreehouse.org`);
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toBe(TREEHOUSE_SIGN_IN_REFUSAL);
+        expect((await prisma.person.findUniqueOrThrow({ where: { id: kin.id }, select: { email: true } })).email).toBe(`kin-${TAG}@example.com`);
+    });
+
+    it("still changes a member's email to an ordinary address", async () => {
+        const kin = await prisma.person.create({ data: { name: `${TAG} Kin`, isDeclaredAdult: true, email: `kin-${TAG}@example.com`, householdId: familyHouseholdId } });
+        const res = await editEmail(kin.id, `kin-new-${TAG}@example.com`);
+        expect(res.status).toBe(200);
+        expect((await prisma.person.findUniqueOrThrow({ where: { id: kin.id }, select: { email: true } })).email).toBe(`kin-new-${TAG}@example.com`);
     });
 });
 

@@ -661,6 +661,14 @@ describe('saveIntake', () => {
         expect(prisma.person.create).not.toHaveBeenCalled();
     });
 
+    it.each([
+        ['second parent', { secondaryParent: { name: 'New Parent', email: 'parent@innovationtreehouse.org' } }, 'secondaryParent'],
+        ['child', { children: [{ name: 'New Kid', dob: '2015-01-01', email: 'kid@innovationtreehouse.org' }] }, 'children'],
+    ])("refuses adding a new %s with a Treehouse address, creating nobody", async (_who, input, field) => {
+        await expect(saveIntake(1, input)).rejects.toMatchObject({ code: 'treehouse_account', fields: [field] });
+        expect(prisma.person.create).not.toHaveBeenCalled();
+    });
+
     it('rejects blanking an existing secondary parent name on update', async () => {
         await expect(saveIntake(1, { secondaryParent: { id: 4, name: '   ' } })).rejects.toMatchObject({ code: 'name_required' });
         expect(prisma.person.update).not.toHaveBeenCalled();
