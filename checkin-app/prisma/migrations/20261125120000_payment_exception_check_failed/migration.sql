@@ -1,0 +1,7 @@
+BEGIN;
+
+-- AlterEnum
+ALTER TYPE "PaymentExceptionKind" ADD VALUE 'CHECK_FAILED';
+ALTER TYPE "PaymentExceptionKind" ADD VALUE 'CHECK_STOPPED';
+
+COMMIT;

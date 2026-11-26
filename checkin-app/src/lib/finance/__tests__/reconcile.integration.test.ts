@@ -322,8 +322,8 @@ describe("forward recovery", () => {
         expect(await prisma.paymentException.count({ where: { kind: "REVERSED_BEFORE_ACTIVATION", processId: other.processId } })).toBe(1);
     });
 
-    // An order whose pass throws is isolated (the sweep goes on) but counted: the
-    // cron ledger reads `failed`, so a pass that recovered nothing is not a green run.
+    // An order whose pass throws becomes a CHECK_FAILED exception (the sweep goes on) and is
+    // counted: the cron ledger reads `failed`, so a pass that recovered nothing is not a green run.
     it("counts an order whose forward pass throws", async () => {
         const email = `boom-${TAG}@ex.com`;
         await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
@@ -336,8 +336,10 @@ describe("forward recovery", () => {
             expect(r.ordersScanned).toBe(1);
             expect(r.failed).toBe(1);
             expect(logged).toHaveBeenCalled();
+            expect(await prisma.paymentException.count({ where: { kind: "CHECK_FAILED", shopifyOrderId: `${TAG}-boom` } })).toBe(1);
         } finally {
             logged.mockRestore();
+            await prisma.paymentException.deleteMany({ where: { kind: "CHECK_FAILED", shopifyOrderId: `${TAG}-boom` } });
         }
     });
 

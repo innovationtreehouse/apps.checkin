@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import type { DbClient, TxClient } from "@/lib/db-client";
 import { logger } from "@/lib/logger";
 import * as mirror from "@/lib/shopifyRead/client";
+import { raisePaymentException } from "./exceptions";
 import { reconcileForwardMembership } from "./membership";
 import { reconcileForwardProgram } from "./program";
 import { reconcileReversals } from "./reversals";
@@ -69,6 +70,17 @@ export interface ReconcileResult {
 
 /** How long one pass may hold the lease; a pass that crashed frees it when this runs out. */
 const RECONCILE_LEASE_MS = 15 * 60_000;
+
+/** CHECK_FAILED rows within the window, resolved ones included, at which the check counts as broken and stops. */
+const CHECK_FAILED_LIMIT = 3;
+const CHECK_FAILED_WINDOW_MS = 7 * 24 * 60 * 60_000;
+
+/** The error's class and code only, since a message can carry customer data. */
+function errorSummary(e: unknown): string {
+    if (!(e instanceof Error)) return "Unknown error";
+    const code = "code" in e && typeof e.code === "string" ? ` ${e.code}` : "";
+    return `${e.name}${code}`.slice(0, 120);
+}
 
 /** Writes made with the lease claim, such as the audit row of the run it starts. */
 export type RecordStart = (tx: TxClient) => Promise<unknown>;
@@ -143,35 +155,44 @@ async function reconcilePass(): Promise<{ result: ReconcileResult; advanceTo: Da
 
     const orders = await mirror.ordersChangedSince(cursor);
     let newCursor = cursor;
-    // Stop advancing the cursor at the first order whose pass throws: advancing past
-    // it would skip that order FOREVER (the forward pass is cursor-once). Later
-    // orders in this batch still get processed (idempotent, so re-scanning them
-    // tomorrow is harmless); only the watermark holds back until the bad order heals.
-    let cursorFrozen = false;
+    // An order whose pass throws becomes a CHECK_FAILED exception and the cursor moves
+    // past it. At CHECK_FAILED_LIMIT the check is broken: it stops before that order,
+    // raises one CHECK_STOPPED exception keyed on that order, and every later run stops
+    // there until it is fixed.
+    let stopped = false;
     let failed = 0;
+    let recentFailures: number | null = null;
     for (const order of orders) {
+        const orderId = order.legacyId ?? order.orderGid;
         try {
             // Both passes run: a mixed cart pays for a membership AND program seats.
             await reconcileForwardMembership(order);
             await reconcileForwardProgram(order);
         } catch (e) {
-            logger.error(`[reconcile] forward pass failed for order ${order.legacyId ?? order.orderGid}:`, e);
+            logger.error(`[reconcile] forward pass failed for order ${orderId}:`, e);
             failed++;
-            cursorFrozen = true;
-            // The watermark may ALREADY sit at this order's updatedAt — an earlier
-            // order in the batch with the same timestamp succeeded and advanced it.
-            // ordersChangedSince compares with a strict `updated_at >`, so leaving
-            // the cursor there would skip this order forever. Pull it back below
-            // the failed order so the next run re-fetches it.
-            if (order.updatedAt && newCursor && newCursor >= order.updatedAt) {
-                newCursor = new Date(order.updatedAt.getTime() - 1);
+            recentFailures ??= await prisma.paymentException.count({
+                where: { kind: "CHECK_FAILED", detectedAt: { gte: new Date(Date.now() - CHECK_FAILED_WINDOW_MS) } },
+            });
+            if (recentFailures + failed < CHECK_FAILED_LIMIT) {
+                await raisePaymentException("CHECK_FAILED", { shopifyOrderId: orderId, evidence: errorSummary(e) });
+            } else {
+                await raisePaymentException("CHECK_STOPPED", { shopifyOrderId: orderId, evidence: errorSummary(e) });
+                stopped = true;
+                // ordersChangedSince compares with a strict `updated_at >`, and an earlier order
+                // with the same timestamp may already have moved the cursor there: pull it back
+                // below this order so the next run reads it again.
+                if (order.updatedAt && newCursor && newCursor >= order.updatedAt) {
+                    newCursor = new Date(order.updatedAt.getTime() - 1);
+                }
+                break;
             }
         }
-        if (!cursorFrozen && order.updatedAt && (!newCursor || order.updatedAt > newCursor)) newCursor = order.updatedAt;
+        if (order.updatedAt && (!newCursor || order.updatedAt > newCursor)) newCursor = order.updatedAt;
     }
 
     // A throw here leaves the cursor where it was, so the next run re-scans.
-    const reversalsRaised = await reconcileReversals();
+    const reversalsRaised = stopped ? 0 : await reconcileReversals();
 
     return {
         result: { configured: true, ordersScanned: orders.length, reversalsRaised, failed },

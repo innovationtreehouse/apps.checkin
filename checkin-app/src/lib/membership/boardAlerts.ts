@@ -109,6 +109,8 @@ const EXCEPTION_BLURB: Record<string, string> = {
     UNCLAIMED_SEATS: "a paid program order bought seats no pending enrollment uses (withdrawn, expired or extra) — money taken, seat unused",
     MIXED_HOUSEHOLDS: "a paid program order names children from more than one household — nobody was activated",
     DUPLICATE_MEMBERSHIP_PAYMENT: "a household paid for a membership year that was already settled (paid in the store, plan certified or year granted) — a refund may be needed",
+    CHECK_FAILED: "the daily payment check could not process a Shopify order and moved past it — check that order by hand",
+    CHECK_STOPPED: "the daily payment check stopped after repeated order failures — missed payments are not being recovered until the check is fixed",
 };
 
 /**
