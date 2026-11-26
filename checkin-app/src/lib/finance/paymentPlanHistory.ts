@@ -118,6 +118,14 @@ export async function programPaymentPlanHistory(page: number, showArchived: bool
     }));
 }
 
+// A certified payment on a process that asked for a plan is that plan's approval. Every
+// request stamps its year; a request from before the year column carries only its kind.
+export const MEMBERSHIP_STAMPED_APPROVAL: Prisma.OrgMembershipProcessWhereInput = {
+    manualPaymentById: { not: null },
+    isPaymentPlanRequested: false,
+    OR: [{ paymentPlanYear: { not: null } }, { scholarshipRequestKind: { not: null } }],
+};
+
 // ponytail: same in-memory paging ceiling as programPaymentPlanHistory.
 export async function membershipPaymentPlanHistory(page: number, showArchived: boolean) {
     const [audits, stamped] = await Promise.all([
@@ -128,9 +136,8 @@ export async function membershipPaymentPlanHistory(page: number, showArchived: b
             },
             select: { id: true, timestamp: true, actorId: true, affectedEntityId: true, newData: true },
         }),
-        // A certified payment on a process that asked for a plan is that plan's approval.
         prisma.orgMembershipProcess.findMany({
-            where: { manualPaymentById: { not: null }, scholarshipRequestKind: { not: null }, isPaymentPlanRequested: false },
+            where: MEMBERSHIP_STAMPED_APPROVAL,
             select: { id: true, manualPaymentById: true, paidAt: true },
         }),
     ]);

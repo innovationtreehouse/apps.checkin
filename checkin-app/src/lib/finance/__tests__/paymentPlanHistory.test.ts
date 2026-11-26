@@ -1,4 +1,4 @@
-import { membershipAuditOutcome, programAuditOutcome } from '../paymentPlanHistory';
+import { MEMBERSHIP_STAMPED_APPROVAL, membershipAuditOutcome, programAuditOutcome } from '../paymentPlanHistory';
 import { pageParam } from '../paymentPlanHistoryPage';
 
 describe('programAuditOutcome', () => {
@@ -30,6 +30,37 @@ describe('membershipAuditOutcome', () => {
         expect(membershipAuditOutcome({ status: 'ACTIVE', via: 'manual', paymentPlanApproved: true })).toBe('APPROVED');
         expect(membershipAuditOutcome({ paymentPlanDenied: true, isPaymentPlanRequested: false })).toBe('REFUSED');
         expect(membershipAuditOutcome({ status: 'ACTIVE', via: 'manual' })).toBeNull();
+    });
+});
+
+type Row = Record<string, unknown>;
+type Clause = Record<string, unknown> & { OR?: Clause[] };
+
+// Evaluates the `{ not: null }`, literal and OR clauses the stamped-approval filter uses.
+function matches(row: Row, where: Clause): boolean {
+    return Object.entries(where).every(([field, cond]) => {
+        if (field === 'OR') return (cond as Clause[]).some((c) => matches(row, c));
+        if (cond !== null && typeof cond === 'object' && 'not' in cond) return row[field] !== (cond as { not: unknown }).not;
+        return row[field] === cond;
+    });
+}
+
+describe('MEMBERSHIP_STAMPED_APPROVAL', () => {
+    const certified = { manualPaymentById: 7, isPaymentPlanRequested: false, paymentPlanYear: 2026, scholarshipRequestKind: 'PAYMENT_PLAN' };
+    const stamped = (row: Row) => matches(row, MEMBERSHIP_STAMPED_APPROVAL as Clause);
+
+    it('takes a certified payment on a request that carried no kind', () => {
+        expect(stamped({ ...certified, scholarshipRequestKind: null })).toBe(true);
+    });
+
+    it('takes a request from before the year column by its kind', () => {
+        expect(stamped({ ...certified, paymentPlanYear: null })).toBe(true);
+    });
+
+    it('skips a process that never asked, an uncertified payment, and an open request', () => {
+        expect(stamped({ ...certified, paymentPlanYear: null, scholarshipRequestKind: null })).toBe(false);
+        expect(stamped({ ...certified, manualPaymentById: null })).toBe(false);
+        expect(stamped({ ...certified, isPaymentPlanRequested: true })).toBe(false);
     });
 });
 
