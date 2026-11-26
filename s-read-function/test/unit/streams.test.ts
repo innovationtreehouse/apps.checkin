@@ -44,6 +44,7 @@ beforeEach(() => {
     shopifyGid: "g",
     occurredAt: new Date("2026-05-01T00:00:00Z"),
     inserted: true,
+    payloadChanged: true,
   });
   vi.mocked(advanceWatermark).mockResolvedValue(undefined);
 });
@@ -54,9 +55,9 @@ describe("ingestStream accounting", () => {
     const newest = new Date("2026-04-01T00:00:00Z");
     const middle = new Date("2026-03-01T00:00:00Z");
     vi.mocked(ingestNode)
-      .mockResolvedValueOnce({ rawEventId: 1n, shopifyGid: "a", occurredAt: older, inserted: true })
-      .mockResolvedValueOnce({ rawEventId: 2n, shopifyGid: "b", occurredAt: newest, inserted: false })
-      .mockResolvedValueOnce({ rawEventId: 3n, shopifyGid: "c", occurredAt: middle, inserted: true });
+      .mockResolvedValueOnce({ rawEventId: 1n, shopifyGid: "a", occurredAt: older, inserted: true, payloadChanged: true })
+      .mockResolvedValueOnce({ rawEventId: 2n, shopifyGid: "b", occurredAt: newest, inserted: false, payloadChanged: false })
+      .mockResolvedValueOnce({ rawEventId: 3n, shopifyGid: "c", occurredAt: middle, inserted: true, payloadChanged: true });
 
     const summary = await ingestStream(prismaSentinel, "store-1", ObjectType.ORDER, EventSource.INCREMENTAL, gen({}, {}, {}));
 
@@ -88,7 +89,7 @@ describe("syncOrders", () => {
   it("filters on updated_at since the watermark with status:any and advances the watermark", async () => {
     vi.mocked(readSinceIso).mockResolvedValue("2026-02-01T00:00:00.000Z");
     const occurredAt = new Date("2026-05-01T00:00:00Z");
-    vi.mocked(ingestNode).mockResolvedValue({ rawEventId: 1n, shopifyGid: "g", occurredAt, inserted: true });
+    vi.mocked(ingestNode).mockResolvedValue({ rawEventId: 1n, shopifyGid: "g", occurredAt, inserted: true, payloadChanged: true });
     vi.mocked(fetchOrders).mockReturnValue(gen({ id: "o1" }));
 
     const summary = await syncOrders(prismaSentinel, client, "store-1", cfg, EventSource.INCREMENTAL, 7n);

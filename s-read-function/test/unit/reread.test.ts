@@ -115,7 +115,7 @@ beforeEach(() => {
       rawAppends++;
     }
     const at = objectType === ObjectType.PAYOUT ? n.issuedAt : n.transactionDate;
-    return { rawEventId: BigInt(rawAppends), shopifyGid: n.id, occurredAt: at ? new Date(at) : null, inserted };
+    return { rawEventId: BigInt(rawAppends), shopifyGid: n.id, occurredAt: at ? new Date(at) : null, inserted, payloadChanged: inserted };
   });
   vi.mocked(readSinceIso).mockImplementation(async (_p, _s, objectType, cutover) =>
     (watermarks.get(objectType) ?? new Date(cutover)).toISOString(),
@@ -194,6 +194,23 @@ describe("re-reading the recent window", () => {
     expect(payouts).toEqual({ count: 1, changed: 0, stopped: false });
     expect(txns).toEqual({ count: 1, changed: 0, stopped: false });
     expect(rawAppends).toBe(appendsAfterFirstRun);
+  });
+
+  it("does not count a store read that only confirms a hand-made version as a change", async () => {
+    vi.setSystemTime(new Date("2026-11-20T00:00:00Z"));
+    storePayouts.push({ id: "p1", issuedAt: "2026-11-10T00:00:00Z", status: "PAID" });
+    vi.mocked(ingestNode).mockResolvedValueOnce({
+      rawEventId: 2n,
+      shopifyGid: "p1",
+      occurredAt: new Date("2026-11-10T00:00:00Z"),
+      inserted: true,
+      payloadChanged: false,
+    });
+
+    const summary = await rereadPayouts(prismaSentinel, client, "store-1", NEVER);
+
+    expect(summary).toEqual({ count: 1, changed: 0, stopped: false });
+    expect(logger.info).not.toHaveBeenCalledWith("re-read found a change", expect.anything());
   });
 
   it("never moves the watermark, so it stays at the newest node the forward pull saw", async () => {
