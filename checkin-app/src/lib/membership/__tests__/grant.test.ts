@@ -5,11 +5,12 @@ import prisma from '@/lib/prisma';
 import { grantMembership, grantMessage, refuseGrantIfDenied, type GrantResult } from '@/lib/membership/grant';
 import { raiseDeniedHouseholdActivity } from '@/lib/membership/householdStatus';
 import { createRenewalProcess } from '@/lib/membership/renewal';
+import { certifyPaymentPlan, liveYearVariantId } from '@/lib/membership/payment';
 
 jest.mock('@/lib/prisma', () => {
     const db = {
         orgMembership: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn(), createMany: jest.fn() },
-        orgMembershipProcess: { findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn() },
+        orgMembershipProcess: { findFirst: jest.fn(), findMany: jest.fn(), findUniqueOrThrow: jest.fn(), create: jest.fn() },
         boardSettings: { findUnique: jest.fn() },
         auditLog: { create: jest.fn() },
         $queryRaw: jest.fn(),
@@ -20,6 +21,11 @@ jest.mock('@/lib/prisma', () => {
 jest.mock('@/lib/membership/renewal', () => ({
     ...jest.requireActual('@/lib/membership/renewal'),
     createRenewalProcess: jest.fn(),
+}));
+jest.mock('@/lib/membership/payment', () => ({
+    ...jest.requireActual('@/lib/membership/payment'),
+    certifyPaymentPlan: jest.fn().mockResolvedValue(undefined),
+    liveYearVariantId: jest.fn(),
 }));
 jest.mock('@/lib/membership/householdStatus', () => ({
     ...jest.requireActual('@/lib/membership/householdStatus'),
@@ -109,6 +115,7 @@ describe('grantMembership on a lapsed ACTIVE household with nothing open', () =>
         findUnique.mockResolvedValue({ status: 'ACTIVE' } as Awaited<ReturnType<typeof prisma.orgMembership.findUnique>>);
         jest.mocked(prisma.orgMembership.findUniqueOrThrow).mockResolvedValue({ id: 3, status: 'ACTIVE' } as Awaited<ReturnType<typeof prisma.orgMembership.findUniqueOrThrow>>);
         jest.mocked(prisma.boardSettings.findUnique).mockResolvedValue({ orgMembershipYearBoundary: new Date(Date.UTC(2000, 7, 1)) } as Awaited<ReturnType<typeof prisma.boardSettings.findUnique>>);
+        jest.mocked(liveYearVariantId).mockResolvedValue('gid://variant/live');
     });
 
     it('opens a renewal for the family to complete, whatever the season', async () => {
@@ -121,6 +128,23 @@ describe('grantMembership on a lapsed ACTIVE household with nothing open', () =>
         expect(createRenewalProcess).toHaveBeenCalledWith(3);
     });
 
+    it('refuses to open a renewal while the live year has no store product', async () => {
+        jest.useFakeTimers({ now: new Date(Date.UTC(2026, 9, 1)), doNotFake: ['nextTick', 'setImmediate'] });
+        try {
+            jest.mocked(prisma.orgMembershipProcess.findFirst)
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce(null);
+            jest.mocked(liveYearVariantId).mockResolvedValue(null);
+
+            await expect(grantMembership(7, { actorId: 99, reason: 'check' }, 2026)).rejects.toThrow(
+                "No membership product is set for 2026-2027, so the family couldn't pay. Set it in membership settings before opening a renewal.",
+            );
+            expect(createRenewalProcess).not.toHaveBeenCalled();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it('refuses a household already paid for the live year', async () => {
         jest.mocked(prisma.orgMembershipProcess.findFirst)
             .mockResolvedValueOnce(null)
@@ -128,6 +152,33 @@ describe('grantMembership on a lapsed ACTIVE household with nothing open', () =>
 
         await expect(grantMembership(7, { actorId: 99, reason: 'check' }, 2026)).rejects.toThrow(/already paid for the current membership year/);
         expect(createRenewalProcess).not.toHaveBeenCalled();
+    });
+});
+
+describe('grantMembership on an application already in flight', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        findUnique.mockResolvedValue({ status: 'ACTIVE' } as Awaited<ReturnType<typeof prisma.orgMembership.findUnique>>);
+        jest.mocked(prisma.orgMembership.findUniqueOrThrow).mockResolvedValue({ id: 3, status: 'ACTIVE' } as Awaited<ReturnType<typeof prisma.orgMembership.findUniqueOrThrow>>);
+    });
+
+    it('maps a payment onto a PENDING_PAYMENT application even while the year has no store product', async () => {
+        jest.mocked(liveYearVariantId).mockResolvedValue(null);
+        jest.mocked(prisma.orgMembershipProcess.findFirst).mockResolvedValue({ id: 40, kind: 'RENEWAL', status: 'PENDING_PAYMENT' } as Awaited<ReturnType<typeof prisma.orgMembershipProcess.findFirst>>);
+        jest.mocked(prisma.orgMembershipProcess.findUniqueOrThrow).mockResolvedValue({ id: 40, kind: 'RENEWAL', status: 'ACTIVE' } as Awaited<ReturnType<typeof prisma.orgMembershipProcess.findUniqueOrThrow>>);
+
+        await expect(grantMembership(7, { actorId: 99, reason: 'paid cash' }, 2026)).resolves.toMatchObject({ paid: true, process: { id: 40 } });
+        expect(certifyPaymentPlan).toHaveBeenCalledWith(40, 99, { reason: 'paid cash', year: 2026 });
+        expect(createRenewalProcess).not.toHaveBeenCalled();
+    });
+
+    it('refuses an application at INTAKE, naming the step', async () => {
+        jest.mocked(prisma.orgMembershipProcess.findFirst).mockResolvedValue({ id: 41, kind: 'INITIAL', status: 'INTAKE' } as Awaited<ReturnType<typeof prisma.orgMembershipProcess.findFirst>>);
+
+        await expect(grantMembership(7, { actorId: 99, reason: 'comp' }, 2026)).rejects.toThrow(
+            "The household's application is at INTAKE; it can be granted once it reaches payment.",
+        );
+        expect(certifyPaymentPlan).not.toHaveBeenCalled();
     });
 });
 

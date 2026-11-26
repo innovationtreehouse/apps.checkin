@@ -1,7 +1,9 @@
 import prisma from "@/lib/prisma";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
-import { certifyPaymentPlan, PaymentError } from "@/lib/membership/payment";
+import { certifyPaymentPlan, liveYearVariantId, PaymentError } from "@/lib/membership/payment";
+import { membershipYearLabel } from "@/lib/programYear";
+import { applicationNotAtPaymentMessage, renewalProductMissingMessage } from "@/lib/membership/grantRefusals";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import type { DbClient } from "@/lib/db-client";
 import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
@@ -77,7 +79,7 @@ export async function grantMembership(
         }
         // COI is enforced inside certifyPaymentPlan, which also refuses any status but PENDING_PAYMENT.
         if (existing.status !== "PENDING_PAYMENT") {
-            throw new PaymentError("wrong_phase", `The household's application is at ${existing.status}; it can be granted once it reaches payment.`);
+            throw new PaymentError("wrong_phase", applicationNotAtPaymentMessage(existing.status));
         }
         // The certify row records the reason and the granted year in its own transaction.
         await certifyPaymentPlan(existing.id, actor.actorId, { reason: actor.reason, year });
@@ -97,12 +99,20 @@ export async function grantMembership(
     return { paid: false, ...opened };
 }
 
-/** A lapsed ACTIVE household renews; one already paid for the live year has nothing to pay. */
+/**
+ * A lapsed ACTIVE household renews; one already paid for the live year has nothing to pay.
+ * The renewal pays for the live year, so it opens only while that year has a store product.
+ */
 async function openRenewal(orgMembershipId: number): Promise<GrantResult> {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-    const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, new Date());
+    const boundary = settings?.orgMembershipYearBoundary;
+    const now = new Date();
+    const liveYear = liveMembershipYear(boundary, now);
     const settled = await prisma.orgMembershipProcess.findFirst({ where: { orgMembershipId, ...settledThisCycleWhere(liveYear) }, select: { id: true } });
     if (settled) throw new PaymentError("wrong_phase", "This household has already paid for the current membership year.");
+    if (liveYear !== null && !(await liveYearVariantId(boundary, now))) {
+        throw new PaymentError("wrong_phase", renewalProductMissingMessage(membershipYearLabel(liveYear)));
+    }
     const process = await createRenewalProcess(orgMembershipId);
     if (!process) throw new PaymentError("wrong_phase", "This household's membership changed while you were looking at it. Reload and try again.");
     return { paid: false, process, opened: true };
