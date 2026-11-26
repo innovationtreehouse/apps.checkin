@@ -615,6 +615,79 @@ describe('certifyDecommission', () => {
             expect(r.ok).toBe(false);
             expect(r.reasons.join()).toContain('non-declarative boundary file');
         });
+
+        it('rejects a removed entry whose route file still exports the verb', () => {
+            const r = certifyDecommission({
+                changed: [
+                    { status: 'M', path: LIBRARY },
+                    { status: 'M', path: REFUND_ROUTE },
+                ],
+                boundaryChanged: [LIBRARY],
+                violations: [REFUND_ROUTE],
+                readBase: files({ [LIBRARY]: LIBRARY_BASE, [REFUND_ROUTE]: 'export async function POST() {}' }),
+                readHead: files({ [LIBRARY]: withoutRefund, [REFUND_ROUTE]: 'export async function POST() { return null; }' }),
+            });
+            expect(r.ok).toBe(false);
+            expect(r.reasons).toContain(`POST /api/fees/[id]/refund: registry entry removed but ${REFUND_ROUTE} still exports POST`);
+        });
+
+        describe("narrowing a single-line entry's returns:", () => {
+            const SCHEMA = 'checkin-app/prisma/schema.prisma';
+            const base = LIBRARY_BASE.replace(
+                "endpoint: 'GET /api/fees', authorize: 'finance', envelope: null, returns: ['FeePayment']",
+                "endpoint: 'GET /api/fees', authorize: 'finance', envelope: null, returns: ['Person', 'FeePayment']",
+            );
+            const head = withoutRefund.replace(
+                "endpoint: 'GET /api/fees', authorize: 'finance', envelope: null, returns: ['FeePayment']",
+                "endpoint: 'GET /api/fees', authorize: 'finance', envelope: null, returns: ['Person']",
+            );
+            const narrow = (headSchema: string) =>
+                certifyDecommission({
+                    changed: [
+                        { status: 'M', path: LIBRARY },
+                        { status: 'D', path: REFUND_ROUTE },
+                        { status: 'M', path: SCHEMA },
+                    ],
+                    boundaryChanged: [LIBRARY],
+                    violations: [REFUND_ROUTE],
+                    readBase: files({ [LIBRARY]: base, [REFUND_ROUTE]: 'export async function POST() {}' }),
+                    readHead: files({ [LIBRARY]: head, [REFUND_ROUTE]: null, [SCHEMA]: headSchema }),
+                });
+
+            it('certifies dropping a model that leaves schema.prisma in the same PR', () => {
+                expect(base).not.toBe(LIBRARY_BASE);
+                const r = narrow(SCHEMA_DROPPED);
+                expect(r.reasons).toEqual([]);
+                expect(r.ok).toBe(true);
+                expect(r.removedEndpoints).toEqual(['POST /api/fees/[id]/refund']);
+            });
+
+            it('rejects dropping a model that survives in schema.prisma', () => {
+                const r = narrow(SCHEMA_BASE);
+                expect(r.ok).toBe(false);
+                expect(r.reasons.join()).toContain(`${LIBRARY}: diff is not a pure whole-entry removal`);
+            });
+        });
+
+        describe('a commented-out line inside a surviving entry', () => {
+            const SUMMARY = "    endpoint: 'GET /api/fees/summary',\n";
+            const COMMENTED = `${SUMMARY}    // authorize: 'public',\n`;
+            const base = LIBRARY_BASE.replace(SUMMARY, COMMENTED);
+            const commentAttempt = (libraryHead: string) => attempt(libraryHead, base);
+
+            it('certifies the comment deleted or rewritten', () => {
+                expect(base).not.toBe(LIBRARY_BASE);
+                expect(commentAttempt(withoutRefund).ok).toBe(true);
+                const rewritten = commentAttempt(withoutRefund.replace(SUMMARY, `${SUMMARY}    // was public once\n`));
+                expect(rewritten.reasons).toEqual([]);
+            });
+
+            it('rejects the line uncommented', () => {
+                const r = commentAttempt(withoutRefund.replace(SUMMARY, `${SUMMARY}    authorize: 'public',\n`));
+                expect(r.ok).toBe(false);
+                expect(r.reasons.join()).toContain(`${LIBRARY}: diff is not a pure whole-entry removal`);
+            });
+        });
     });
 
     describe('FINANCE_VIEW_MODELS element deletions', () => {

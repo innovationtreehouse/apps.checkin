@@ -475,7 +475,125 @@ def route_selftest():
         assert resume_plan(event, True) == ("verify", "rebase", "none")  # same ledger generation, uncapped tier
         assert resume_plan(event, False) is None  # no ledger: a fresh initial review
     assert resume_plan("synchronize", True) is None  # pushes keep round_plan and auto mode
+    decision_flow_selftest()
     print("route selftest ok")
+
+
+def read_outputs(path):
+    """Parse a GITHUB_OUTPUT file: name=value lines and name<<DELIM blocks."""
+    out, lines, i = {}, open(path).read().split("\n"), 0
+    while i < len(lines):
+        m = re.fullmatch(r"([\w-]+)<<(\S+)", lines[i])
+        if m:
+            end = lines.index(m.group(2), i + 1)
+            out[m.group(1)], i = "\n".join(lines[i + 1:end]), end + 1
+            continue
+        if "=" in lines[i]:
+            k, v = lines[i].split("=", 1)
+            out[k] = v
+        i += 1
+    return out
+
+
+def decision_flow_selftest():
+    """route(), adjudicate() and jev() end to end, with GitHub, OpenRouter and the decision model stubbed."""
+    import tempfile
+    g, calls = globals(), []
+    answers = {}
+
+    def fake_jev(state, questions, timeout=180):
+        calls.append((state, questions))
+        return answers["next"](questions)
+
+    stubs = {"jev": fake_jev, "low_credit": lambda: credit[0], "first_round": lambda *a: False,
+             "later_round": lambda *a: None, "with_prior_rounds": lambda state, *a: state,
+             "request_state": lambda *a: {"untrusted_human_text": []},
+             "pr_state": lambda *a: (["a.ts"], {"changed_lines": 5, "file_count": 1, "untrusted_diff": "d"}),
+             "review_history": lambda *a: "\nHISTORY", "gh": lambda *a: "abc1234\n",
+             "posted_review": lambda *a: review[0]}
+    credit, review = [False], [""]
+    saved, env = {k: g[k] for k in stubs}, dict(os.environ)
+    profiles = json.load(open(f"{CFG}/profiles.json"))
+
+    def run(step, **extra):
+        calls.clear()
+        with tempfile.NamedTemporaryFile("w+", delete=False) as f:
+            os.environ.update(GITHUB_OUTPUT=f.name, PR_NUMBER="1", GITHUB_REPOSITORY="o/r", HEAD_SHA="",
+                              EVENT_ACTION="synchronize", FIRST_ROUND_LOWEST="", **extra)
+            step()
+            got = read_outputs(f.name)
+        os.unlink(f.name)
+        return got
+
+    def route_answers(questions):
+        if "reviewer" not in questions:
+            return {n: {"noul": 0.0} for n in questions}
+        return {"reviewer": {"choice": "mid", "probabilities": {"free": 0.001, "mid": 0.999}},
+                "requested": {"choice": "none", "probabilities": {"none": 1.0}}, "grant": {"noul": 1.0}}
+
+    g.update(stubs)
+    try:
+        answers["next"] = route_answers
+        out = run(route)
+        (_, profile_qs), (_, tier_qs) = calls
+        assert set(profile_qs) == {p["name"] for p in profiles}
+        assert all(q["type"] == "noul" and set(q["criteria"]) == {"true", "false"} for q in profile_qs.values())
+        assert {k: q["type"] for k, q in tier_qs.items()} == {"reviewer": "choice", "requested": "choice", "grant": "noul"}
+        assert list(tier_qs["reviewer"]["criteria"]) == ORDER and set(tier_qs["requested"]["criteria"]) == set(ORDER) | {"none"}
+        assert out["tier"] == "mid" and out["model"] == RUNG["mid"][1]
+        assert FREE_ONLY_BUGS not in out["instructions"] and out["instructions"] == out["rerun_instructions"]
+        assert out["instructions"].endswith("HISTORY")
+
+        credit[0] = True  # under MIN_CREDIT_USD: a paid pick drops to the free rung
+        out = run(route)
+        assert out["tier"] == "free" and out["model"] == RUNG["free"][1]
+        assert FREE_ONLY_BUGS in out["instructions"] and FREE_ONLY_BUGS not in out["rerun_instructions"]
+        assert out["instructions"].endswith("HISTORY") and out["rerun_instructions"].endswith("HISTORY")
+
+        answers["next"] = lambda qs: {"complete": {"noul": 0.05}, "rerun_on": {"choice": "high", "probabilities": {"high": 0.9, "top": 0.1}}}
+        out = run(adjudicate, TIER="mid", VERDICT="issues", PROFILES="[]", REVIEW_URL="x#pullrequestreview-7")
+        assert out["rerun_tier"] == "none" and calls == []  # low credit: no judge call, no rerun
+
+        credit[0] = False
+        review[0] = "- `deepseek/deepseek-v4-pro`: failed-open — OpenRouter HTTP 402: {...}"
+        out = run(adjudicate, TIER="mid", VERDICT="error", PROFILES="[]", REVIEW_URL="x#pullrequestreview-7")
+        assert out["rerun_tier"] == "none" and calls == []  # a lane hit 402: a rerun would too
+
+        review[0] = "**Mode:** `initial`\n- `deepseek/deepseek-v4-pro`: ok (1 finding(s))"
+        out = run(adjudicate, TIER="mid", VERDICT="issues", PROFILES="[]", REVIEW_URL="x#pullrequestreview-7")
+        ((state, qs),) = calls
+        assert {k: q["type"] for k, q in qs.items()} == {"complete": "noul", "rerun_on": "choice"}
+        assert list(qs["rerun_on"]["criteria"]) == ["high", "top"] and state["review_mode"] == "initial"
+        assert out["rerun_tier"] == "high" and out["model"] == RUNG["high"][1]
+    finally:
+        g.update(saved)
+        os.environ.clear()
+        os.environ.update(env)
+
+    sent = []
+
+    class Reply:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"model": JEV, "answers": {"q": {"noul": 0.7}}}).encode()
+
+    real_open = urllib.request.urlopen
+    urllib.request.urlopen = lambda req, timeout: sent.append((req, timeout)) or Reply()
+    os.environ["OPENROUTER_API_KEY"] = "selftest"
+    try:
+        assert jev({"s": 1}, {"q": {"type": "noul"}}, timeout=9) == {"q": {"noul": 0.7}}
+        ((req, timeout),) = sent
+        assert req.full_url.endswith("/systemone") and timeout == 9 and req.get_header("Authorization") == "Bearer selftest"
+        assert json.loads(req.data) == {"model": JEV, "state": {"s": 1}, "questions": {"q": {"type": "noul"}}}
+    finally:
+        urllib.request.urlopen = real_open
+        os.environ.clear()
+        os.environ.update(env)
 
 
 def rung_choice(rungs):

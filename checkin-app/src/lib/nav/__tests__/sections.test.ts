@@ -66,6 +66,132 @@ describe.each(SECTIONS.map((s) => [s.id, s] as const))("section %s", (_id, secti
   });
 });
 
+// The whole tab list per section, so a tab dropped by an edit or a bad merge fails here.
+const TABS: Record<string, string[][]> = {
+  safety: [["/safety/emergency-contacts"], ["/safety/board-contacts"], ["/safety/pickup"], ["/safety/trusted-adults"]],
+  "my-activities": [["/my-activities/events"], ["/my-activities/programs"]],
+  "my-receipts": [["/receipts"], ["/receipts/upload"], ["/receipts/confirm"]],
+  "programs-i-lead": [
+    ["/programs-i-lead/attendance"],
+    ["/programs-i-lead/conflicts"],
+    ["/programs-i-lead/expense-approvals"],
+    ["/programs-i-lead/in-kind-gifts"],
+  ],
+  "shop-ops": [["/shop-ops/manage"], ["/shop-ops/create"], ["/shop-ops/live"]],
+  inventory: [
+    [
+      "/catalog/items",
+      "/catalog/items",
+      "/catalog/categories",
+      "/catalog/learned-references",
+      "/catalog/provisional-items",
+      "/catalog/item-reference-proposals",
+      "/catalog/reference-conflicts",
+      "/catalog/conversion-challenges",
+    ],
+    [
+      "/inventory/org-items",
+      "/inventory/org-items",
+      "/inventory/unlocated",
+      "/inventory/receive-queue",
+      "/inventory/locations",
+      "/inventory/provisional-items",
+    ],
+    ["/inventory/merge-conflicts", "/inventory/merge-conflicts", "/inventory/org-events", "/inventory/inventory-log"],
+    ["/inventory/receiving"],
+  ],
+  "facility-ops": [
+    ["/facility-ops/visits"],
+    ["/facility-ops/badges"],
+    ["/facility-ops/print-badges"],
+    ["/facility-ops/trends"],
+    ["/facility-ops/corrections"],
+  ],
+  "membership-ops": [
+    ["/membership-ops/participants"],
+    ["/membership-ops/participants/merge"],
+    ["/membership-ops/households"],
+    ["/membership-ops/volunteer-memberships"],
+    ["/membership-ops/applications"],
+    ["/membership-ops/review"],
+    ["/membership-ops/roles"],
+  ],
+  "membership-audit": [
+    ["/membership-audit/emergency-contacts"],
+    ["/membership-audit/unclaimed"],
+    ["/membership-audit/broken"],
+    ["/membership-audit/compliance"],
+    ["/membership-audit/bg-attestations"],
+    ["/membership-audit/turning-18"],
+  ],
+  "program-ops": [["/program-ops/programs"], ["/program-ops/new"], ["/program-ops/events"], ["/program-ops/sessions"]],
+  "revenue-ops": [
+    ["/finance-ops/payment-plan"],
+    ["/finance-ops/membership-payment-plan"],
+    [
+      "/finance-ops/shopify-holds",
+      "/finance-ops/shopify-holds",
+      "/finance-ops/payments",
+      "/finance-ops/shopify-stock",
+      "/income/payouts",
+      "/income/reconciliation",
+    ],
+    ["/income", "/income/items", "/income/exclusions", "/income/settings"],
+  ],
+  finance: [
+    ["/finance/review"],
+    ["/expense/expenses"],
+    ["/receipt-flow"],
+    ["/expense/account-mapping"],
+    ["/expense/qb-accounts"],
+    ["/expense/ownership-map"],
+    ["/expense/capital-seed"],
+    ["/budgets"],
+    ["/books-map"],
+    ["/receipts/mail"],
+    ["/receipts/settings"],
+    ["/finance/mail-aliases"],
+  ],
+  donations: [
+    [
+      "/donations/uploads",
+      "/donations/uploads",
+      "/donations/transactions",
+      "/donations/unassigned",
+      "/donations/holds",
+      "/donations/events",
+      "/donations/comment-rules",
+      "/donations/account-map",
+    ],
+    ["/donations/in-kind-gifts", "/donations/in-kind-gifts", "/donations/in-kind"],
+  ],
+  "system-status": [
+    ["/system-status/health"],
+    ["/system-status/links"],
+    ["/system-status/lifecycle"],
+    ["/system-status/errors"],
+    ["/system-status/unsynced-scans"],
+    ["/system-status/audit-log"],
+    ["/system-status/finance-views"],
+    ["/system-status/qbo-codes"],
+  ],
+  settings: [
+    ["/settings/membership"],
+    ["/settings/localization"],
+    ["/settings/email"],
+    ["/settings/templates"],
+    ["/settings/outreach"],
+    ["/settings/shopify-webhook"],
+    ["/settings/finance"],
+    ["/settings/receipt-reading"],
+  ],
+  dev: [["/dev/sent-mail"], ["/dev/zoho-sign"], ["/dev/shopify"], ["/dev/bg-consent"]],
+};
+
+it("every section keeps exactly its pinned tabs", () => {
+  expect(Object.fromEntries(SECTIONS.map((s) => [s.id, s.links.map(tabHrefs)]))).toEqual(TABS);
+});
+
 describe("hasAnyRole", () => {
   it("counts a flag only when it is exactly true", () => {
     expect(hasAnyRole({ isFinance: true }, ["isFinance", "isBoardMember"])).toBe(true);
