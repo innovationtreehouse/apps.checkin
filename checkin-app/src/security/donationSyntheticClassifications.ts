@@ -166,6 +166,7 @@ export const classifications = {
     expenseBooking: "internal",
     qbFirstFailedAt: "internal",
     qbLastError: "internal",
+    qbFaultText: "finance",
     inventorySourceKey: "internal",
     inventoryLoadedAt: "internal",
     inventoryLoadFailureReason: "internal",

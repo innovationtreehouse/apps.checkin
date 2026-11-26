@@ -38,6 +38,8 @@ const FINANCE_ONLY = [
     'POST /api/income/qb-exclusions',
 ];
 const INTERNAL_VIEW = ['everyones:internal', 'public'];
+// The payout page and the queue carry a failed post's fault text, finance's alone.
+const RECONCILIATION_READS = ['GET /api/income/payouts/[gid]', 'GET /api/income/reconciliation'];
 
 const income = [...allRoutes()].filter(([endpoint]) => endpoint.split(' ')[1].startsWith('/api/income/'));
 const incomeEndpoints = income.map(([endpoint]) => endpoint);
@@ -87,10 +89,16 @@ describe('income registry', () => {
         expect(route.returns).toEqual(['IncomeOrgSettings']);
     });
 
-    test.each(FINANCE_OR_BOARD)('%s: finance-or-board, FINANCE then BOARD internal view', (endpoint) => {
+    test.each(FINANCE_OR_BOARD.filter(e => !RECONCILIATION_READS.includes(e)))('%s: finance-or-board, FINANCE then BOARD internal view', (endpoint) => {
         const route = income.find(([e]) => e === endpoint)![1];
         expect(route.authorize).toBe('finance-or-board');
         expect(route.orderedView).toEqual([['isFinance', INTERNAL_VIEW], ['isBoardMember', INTERNAL_VIEW]]);
+    });
+
+    test.each(RECONCILIATION_READS)('%s: finance-or-board, FINANCE internal and finance view, then BOARD internal view', (endpoint) => {
+        const route = income.find(([e]) => e === endpoint)![1];
+        expect(route.authorize).toBe('finance-or-board');
+        expect(route.orderedView).toEqual([['isFinance', ['everyones:internal', 'everyones:finance', 'public']], ['isBoardMember', INTERNAL_VIEW]]);
     });
 
     test.each(FINANCE_ONLY)('%s: finance, FINANCE internal view', (endpoint) => {

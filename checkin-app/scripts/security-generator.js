@@ -16,7 +16,7 @@ const { generatorHandler } = require('@prisma/generator-helper');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const VALID_TIERS = ['public', 'member', 'pii', 'personal', 'internal', 'hardship', 'secret'];
+const VALID_TIERS = ['public', 'member', 'pii', 'personal', 'internal', 'hardship', 'finance', 'secret'];
 
 function parseTier(documentation) {
     if (!documentation) return null;

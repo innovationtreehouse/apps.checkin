@@ -22,6 +22,11 @@ const FINANCE_OR_BOARD_VIEW: readonly OrderedViewEntry[] = [
     ['isBoardMember', FINANCE_TOKENS],
 ];
 const FINANCE_VIEW: readonly OrderedViewEntry[] = [['isFinance', FINANCE_TOKENS]];
+// A gift's page also gives finance alone the `finance` tier: a failed post's QuickBooks fault text.
+const GIFT_DETAIL_VIEW: readonly OrderedViewEntry[] = [
+    ['isFinance', [...FINANCE_TOKENS, 'everyones:finance']],
+    ['isBoardMember', FINANCE_TOKENS],
+];
 const NO_PII_TOKENS = ['everyones:internal', 'public'] as const;
 const IN_KIND_READ_VIEW: readonly OrderedViewEntry[] = [
     ...FINANCE_OR_BOARD_VIEW,
@@ -58,8 +63,8 @@ defineRoute({ endpoint: 'GET /api/donations/disbursement-events', authorize: 'fi
 defineRoute({ endpoint: 'GET /api/donations/in-kind/manual', authorize: { anyRole: ['isFinance', 'isBoardMember', 'isOperations', 'isInventoryManager'] }, envelope: null, returns: ['ManualInKindDonation', 'ManualInKindDonationLine'], orderedView: IN_KIND_READ_VIEW });
 defineRoute({ endpoint: 'GET /api/donations/in-kind/queue', authorize: 'finance-or-board', envelope: null, returns: ['InKindQueueItemView'], orderedView: FINANCE_OR_BOARD_VIEW, financeView: { records: [{ key: 'InKindQueueItemView', id: 'id', model: IN_KIND_BY_SOURCE }] } });
 // One in-kind gift's page, with its donor, lines and history; same audience as the queue.
-defineRoute({ endpoint: 'GET /api/donations/in-kind/receipt/[id]', authorize: 'finance-or-board', envelope: null, returns: ['InKindGiftDetailView'], orderedView: FINANCE_OR_BOARD_VIEW, financeView: { records: [{ key: 'InKindGiftDetailView', id: { param: 'id' }, model: 'InKindDonation' }] } });
-defineRoute({ endpoint: 'GET /api/donations/in-kind/manual/[id]', authorize: 'finance-or-board', envelope: null, returns: ['InKindGiftDetailView'], orderedView: FINANCE_OR_BOARD_VIEW, financeView: { records: [{ key: 'InKindGiftDetailView', id: { param: 'id' }, model: 'ManualInKindDonation' }] } });
+defineRoute({ endpoint: 'GET /api/donations/in-kind/receipt/[id]', authorize: 'finance-or-board', envelope: null, returns: ['InKindGiftDetailView'], orderedView: GIFT_DETAIL_VIEW, financeView: { records: [{ key: 'InKindGiftDetailView', id: { param: 'id' }, model: 'InKindDonation' }] } });
+defineRoute({ endpoint: 'GET /api/donations/in-kind/manual/[id]', authorize: 'finance-or-board', envelope: null, returns: ['InKindGiftDetailView'], orderedView: GIFT_DETAIL_VIEW, financeView: { records: [{ key: 'InKindGiftDetailView', id: { param: 'id' }, model: 'ManualInKindDonation' }] } });
 
 // The stored upload, served by fileHandler as a text/plain attachment.
 defineFileRoute({ endpoint: 'GET /api/donations/uploaded-files/[id]/blob', authorize: 'finance-or-board', orderedView: FINANCE_OR_BOARD_VIEW, file: { model: 'UploadedFile', field: 'fileBlob' } });

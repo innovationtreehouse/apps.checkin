@@ -41,6 +41,7 @@ Schema annotations classify *data*. Registry views grant *access* in the form of
 | `personal` | Private but not identifying (Household.address, emergency contacts) |
 | `internal` | Role/audit metadata (sysadmin flag, lastBackgroundCheck, audit logs) |
 | `hardship` | Whether a person or household asked for, holds, was granted or was refused help with a fee: a payment plan, a scholarship, a comp. Granted only to Board and finance views, and to a family on its own rows |
+| `finance` | Text only finance may read, such as a QuickBooks fault's own words. Granted only as `everyones:finance`, only to an `isFinance` view entry of a JSON route, and never to a file route or an outbound surface; registration refuses any other grant |
 | `secret` | Cryptographic — never returned to any client (oauth tokens) |
 
 **Scope** (per-row, computed by the handler for each row in the response):
@@ -56,7 +57,7 @@ Schema annotations classify *data*. Registry views grant *access* in the form of
 
 **Token grammar:**
 - `'public'` — bare. Public-tier fields, no row gate.
-- `'<scope>:<tier>'` — `tier ∈ {pii, personal, internal, hardship}`. Grant applies on rows where the caller holds `<scope>`.
+- `'<scope>:<tier>'` — `tier ∈ {pii, personal, internal, hardship, finance}`. Grant applies on rows where the caller holds `<scope>`.
 - `'member'` — bare. Member-tier fields (`ToolStatus.level`, `HouseholdPage.boardReplyTo`), no row gate. Signed-in views hold it; anonymous and kiosk views do not.
 - `'roster'` — bare. The view receives the rows of the route's `rosterModels`: rows whose every field is public but whose existence says who is enrolled. A view without it gets none of those rows (a relation key is left out, a top-level key is empty); counts stay. Registration refuses the token without `rosterModels`, `rosterModels` with no view holding the token, and the token on a file route.
 - `'secret'` — never appears in any view (type error at registration).
