@@ -98,11 +98,11 @@ describe('POST /api/membership-audit/person-agreement', () => {
         await expect(res.json()).resolves.toMatchObject({ error: expect.stringContaining('household lead') });
     });
 
-    it('409 with the reason when the age is unknown', async () => {
+    it('409 with the reason when the date of birth shows a minor', async () => {
         mockSession.mockResolvedValue(board);
-        openMock.mockRejectedValue(new PersonAgreementError('age_unknown', "Record this person's date of birth (or mark them over 25) first."));
+        openMock.mockRejectedValue(new PersonAgreementError('minor', "This person's date of birth shows they are under 18."));
         const res = await POST(req());
         expect(res.status).toBe(409);
-        await expect(res.json()).resolves.toMatchObject({ error: expect.stringContaining('date of birth') });
+        await expect(res.json()).resolves.toMatchObject({ error: expect.stringContaining('under 18') });
     });
 });

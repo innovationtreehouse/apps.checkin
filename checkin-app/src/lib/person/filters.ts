@@ -39,11 +39,10 @@ export function recentProgramWhere(today: Date): Prisma.ProgramWhereInput {
 /**
  * Person is attached to at least one program (in any of the three roles) whose window is
  * current or ended within the lookback — the shared "who is in the building" population
- * behind the PERSON_BG and PERSON_AGREEMENT obligations and the board compliance lists.
+ * behind the PERSON_BG obligation and the board compliance lists.
  *
- * Lives here rather than in either trigger module: both need it, and importing one
- * trigger from the other closes an import cycle (personBgTriggers → renewal → payment →
- * personAgreementTriggers → personBgTriggers) that fails at module init with a TDZ error.
+ * Lives here rather than in personBgTriggers so its other readers don't import a trigger
+ * module, which sits on the renewal → payment import chain.
  */
 export function programAttachedWhere(today: Date): Prisma.PersonWhereInput {
     const program = recentProgramWhere(today);

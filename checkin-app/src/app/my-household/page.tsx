@@ -153,7 +153,7 @@ export default function HouseholdPage() {
               />
 
               {!isStaffAccount && viewerIsLead && (
-                <AddMemberForm onClearMessage={clearMessage} onContactWarning={applyContactWarning} />
+                <AddMemberForm members={household?.householdMembers ?? []} onClearMessage={clearMessage} onContactWarning={applyContactWarning} />
               )}
             </>
           )}

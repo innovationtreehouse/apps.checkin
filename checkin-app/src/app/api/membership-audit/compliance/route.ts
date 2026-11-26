@@ -6,10 +6,12 @@ import { withAuth } from "@/lib/auth";
 import { bgThresholdForYear, liveMembershipYear } from "@/lib/membership/renewal";
 import { membershipYearStart } from "@/lib/programYear";
 import { disputingReviews, householdCheckStandings, householdQualifies, loadCheckReviews } from "@/lib/membership/checkStanding";
-import { personBgOpen } from "@/lib/membership/lifecycle";
+import { fromWhere, personBgOpen } from "@/lib/membership/lifecycle";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
-import { agreementCycleFloor, autoPopulationWhere } from "@/lib/membership/personAgreementTriggers";
+import { AGREEMENT_OWED_WHERE, membershipYearAt } from "@/lib/membership/personAgreementTriggers";
+import { isAdultAsOf } from "@/lib/household/secondLead";
+import { LIVE_VISIT } from "@/lib/visit/filters";
 import { bgObligatedWhere, ENROLLED_PARTICIPANT, recentProgramWhere } from "@/lib/person/filters";
 import { positionHolders } from "@/lib/membership/positionHolders";
 
@@ -352,15 +354,13 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             fromName: source!.name || `Person #${source!.id}`,
         }));
 
-    // 7. Individual adult-child membership agreements. Independent of the BG
-    //    recheck policy — this is a signature obligation, not a check.
+    // 7. Individual membership agreements. Independent of the BG recheck policy —
+    //    this is a signature obligation, not a check.
     //    - awaiting: opened and not yet signed. The board's chase list.
-    //    - notRequested: non-lead adults in member households that the nightly rule
-    //      SKIPS because they're past its age ceiling (isDeclaredAdult = over 25). The
-    //      board decides whether each is an adult child or an unmarked spouse.
-    //    ponytail: the manual route accepts any personId, but this list only surfaces
-    //    program-attached candidates — reaching someone not in a program needs a person
-    //    picker we don't have a surface for yet.
+    //    - freeTimeWithoutAgreement: adults who aren't a household lead, in a member
+    //      household, and checked in outside any program this year with no agreement signed this year and none
+    //      open (an open one is on the awaiting list). Nothing opens at the door; the
+    //      board decides.
     const openAgreements = await prisma.orgMembershipProcess.findMany({
         where: { kind: "PERSON_AGREEMENT", status: "PENDING_EXTERNAL_ACTION" },
         select: { subjectPerson: { select: { id: true, name: true, householdId: true } } },
@@ -376,43 +376,37 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             reason: "AGREEMENT_OUTSTANDING",
         }));
 
-    // The same population the nightly rule uses, minus its age band — these are the
-    // over-25s it deliberately skips. Sharing the predicate keeps the board's candidate
-    // list from offering people the automatic pass would never have considered.
-    const overCeiling = await prisma.person.findMany({
+    // The people the automatic rule asks to sign, over the year the yearly pass uses. With no
+    // boundary configured there is no membership year, and the list is empty, as the pass is.
+    const agreementSince = boundary ? membershipYearAt(boundary, today).start : null;
+    const freeTimeVisits = agreementSince ? await prisma.visit.findMany({
         where: {
-            ...autoPopulationWhere(today),
-            isDeclaredAdult: true,
+            ...LIVE_VISIT,
+            associatedEventId: null,
+            arrivedAt: { gte: agreementSince },
+            person: {
+                ...AGREEMENT_OWED_WHERE,
+                household: { ...AGREEMENT_OWED_WHERE.household, archivedAt: null },
+                OR: [{ isDeclaredAdult: true }, { dateOfBirth: { not: null } }],
+                personBgProcesses: { none: { kind: "PERSON_AGREEMENT", OR: [{ contractSignedAt: { gte: agreementSince } }, fromWhere("PENDING_EXTERNAL_ACTION")] } },
+            },
         },
-        select: { id: true, name: true, householdId: true },
-        orderBy: { name: "asc" },
-    });
-    const floor = settings?.orgMembershipYearBoundary ? agreementCycleFloor(settings.orgMembershipYearBoundary, now) : null;
-    const handled = await prisma.orgMembershipProcess.findMany({
-        where: {
-            kind: "PERSON_AGREEMENT",
-            subjectPersonId: { in: overCeiling.map((p) => p.id) },
-            OR: [
-                { status: "PENDING_EXTERNAL_ACTION" },
-                // No boundary configured ⇒ no cycle to roll, so any settled one counts.
-                { status: { in: ["ACTIVE", "ARCHIVED"] }, ...(floor ? { stageEnteredAt: { gte: floor } } : {}) },
-            ],
-        },
-        select: { subjectPersonId: true },
-    });
-    const handledIds = new Set(handled.map((h) => h.subjectPersonId));
-    const peopleNeedingAgreement: PersonRow[] = overCeiling
-        .filter((p) => !handledIds.has(p.id))
-        .map((p) => ({
-            personId: p.id,
-            name: p.name || `Person #${p.id}`,
-            householdId: p.householdId,
-            programId: null,
-            programName: null,
-            reason: "AGREEMENT_NOT_REQUESTED",
-        }));
+        select: { arrivedAt: true, person: { select: { id: true, name: true, householdId: true, dateOfBirth: true, isDeclaredAdult: true } } },
+        orderBy: { arrivedAt: "desc" },
+    }) : [];
+    const lastFreeVisit = new Map<number, (typeof freeTimeVisits)[number]>();
+    for (const v of freeTimeVisits) if (!lastFreeVisit.has(v.person.id) && isAdultAsOf(v.person, today)) lastFreeVisit.set(v.person.id, v);
+    const peopleFreeTimeWithoutAgreement = [...lastFreeVisit.values()].map((v) => ({
+        personId: v.person.id,
+        name: v.person.name || `Person #${v.person.id}`,
+        householdId: v.person.householdId,
+        programId: null,
+        programName: null,
+        reason: "FREE_TIME_WITHOUT_AGREEMENT",
+        lastVisitAt: v.arrivedAt.toISOString(),
+    }));
 
-    const agreementLists = { peopleAwaitingAgreement, peopleNeedingAgreement };
+    const agreementLists = { peopleAwaitingAgreement, peopleFreeTimeWithoutAgreement };
 
     if (reasons.size === 0) {
         return NextResponse.json({ households: [], peopleNeedingBgCheck, peopleMissingDob, peopleWithDisputedCheck, positionHolders: positionHolderRows, blanketStamped, mergeInheritedBgChecks, ...agreementLists });

@@ -11,6 +11,7 @@ import { isComponentHttpError, parseId, ServiceError } from "@checkin/component-
 import { personActor, recordAudit } from "@/lib/auditActor";
 import { emailAfterAssignment, gatePositionCheck } from "@/lib/membership/positionCheck";
 import { parseParticipantId, readObjectBody } from "@/app/api/programs/[id]/requestBody";
+import { openPersonAgreementOnEngage } from "@/lib/membership/personAgreementTriggers";
 
 /** A ServiceError's answer, keeping its code so the picker can ask for the check acknowledgement. */
 function serviceErrorResponse(error: ServiceError) {
@@ -78,6 +79,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             return { assignment: created, ackId };
         });
         await emailAfterAssignment(ackId === null ? [] : [ackId], currentUserId);
+        await openPersonAgreementOnEngage(participantId);
 
         return NextResponse.json({ success: true, assignment });
     } catch (error) {

@@ -4,6 +4,7 @@ import { isYouth } from "@/lib/time";
 import { mayDeclareAges } from "@/lib/person/adultDob";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { closePersonAgreementOnLead } from "@/lib/membership/personAgreementTriggers";
 
 /**
  * Shared household-lead ownership check. Loads the person and
@@ -160,6 +161,7 @@ async function addHouseholdLeadTx(
     }
 
     await tx.person.update({ where: { id: participantId }, data: { isHouseholdLead: true } });
+    await closePersonAgreementOnLead(tx, participantId);
     return { created: true };
 }
 
@@ -175,8 +177,9 @@ async function addHouseholdLeadTx(
  * count + create join that transaction instead. Either way the cap check and the
  * insert are serialized against concurrent promotions for the same household.
  *
- * Does not write an audit log — callers own that, since the actor varies (and is
- * absent for system flows like sign-up).
+ * Does not audit the promotion itself — callers own that, since the actor varies (and is
+ * absent for system flows like sign-up). A promotion closes the person's open, unsigned
+ * individual agreement, which writes that closure's own system audit row.
  *
  * `whileLocked` runs once the household's locks are held, before anything is
  * read or written, so a caller can re-check a rule that a household change decides.

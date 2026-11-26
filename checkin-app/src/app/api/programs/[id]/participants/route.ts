@@ -25,6 +25,7 @@ import { householdMayEnrol, NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergenc
 import { personActor, recordAudit } from "@/lib/auditActor";
 import { enrollByHandIn, isEnrollmentBasis, readMatchedOrder, type MatchedOrder } from "@/lib/programs/enrollByHand";
 import { parseParticipantId, readObjectBody } from "@/app/api/programs/[id]/requestBody";
+import { openPersonAgreementOnEngage } from "@/lib/membership/personAgreementTriggers";
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
@@ -289,6 +290,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
         // Trigger notification
         await sendNotification(participantId, 'PROGRAM_ENROLLMENT', { programName: currentProgram.name });
+        await openPersonAgreementOnEngage(participantId);
 
         // The stock writer has already logged and emailed the board when a push failed.
         let warning: string | undefined;
