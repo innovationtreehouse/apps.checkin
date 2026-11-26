@@ -28,7 +28,6 @@ jest.mock("@/lib/shopifyRead/client", () => ({
     ordersSyncedAfter: (...a: unknown[]) => ordersSyncedAfter(...a),
     mirrorNow: () => mirrorNow(),
 }));
-jest.mock("@/lib/logger", () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 jest.mock("../reconcile/membership", () => ({ reconcileForwardMembership: (...a: unknown[]) => forwardMembership(...a) }));
 jest.mock("../reconcile/program", () => ({ reconcileForwardProgram: jest.fn() }));
 jest.mock("../reconcile/reversals", () => ({ reconcileReversals: (...a: unknown[]) => reconcileReversals(...a) }));
@@ -143,8 +142,11 @@ describe("runReconcile cursor", () => {
         const at = minutesBeforeNow(30);
         ordersSyncedAfter.mockResolvedValue([synced(1, at), synced(2, at), synced(3, at)]);
         forwardMembership.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("boom"));
+        const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
 
         expect((await runReconcile()).failed).toBe(1);
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("forward pass failed for order 2"), expect.any(Error));
+        consoleError.mockRestore();
         expect(forwardMembership).toHaveBeenCalledTimes(3);
         expect(released().data).toMatchObject({ shopifyReconcileCursorAt: at, shopifyReconcileCursorGid: "gid://shopify/Order/1" });
     });
