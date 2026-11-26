@@ -22,7 +22,7 @@ export const SYSTEM_ACTOR = 0;
  * Every automated path that writes audit rows, named `surface:path` — `cron:` for
  * a scheduled route, `webhook:` for an inbound call, `system:` for a library path
  * more than one surface can wake, `kiosk:` for the check-in station, `migration:`
- * for a one-off data migration (written by its SQL, named here for the record).
+ * for a one-off data migration or backfill script.
  */
 export const SYSTEM_ACTORS = [
     "cron:nightly",
@@ -47,6 +47,7 @@ export const SYSTEM_ACTORS = [
     "webhook:shopify-refund",
     "kiosk:two-deep",
     "migration:key-volunteer-grandfather",
+    "migration:membership-year-order-fill",
 ] as const;
 
 export type SystemActorName = (typeof SYSTEM_ACTORS)[number];
