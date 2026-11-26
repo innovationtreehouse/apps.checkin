@@ -8,6 +8,7 @@ import { resolveScholarshipRecipients, notifyReviewTeam, sendScholarshipAck } fr
 import { config } from "@/lib/config";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { liveMembershipYear } from "@/lib/membership/renewal";
+import { orgToday } from "@/lib/appSettings";
 import { ScholarshipRequestKind } from "@/generated/prisma/client";
 import { scholarshipRequestKindLabel } from "@/lib/scholarshipRequestKind";
 
@@ -76,7 +77,7 @@ export const POST = withAuth({}, async (req, auth) => {
 
         // The request is for the year live now; approval certifies that year.
         const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-        const paymentPlanYear = liveMembershipYear(settings?.orgMembershipYearBoundary, new Date());
+        const paymentPlanYear = liveMembershipYear(settings?.orgMembershipYearBoundary, await orgToday());
 
         // Compare-and-set on the flag, so of two concurrent submits only one sends the emails.
         const flipped = await prisma.orgMembershipProcess.updateMany({

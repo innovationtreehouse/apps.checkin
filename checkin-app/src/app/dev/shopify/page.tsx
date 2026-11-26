@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import prisma from "@/lib/prisma";
 import { config } from "@/lib/config";
 import { liveYearVariantId } from "@/lib/membership/payment";
+import { orgToday } from "@/lib/appSettings";
 import DevShopifyClient from "./DevShopifyClient";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +25,7 @@ export default async function DevShopifyPage() {
     });
 
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-    const hasVariant = (await liveYearVariantId(settings?.orgMembershipYearBoundary, new Date())) !== null;
+    const hasVariant = (await liveYearVariantId(settings?.orgMembershipYearBoundary, await orgToday())) !== null;
 
     const pendingParticipants = await prisma.programParticipant.findMany({
         where: { status: "PENDING" },

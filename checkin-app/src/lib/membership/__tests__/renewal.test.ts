@@ -313,7 +313,8 @@ describe('runRenewalSweep skip-probe shape', () => {
 
 describe('runRenewalSweep coming-year product', () => {
     const boundary = new Date(Date.UTC(2000, 7, 1)); // Aug 1
-    const now = new Date(Date.UTC(2026, 6, 15)); // Jul 15 — inside the window for 2026-2027
+    const now = new Date(Date.UTC(2026, 6, 15, 12)); // Jul 15 — inside the window for 2026-2027
+    const today = new Date(Date.UTC(2026, 6, 15)); // its org calendar day
 
     beforeEach(() => {
         prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: boundary });
@@ -324,7 +325,7 @@ describe('runRenewalSweep coming-year product', () => {
         liveYearVariantId.mockResolvedValue(null);
         const result = await runRenewalSweep(now);
         expect(result).toEqual({ opened: 0, skipped: 0, reason: 'no membership product set for 2026-2027' });
-        expect(liveYearVariantId).toHaveBeenCalledWith(boundary, now);
+        expect(liveYearVariantId).toHaveBeenCalledWith(boundary, today);
         expect(prisma.orgMembership.findMany).not.toHaveBeenCalled();
     });
 

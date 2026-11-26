@@ -54,10 +54,11 @@ export function positionCheckStanding(lastBackgroundCheck: Date | null, validFro
  * per person. Program positions serve in their program's year and stop counting once
  * the program ends; bucket places and roles serve in the live membership year. A
  * person known to be under 18 at the start of that year is left out, since a minor
- * is never checked. `today` is the org's calendar day a program's end is judged on.
+ * is never checked. `today` is the org's calendar day that picks the live year and
+ * judges a program's end.
  */
-export async function positionHolders(db: DbClient, boundary: Date, recheckMonths: number, now: Date, today: Date): Promise<PositionHolderRow[]> {
-    const liveYear = liveMembershipYear(boundary, now)!;
+export async function positionHolders(db: DbClient, boundary: Date, recheckMonths: number, today: Date): Promise<PositionHolderRow[]> {
+    const liveYear = liveMembershipYear(boundary, today)!;
     const runningProgram = { endAt: { gte: today } };
     const [volunteers, programs, runs, buckets, treasurers, roles] = await Promise.all([
         db.programVolunteer.findMany({ where: { program: runningProgram }, select: { personId: true, isCore: true, program: { select: { name: true, appliesToYear: true } } } }),

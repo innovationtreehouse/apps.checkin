@@ -14,6 +14,7 @@ import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import { recordUnreportedReversal } from "@/lib/finance/reconcile/liveOrder";
 import { liveMembershipYear } from "@/lib/membership/renewal";
 import { endedPaymentPlanYearRefusal } from "@/lib/programYear";
+import { orgToday } from "@/lib/appSettings";
 import { householdHasDisputedCheck } from "@/lib/membership/checkStanding";
 import type { Prisma } from "@/generated/prisma/client";
 import { lockProcessRows } from "@/lib/lockOrder";
@@ -62,11 +63,11 @@ export function buildMembershipCheckoutUrl(
 }
 
 /**
- * The variant a checkout sells at `now`: the live year's row, else the dev mock
+ * The variant a checkout sells on `today`, an org calendar day: the live year's row, else the dev mock
  * variant while the Shopify mock is active, else null. Never another year's row.
  */
-export async function liveYearVariantId(boundary: Date | null | undefined, now: Date): Promise<string | null> {
-    const year = liveMembershipYear(boundary, now);
+export async function liveYearVariantId(boundary: Date | null | undefined, today: Date): Promise<string | null> {
+    const year = liveMembershipYear(boundary, today);
     const row = year === null ? null : await prisma.membershipYearVariant.findUnique({ where: { membershipYear: year }, select: { shopifyVariantId: true } });
     return row?.shopifyVariantId ?? (config.shopifyMockActive() ? DEV_MOCK_MEMBERSHIP_VARIANT_ID : null);
 }
@@ -88,7 +89,7 @@ export async function ensurePaymentLink(processId: number): Promise<{ amountCent
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     const amountCents = membership.isVolunteerFamily ? settings?.volunteerMembershipFeeCents ?? 0 : settings?.standardMembershipFeeCents ?? 0;
 
-    const variantId = await liveYearVariantId(settings?.orgMembershipYearBoundary, new Date());
+    const variantId = await liveYearVariantId(settings?.orgMembershipYearBoundary, await orgToday());
     const storeDomain = config.shopifyStoreDomain();
     if (!variantId || !storeDomain) return { amountCents, checkoutUrl: null };
 
@@ -165,6 +166,7 @@ async function settle(
     if (opts.shopifyOrderId) await recordUnreportedReversal(opts.shopifyOrderId);
     // An application's membership is fixed at its creation, so this unlocked read stays true.
     const ref = await prisma.orgMembershipProcess.findUnique({ where: { id: processId }, select: { orgMembershipId: true } });
+    const today = await orgToday();
     const result = await prisma.$transaction(async (tx) => {
         // Membership, then application: the order lib/lockOrder.ts states. The membership
         // lock keeps a deny from committing between the DENIED check and the payment write.
@@ -184,8 +186,8 @@ async function settle(
             }
             if (opts.requireRequested) {
                 // A request with no stored year predates the column: it takes the live year and is never refused.
-                appliesToYear = process.paymentPlanYear ?? liveMembershipYear(opts.boundary, new Date());
-                const ended = endedPaymentPlanYearRefusal(process.paymentPlanYear, opts.boundary, new Date());
+                appliesToYear = process.paymentPlanYear ?? liveMembershipYear(opts.boundary, today);
+                const ended = endedPaymentPlanYearRefusal(process.paymentPlanYear, opts.boundary, today);
                 if (ended) throw new PaymentError("wrong_phase", ended);
             }
             if (process.paidAt) throw new PaymentError("wrong_phase", "This application is already paid.");
@@ -384,7 +386,7 @@ export async function certifyPaymentPlan(processId: number, actorId: number, opt
     }
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
     const boundary = settings?.orgMembershipYearBoundary;
-    const appliesToYear = opts?.year ?? liveMembershipYear(boundary, new Date());
+    const appliesToYear = opts?.year ?? liveMembershipYear(boundary, await orgToday());
     return activate(processId, { via: "manual", actorId, reason: opts?.reason, appliesToYear, grantedYear: opts?.year, requireRequested: opts?.requireRequested, boundary });
 }
 
