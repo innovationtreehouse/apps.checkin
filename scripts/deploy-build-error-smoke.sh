@@ -151,4 +151,14 @@ proceed=/api/workflow-mapping/receipts/$REPLAY_RECEIPT_ID/proceed
 expect "POST $proceed (first)" 200 "$(post "$proceed" '{}')"
 expect "POST $proceed (replay)" 409 "$(post "$proceed" '{}')"
 
+# The dev data check bundle loads in the image, queries through the generated
+# client and refuses this database, which is not dev's.
+data_check=$(docker run --rm --network "$NET" "${DB_ENV[@]}" -e CHECKIN_ENV=dev "$RUNNER_IMAGE" \
+  node checkin-app/dev-data-check.mjs 2>&1 || true)
+if grep -qxF 'dev-data-check refused: not the dev database' <<<"$data_check"; then
+  echo "ok   dev-data-check.mjs -> refused a database that is not dev's"
+else
+  echo "::error::dev-data-check.mjs did not reach its refusal; output follows"; printf '%s\n' "$data_check"; failed=1
+fi
+
 exit "$failed"

@@ -180,9 +180,9 @@ jobs:
             echo "No packages/** or *-function/** change — skipping the Vitest tier."
             echo "packages=false" >> "$GITHUB_OUTPUT"
           fi
-          # The deploy scripts' checks (dump-task-logs.sh, smoke-live-app.sh) run
-          # when a script, its test, or this workflow changes.
-          if grep -qE '^(scripts/(test-)?(dump-task-logs|smoke-live-app)\.sh|\.github/workflows/ci\.yml)$' <<<"$changed"; then
+          # The scripts' checks (dump-task-logs.sh, smoke-live-app.sh, test-affected.mjs)
+          # run when a script, its test, or this workflow changes.
+          if grep -qE '^(scripts/(test-)?(dump-task-logs|smoke-live-app)\.sh|scripts/test-affected\.mjs|scripts/test-test-affected\.sh|\.github/workflows/ci\.yml)$' <<<"$changed"; then
             echo "A deploy script (or this workflow) changed — running the script checks."
             echo "scripts=true" >> "$GITHUB_OUTPUT"
           else
@@ -821,6 +821,10 @@ jobs:
       - name: Run smoke-live-app check
         if: needs.changes.outputs.scripts == 'true'
         run: bash scripts/test-smoke-live-app.sh
+
+      - name: Run test-affected check
+        if: needs.changes.outputs.scripts == 'true'
+        run: bash scripts/test-test-affected.sh
 
       - name: Run AI-review router self-tests
         if: needs.changes.outputs.aireview == 'true'
