@@ -58,6 +58,7 @@ const applicationRow = {
     bgClearedAt: null,
     paidAt: null,
     requestedForHouseholdId: null,
+    membershipYear: 2026,
     notRenewing: true,
     isPaymentPlanRequested: true,
     shopifyInvoiceUrl: 'https://shop.example/invoice',
@@ -68,16 +69,18 @@ const applicationRow = {
 
 describe('MembershipApplicationRow', () => {
     it('mirrors each OrgMembershipProcess field at its schema tier', () => {
-        const { notRenewing, ...mirrored } = classifications.MembershipApplicationRow;
+        const { notRenewing, membershipYear, ...mirrored } = classifications.MembershipApplicationRow;
         for (const [field, tier] of Object.entries(mirrored)) {
             expect([field, tier]).toEqual([field, schema.OrgMembershipProcess[field as keyof typeof schema.OrgMembershipProcess]]);
         }
         expect(notRenewing).toBe('internal');
+        expect(membershipYear).toBe('public');
     });
 
     it.each(['isSysadmin', 'isBoardMember'])('reaches a %s with notRenewing and no field the row does not declare', (role) => {
         const out = stripValue('MembershipApplicationRow', applicationRow, tokensFor(APPLICATIONS, role), ctx()) as Record<string, unknown>;
         expect(out.notRenewing).toBe(true);
+        expect(out.membershipYear).toBe(2026);
         expect(out.status).toBe('PENDING_RENEWAL');
         expect(out.orgMembership).toEqual({ householdId: 10, isVolunteerFamily: false });
         expect(out).not.toHaveProperty('isPaymentPlanRequested');
@@ -93,6 +96,22 @@ describe('MembershipApplicationRow', () => {
     it('is what the applications route declares it returns', () => {
         expect(spec(APPLICATIONS).returns).toContain('MembershipApplicationRow');
         expect(spec(APPLICATIONS).envelope).toBe('processes');
+    });
+});
+
+describe('GET /api/membership-ops/membership-products', () => {
+    const PRODUCTS = 'GET /api/membership-ops/membership-products';
+    const problem = { year: 2026, cause: 'retired', message: 'The 2026-2027 membership product is archived in Shopify.', householdId: 10 };
+
+    it('admits only the Board and sysadmins, under the problems envelope', () => {
+        expect(spec(PRODUCTS).authorize).toEqual({ anyRole: ['isSysadmin', 'isBoardMember'] });
+        expect(spec(PRODUCTS).envelope).toBe('problems');
+        expect(spec(PRODUCTS).returns).toEqual(['MembershipProductProblem']);
+    });
+
+    it.each(['isSysadmin', 'isBoardMember'])('reaches a %s with the year, cause and message and nothing else', (role) => {
+        const out = stripValue('MembershipProductProblem', problem, tokensFor(PRODUCTS, role), ctx()) as Record<string, unknown>;
+        expect(out).toEqual({ year: 2026, cause: 'retired', message: problem.message });
     });
 });
 
