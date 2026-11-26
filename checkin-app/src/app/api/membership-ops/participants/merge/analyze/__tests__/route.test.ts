@@ -124,23 +124,31 @@ describe('GET merge/analyze background-check collisions', () => {
 describe('GET merge/analyze Treehouse account household', () => {
     beforeEach(() => db.person.findMany.mockReset());
 
-    /** Person 1 in household 10, which holds `household10Emails`; person 2 in household `bHousehold`. */
-    function mockHouseholds(household10Emails: string[], bHousehold: number) {
+    /** Person 1 in household 10, holding `household10Emails`; person 2 in `bHousehold`, with `bOthers` more people. */
+    function mockHouseholds(household10Emails: string[], bHousehold: number, bOthers = 1) {
         const householdOf: Record<number, number> = { 1: 10, 2: bHousehold };
         db.person.findUnique.mockImplementation(async ({ where, select }: { where: { id: number }; select: Record<string, unknown> }) => {
             if ('lastBackgroundCheck' in select) return { lastBackgroundCheck: null };
             const id = householdOf[where.id];
-            return { id: where.id, name: `Person ${where.id}`, household: { id, name: `HH ${id}`, orgMembership: null, householdMembers: [{ id: where.id, name: `Person ${where.id}`, isHouseholdLead: true }] }, _count: {} };
+            const others = where.id === 2 ? Array.from({ length: bOthers }, (_, i) => ({ id: 100 + i, name: `Kin ${i}`, isHouseholdLead: false })) : [];
+            const householdMembers = [{ id: where.id, name: `Person ${where.id}`, isHouseholdLead: true }, ...others];
+            return { id: where.id, name: `Person ${where.id}`, household: { id, name: `HH ${id}`, orgMembership: null, householdMembers }, _count: {} };
         });
         db.person.findMany.mockImplementation(async ({ where }: { where: { householdId: number } }) =>
             where.householdId === 10 ? household10Emails.map((email) => ({ email })) : [{ email: 'family@example.com' }]);
     }
 
-    it('blocks keeping the record in a Treehouse account household when the other is elsewhere', async () => {
+    it('blocks keeping the Treehouse account when the other record shares a household with others', async () => {
         mockHouseholds(['front-desk@innovationtreehouse.org'], 20);
         const { membershipBlock } = await analyze();
         expect(membershipBlock.aAsKeeper).toMatch(/Treehouse account's household/);
         expect(membershipBlock.bAsKeeper).toBeNull();
+    });
+
+    it("allows keeping the Treehouse account when the other record is alone: the account's own duplicate", async () => {
+        mockHouseholds(['front-desk@innovationtreehouse.org'], 20, 0);
+        const { membershipBlock } = await analyze();
+        expect(membershipBlock).toEqual({ aAsKeeper: null, bAsKeeper: null });
     });
 
     it('blocks neither direction for two ordinary households', async () => {

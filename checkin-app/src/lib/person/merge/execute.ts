@@ -16,7 +16,7 @@ import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { anyMergedAway } from "@/lib/person/archivedPeople";
 import { isBlankEmail, leadsUnfinishedProgram, LEADER_EMAIL_REQUIRED, LEADER_NEEDS_EMAIL } from "@/lib/programs/leaderEligibility";
 import { isTreehouseHousehold } from "@/lib/household/treehouseAccount";
-import { bgSubjectKey, disputedCheckBlock, treehouseMergeBlock, type CheckSide } from "./guard";
+import { bgSubjectKey, bringsOthersIntoKeeperHousehold, disputedCheckBlock, TREEHOUSE_MERGE_REFUSAL, type CheckSide } from "./guard";
 import {
     KEEP_INCLUDE,
     MERGE_INCLUDE,
@@ -172,11 +172,11 @@ async function leaderEmailMergeRefusal(db: DbClient, keep: KeepSubject, merge: M
     return null;
 }
 
-/** A merge that brings the merged-away record into a Treehouse account's household, as a refusal, or null. */
+/** A merge that brings someone into a Treehouse account's household, as a refusal, or null. */
 async function treehouseMergeRefusal(db: DbClient, keep: KeepSubject, merge: MergeSubject): Promise<MergeRefusal | null> {
-    const sameHousehold = keep.householdId === merge.householdId;
-    const error = treehouseMergeBlock(!sameHousehold && await isTreehouseHousehold(db, keep.householdId), sameHousehold);
-    return error ? { status: 409, error } : null;
+    const liveOthers = merge.household?.householdMembers.filter(p => p.id !== merge.id).length ?? 0;
+    if (!bringsOthersIntoKeeperHousehold({ sameHousehold: keep.householdId === merge.householdId, liveOthers })) return null;
+    return await isTreehouseHousehold(db, keep.householdId) ? { status: 409, error: TREEHOUSE_MERGE_REFUSAL } : null;
 }
 
 /** A merge that would change a disputed person's check facts, as a refusal, or null. */

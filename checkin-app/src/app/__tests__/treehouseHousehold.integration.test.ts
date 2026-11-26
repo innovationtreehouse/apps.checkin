@@ -114,15 +114,25 @@ describe("Board person merge", () => {
         mergeParticipants(jsonReq("/api/membership-ops/participants/merge", "POST", { keepId, mergeId, fieldChoices: { name: "keep" } }));
     const analyze = (a: number, b: number) => analyzeMerge(jsonReq(`/api/membership-ops/participants/merge/analyze?a=${a}&b=${b}`, "GET"));
 
-    it("refuses merging a record from another household into a Treehouse account, and analyze reports it", async () => {
-        const preview = await (await analyze(staffId, loneId)).json();
+    it("refuses merging a record that shares a household with others into a Treehouse account, and analyze reports it", async () => {
+        const kin = await prisma.person.create({ data: { name: `${TAG} Kin`, isDeclaredAdult: true, householdId: familyHouseholdId } });
+        const preview = await (await analyze(staffId, kin.id)).json();
         expect(preview.membershipBlock.aAsKeeper).toMatch(/Treehouse account's household/);
-        expect(preview.membershipBlock.bAsKeeper).toBeNull();
 
-        const res = await merge(staffId, loneId);
+        const res = await merge(staffId, kin.id);
         expect(res.status).toBe(409);
         expect((await res.json()).error).toMatch(/Treehouse account's household/);
-        expect(await prisma.person.findUnique({ where: { id: loneId }, select: { id: true } })).not.toBeNull();
+        expect(await prisma.person.findUnique({ where: { id: kin.id }, select: { id: true } })).not.toBeNull();
+    });
+
+    it("merges the Treehouse account's own duplicate, alone in its household, into the account", async () => {
+        const preview = await (await analyze(staffId, loneId)).json();
+        expect(preview.membershipBlock.aAsKeeper).toBeNull();
+
+        const res = await merge(staffId, loneId);
+        expect(res.status).toBe(200);
+        expect(await prisma.person.findUnique({ where: { id: loneId }, select: { id: true } })).toBeNull();
+        expect(await prisma.person.count({ where: { householdId: staffHouseholdId } })).toBe(1);
     });
 
     it("still merges a record from another household into an ordinary household", async () => {

@@ -62,14 +62,16 @@ export function membershipMergeBlock(
     return null;
 }
 
+export const TREEHOUSE_MERGE_REFUSAL =
+    "Cannot merge: the kept record is in a Treehouse account's household, which holds only that account, and the merged-away record shares a household with other people.";
+
 /**
- * Why this merge must be refused because it brings the merged-away record into a
- * Treehouse account's household, or null. That household holds only the Treehouse
- * account, and the keeper stays in its own household.
+ * Whether a merge into a Treehouse account's household would be refused: the keeper
+ * stays in its own household, so a merged-away record from another household lands in
+ * it. One alone in its household is the account's own duplicate and brings nobody new.
  */
-export function treehouseMergeBlock(keepHouseholdIsTreehouse: boolean, sameHousehold: boolean): string | null {
-    if (sameHousehold || !keepHouseholdIsTreehouse) return null;
-    return "Cannot merge: the kept record is in a Treehouse account's household, which holds only that account, and the merged-away record is in another household.";
+export function bringsOthersIntoKeeperHousehold(merge: { sameHousehold: boolean; liveOthers: number }): boolean {
+    return !merge.sameHousehold && merge.liveOthers > 0;
 }
 
 /**
