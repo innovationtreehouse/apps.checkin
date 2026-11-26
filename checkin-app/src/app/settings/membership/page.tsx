@@ -17,6 +17,7 @@ import { KeyVolunteerAgreementCard } from "@/components/admin/KeyVolunteerAgreem
 import { ProgramStoreCard } from "@/components/admin/ProgramStoreCard";
 import { liveMembershipYear, membershipYearLabel, variantSlotYears } from "@/lib/programYear";
 import { VariantPicker } from "./VariantPicker";
+import { MembershipProductChips } from "@/components/membership/MembershipProductChips";
 
 interface Settings {
   standardMembershipFeeCents: number;
@@ -205,6 +206,7 @@ export default function MembershipSettingsPage() {
 
   return (
     <Stack>
+      <MembershipProductChips />
       {error && <LoadError what="the membership settings" message={error} onRetry={reload} />}
 
       {!data ? (

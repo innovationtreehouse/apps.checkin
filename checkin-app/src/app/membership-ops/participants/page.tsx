@@ -14,6 +14,7 @@ import { ROLE_FLAGS } from "@/lib/roles";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { api, useLoad } from "@/lib/api";
 import { MEMBERSHIP_PARTICIPANTS_ROLES } from "@/lib/nav/sections/membershipOps";
+import { AgreementYearModal } from "@/components/membership/AgreementYearModal";
 
 type HouseholdRef = {
   id: number;
@@ -184,12 +185,14 @@ export default function AdminParticipantsIndex() {
     }
   };
 
-  // The Board opens an individual agreement for any adult who isn't a household lead.
-  const openAgreement = async () => {
+  // The Board opens an individual agreement for any adult who isn't a household lead, for the year it picks.
+  const [agreementYearOpened, setAgreementYearOpened] = useState(false);
+  const openAgreement = async (year: number) => {
+    setAgreementYearOpened(false);
     if (!editingParticipant) return;
     setOpeningAgreement(true);
     try {
-      await api("/api/membership-audit/person-agreement", { method: "POST", body: JSON.stringify({ personId: editingParticipant.id }) });
+      await api("/api/membership-audit/person-agreement", { method: "POST", body: JSON.stringify({ personId: editingParticipant.id, year }) });
       showSuccess("Individual agreement opened.");
     } catch (e) {
       showError(errorMessage(e));
@@ -450,9 +453,10 @@ export default function AdminParticipantsIndex() {
             )}
             {isStaff && (
               <Group>
-                <Button type="button" size="xs" variant="light" loading={openingAgreement} disabled={openingAgreement} onClick={openAgreement}>
+                <Button type="button" size="xs" variant="light" loading={openingAgreement} disabled={openingAgreement} onClick={() => setAgreementYearOpened(true)}>
                   Open individual agreement
                 </Button>
+                <AgreementYearModal opened={agreementYearOpened} onClose={() => setAgreementYearOpened(false)} onConfirm={openAgreement} />
               </Group>
             )}
             {editingParticipant?.household && (

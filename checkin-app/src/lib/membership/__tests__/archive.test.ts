@@ -203,13 +203,37 @@ describe('unarchiveApplication (Reopen) within the membership year', () => {
         tx.orgMembership.findUnique.mockResolvedValue({ status: 'PENDING' });
         findUnique.mockResolvedValue(row({ kind: 'INITIAL', status: 'ARCHIVED', archivedFromStatus: 'INTAKE', createdAt: new Date('2026-03-01T00:00:00.000Z') }));
 
-        at('2026-05-31T00:00:00.000Z');
+        at('2026-05-31T12:00:00.000Z');
         await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'INTAKE' });
 
-        at('2026-06-01T00:00:00.000Z');
+        at('2026-06-01T12:00:00.000Z');
         await expect(unarchiveApplication(1, 2)).rejects.toMatchObject({
             message: "This application is for 2025-2026. The 2026-2027 renewal period has started, so it can't be reopened; start a new application.",
         });
+    });
+
+    it('reads the year stored on the application over its creation date', async () => {
+        tx.orgMembership.findUnique.mockResolvedValue({ status: 'PENDING' });
+        findUnique.mockResolvedValue(row({ kind: 'INITIAL', status: 'ARCHIVED', archivedFromStatus: 'INTAKE', membershipYear: 2026, createdAt: new Date('2026-03-01T00:00:00.000Z') }));
+
+        at('2026-06-01T12:00:00.000Z');
+        await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'INTAKE' });
+    });
+
+    it("refuses an agreement whose year has ended, and reopens one whose year runs", async () => {
+        const agreement = row({ kind: 'PERSON_AGREEMENT', status: 'ARCHIVED', archivedFromStatus: 'PENDING_EXTERNAL_ACTION', orgMembershipId: null, subjectPersonId: 4, membershipYear: 2025 });
+        findUnique.mockResolvedValue(agreement);
+
+        at('2026-07-31T12:00:00.000Z');
+        await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'PENDING_EXTERNAL_ACTION' });
+
+        tx.orgMembershipProcess.updateMany.mockClear();
+        at('2026-08-01T12:00:00.000Z');
+        await expect(unarchiveApplication(1, 2)).rejects.toMatchObject({
+            code: 'wrong_phase',
+            message: "This agreement is for 2025-2026, which has ended, so it can't be reopened.",
+        });
+        expect(tx.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
 
     describe('a paid row closed with no year', () => {

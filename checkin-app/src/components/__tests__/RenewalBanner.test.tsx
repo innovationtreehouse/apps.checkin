@@ -27,6 +27,13 @@ describe("RenewalBanner", () => {
     expect(screen.getByRole("link", { name: /Renew now/i })).toBeInTheDocument();
   });
 
+  it("says a renewal whose year is already under way was due", async () => {
+    mockFetchJson({ "/api/membership/renewal-status": { renewalDue: true, dueDate: DUE, wasDue: true } });
+    renderWithProviders(<RenewalBanner />);
+
+    expect(await screen.findByText(new RegExp(`up for renewal \\(it was due ${DUE}\\)`))).toBeInTheDocument();
+  });
+
   it("tells a household that said it won't renew that it still can", async () => {
     mockFetchJson({ "/api/membership/renewal-status": { renewalDue: true, dueDate: DUE, notRenewing: true } });
     renderWithProviders(<RenewalBanner />);

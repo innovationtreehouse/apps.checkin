@@ -8,12 +8,13 @@ import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
 import { runClearanceStep } from "@/lib/membership/clearanceSteps";
 import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
-import { asHouseholdProcess, fromWhere } from "@/lib/membership/lifecycle";
+import { asHouseholdProcess, fromWhere, openProcess } from "@/lib/membership/lifecycle";
+import { variantSaleState, type VariantSaleState } from "@/lib/shopify/products";
 import { setHouseholdStatus, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import { recordUnreportedReversal } from "@/lib/finance/reconcile/liveOrder";
-import { liveMembershipYear } from "@/lib/membership/renewal";
-import { endedPaymentPlanYearRefusal } from "@/lib/programYear";
+import { applicationYear, endedPaymentPlanYearRefusal, membershipYearEnded, membershipYearLabel } from "@/lib/programYear";
+import { orgToday } from "@/lib/appSettings";
 import { householdHasDisputedCheck } from "@/lib/membership/checkStanding";
 import type { Prisma } from "@/generated/prisma/client";
 import { lockProcessRows } from "@/lib/lockOrder";
@@ -24,8 +25,8 @@ const settleModule = () => import("@/lib/membership/settleHouseholdBg");
 /**
  * Payment phase (PENDING_PAYMENT -> ACTIVE).
  *
- * Every household pays through the live membership year's Shopify variant (a
- * MembershipYearVariant row). Volunteer households get the
+ * Every household pays through its application's membership year's Shopify
+ * variant (a MembershipYearVariant row). Volunteer households get the
  * board's discount code appended to that link so Shopify applies their discount
  * at checkout — our membership fee figures are only what applicants *see*. The membership
  * process id rides along as a cart attribute so the orders/paid webhook can
@@ -62,22 +63,80 @@ export function buildMembershipCheckoutUrl(
 }
 
 /**
- * The variant a checkout sells at `now`: the live year's row, else the dev mock
+ * The variant a checkout for membership year `year` sells: that year's row, else the dev mock
  * variant while the Shopify mock is active, else null. Never another year's row.
  */
-export async function liveYearVariantId(boundary: Date | null | undefined, now: Date): Promise<string | null> {
-    const year = liveMembershipYear(boundary, now);
+export async function yearVariantId(year: number | null): Promise<string | null> {
     const row = year === null ? null : await prisma.membershipYearVariant.findUnique({ where: { membershipYear: year }, select: { shopifyVariantId: true } });
     return row?.shopifyVariantId ?? (config.shopifyMockActive() ? DEV_MOCK_MEMBERSHIP_VARIANT_ID : null);
 }
 
+/** Why a checkout can't be built for an application's year: the year ended, it has no product, or the store couldn't be asked. */
+type Unavailable = "ended" | "no_product" | "unreachable";
+
+/** What the family's payment page shows in place of a link for an application for `year`. */
+export function paymentUnavailableMessage(year: number, why: Unavailable): string {
+    if (why === "ended") return `This application is for ${membershipYearLabel(year)}, which has ended. Please contact the Board.`;
+    if (why === "unreachable") return "We couldn't reach the store to build your payment link. Please try again in a few minutes.";
+    return `Payment for ${membershipYearLabel(year)} isn't available right now. Please contact the Board.`;
+}
+
+/** A membership year's product the Board must fix before families with an application for that year can pay. */
+export type MembershipProductProblem = { year: number; cause: "missing" | "retired" | "unreachable"; message: string };
+
+/**
+ * Whether membership year `year` has a product a checkout can sell: its variant row, and
+ * outside the mock, a Shopify variant whose product is not archived. Null when it does.
+ */
+async function yearProductProblem(year: number): Promise<MembershipProductProblem | null> {
+    const label = membershipYearLabel(year);
+    const variantId = await yearVariantId(year);
+    if (!variantId) {
+        return { year, cause: "missing", message: `There is no ${label} membership product in the membership settings. Families with a ${label} application can't pay until one is set.` };
+    }
+    if (config.shopifyMockActive()) return null;
+    let state: VariantSaleState;
+    try {
+        state = await variantSaleState(variantId);
+    } catch (error) {
+        logger.error(`Shopify lookup of the ${label} membership variant failed:`, error);
+        return { year, cause: "unreachable", message: `Shopify couldn't be reached to check the ${label} membership product. Families with a ${label} application may not be able to pay; reload to check again.` };
+    }
+    if (state === "sellable") return null;
+    const what = state === "archived" ? "is archived in Shopify" : "no longer exists in Shopify";
+    return { year, cause: "retired", message: `The ${label} membership product ${what}. Families with a ${label} application can't pay until it is restored.` };
+}
+
+/**
+ * Each running membership year an unpaid household application is for whose product
+ * can't be sold, for the Board's chip. Nothing with no boundary set.
+ */
+export async function membershipProductProblems(): Promise<MembershipProductProblem[]> {
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    const boundary = settings?.orgMembershipYearBoundary;
+    if (!boundary) return [];
+    const today = await orgToday();
+    const unpaid = await prisma.orgMembershipProcess.findMany({
+        where: { kind: { in: ["INITIAL", "RENEWAL"] }, paidAt: null, ...openProcess.where },
+        select: { membershipYear: true, createdAt: true },
+    });
+    const years = [...new Set(unpaid.map((p) => applicationYear(p, boundary)))]
+        .filter((y): y is number => y !== null && !membershipYearEnded(y, boundary, today))
+        .sort((a, b) => a - b);
+    const problems = await Promise.all(years.map(yearProductProblem));
+    return problems.filter((p): p is MembershipProductProblem => p !== null);
+}
+
+export type PaymentLink = { amountCents: number; checkoutUrl: string | null; unavailable: string | null };
+
 /**
  * Resolve the membership fee amount and the Shopify checkout link for a process in
- * PENDING_PAYMENT. The link is built from SHOPIFY_STORE_DOMAIN + liveYearVariantId,
- * with the volunteer discount code appended for volunteer households. If the store
- * domain or variant isn't configured, returns the amount with a null link.
+ * PENDING_PAYMENT. The link sells the application's own year's variant, with the
+ * volunteer discount code appended for volunteer households. An application whose
+ * year has ended, or whose year has no product, gets no link and says why. With no
+ * boundary or store domain configured, returns the amount with a null link.
  */
-export async function ensurePaymentLink(processId: number): Promise<{ amountCents: number; checkoutUrl: string | null }> {
+export async function ensurePaymentLink(processId: number): Promise<PaymentLink> {
     const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!proc) throw new PaymentError("not_found", "Application not found.");
     if (proc.status !== "PENDING_PAYMENT") throw new PaymentError("wrong_phase", "This application is not awaiting payment.");
@@ -88,13 +147,22 @@ export async function ensurePaymentLink(processId: number): Promise<{ amountCent
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     const amountCents = membership.isVolunteerFamily ? settings?.volunteerMembershipFeeCents ?? 0 : settings?.standardMembershipFeeCents ?? 0;
 
-    const variantId = await liveYearVariantId(settings?.orgMembershipYearBoundary, new Date());
+    const boundary = settings?.orgMembershipYearBoundary;
+    const year = applicationYear(proc, boundary);
+    if (year === null || !boundary) return { amountCents, checkoutUrl: null, unavailable: null };
+    if (membershipYearEnded(year, boundary, await orgToday())) {
+        return { amountCents, checkoutUrl: null, unavailable: paymentUnavailableMessage(year, "ended") };
+    }
     const storeDomain = config.shopifyStoreDomain();
-    if (!variantId || !storeDomain) return { amountCents, checkoutUrl: null };
+    const variantId = await yearVariantId(year);
+    if (!variantId) return { amountCents, checkoutUrl: null, unavailable: paymentUnavailableMessage(year, "no_product") };
+    if (!storeDomain) return { amountCents, checkoutUrl: null, unavailable: null };
+    const problem = await yearProductProblem(year);
+    if (problem) return { amountCents, checkoutUrl: null, unavailable: paymentUnavailableMessage(year, problem.cause === "unreachable" ? "unreachable" : "no_product") };
 
     // Anyone holding this code can redeem it; reconciliation flags unentitled use afterwards.
     const discountCode = membership.isVolunteerFamily ? settings?.volunteerFamilyDiscountCode ?? null : null;
-    return { amountCents, checkoutUrl: buildMembershipCheckoutUrl(storeDomain, variantId, processId, discountCode) };
+    return { amountCents, checkoutUrl: buildMembershipCheckoutUrl(storeDomain, variantId, processId, discountCode), unavailable: null };
 }
 
 /** Resolve the caller's household PENDING_PAYMENT process and ensure its payment link. */
@@ -111,9 +179,12 @@ export async function ensurePaymentLinkForUser(userId: number) {
 
 /**
  * `boundary` goes with `requireRequested`: the request's own year is then read
- * under the row lock and certified in place of `appliesToYear`.
+ * under the row lock and certified in place of `appliesToYear`. It also goes with
+ * `acknowledgeYearMismatch`: a Board-named year that differs from the application's
+ * own year is refused unless that is true. A payment-plan approval is never refused
+ * for a mismatch.
  */
-type SettleOpts = { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; grantedYear?: number; requireRequested?: boolean; boundary?: Date | null };
+type SettleOpts = { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; grantedYear?: number; requireRequested?: boolean; acknowledgeYearMismatch?: boolean; boundary?: Date | null };
 
 /**
  * What a payment did. `noop` is a redelivery of the order already recorded;
@@ -165,6 +236,7 @@ async function settle(
     if (opts.shopifyOrderId) await recordUnreportedReversal(opts.shopifyOrderId);
     // An application's membership is fixed at its creation, so this unlocked read stays true.
     const ref = await prisma.orgMembershipProcess.findUnique({ where: { id: processId }, select: { orgMembershipId: true } });
+    const today = await orgToday();
     const result = await prisma.$transaction(async (tx) => {
         // Membership, then application: the order lib/lockOrder.ts states. The membership
         // lock keeps a deny from committing between the DENIED check and the payment write.
@@ -178,15 +250,24 @@ async function settle(
         if (!membership) throw new PaymentError("not_found", "Membership not found.");
 
         let appliesToYear = opts.appliesToYear ?? null;
+        const appliedForYear = applicationYear(process, opts.boundary);
+        let yearMismatch = false;
         if (opts.via === "manual") {
             if (opts.requireRequested && !(process.isPaymentPlanRequested && process.status === "PENDING_PAYMENT")) {
                 throw new PaymentError("wrong_phase", "No pending payment-plan request");
             }
             if (opts.requireRequested) {
-                // A request with no stored year predates the column: it takes the live year and is never refused.
-                appliesToYear = process.paymentPlanYear ?? liveMembershipYear(opts.boundary, new Date());
-                const ended = endedPaymentPlanYearRefusal(process.paymentPlanYear, opts.boundary, new Date());
+                if (process.paymentPlanYear === null) {
+                    throw new PaymentError("wrong_phase", "This request has no membership year. Deny it; the family can ask again.");
+                }
+                appliesToYear = process.paymentPlanYear;
+                const ended = endedPaymentPlanYearRefusal(process.paymentPlanYear, opts.boundary, today);
                 if (ended) throw new PaymentError("wrong_phase", ended);
+            } else if (appliesToYear !== null && appliedForYear !== null && appliesToYear !== appliedForYear) {
+                if (!opts.acknowledgeYearMismatch) {
+                    throw new PaymentError("wrong_phase", yearMismatchRefusal(appliedForYear, appliesToYear));
+                }
+                yearMismatch = true;
             }
             if (process.paidAt) throw new PaymentError("wrong_phase", "This application is already paid.");
             if (process.status !== "PENDING_PAYMENT") {
@@ -215,7 +296,10 @@ async function settle(
         const closesRequest = opts.via === "manual" && opts.requireRequested === true;
         const approvalAudit = closesRequest ? { paymentPlanApproved: true, isPaymentPlanRequested: false } : {};
         const isGrant = opts.via === "manual" && opts.grantedYear !== undefined;
-        const grantAudit = isGrant ? { grantedYear: opts.grantedYear, reason: opts.reason ?? null } : {};
+        const grantAudit = {
+            ...(isGrant ? { grantedYear: opts.grantedYear, reason: opts.reason ?? null } : {}),
+            ...(opts.via === "manual" ? { appliesToYear, membershipYear: appliedForYear, ...(yearMismatch ? { acknowledgeYearMismatch: true } : {}) } : {}),
+        };
 
         if (process.status === "BLOCKED") {
             // Checked before stamping paidAt: a board reset of a paid BLOCKED row
@@ -361,15 +445,25 @@ export async function activate(
     return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
 }
 
+/** The refusal for a Board-named year that differs from the application's own, unacknowledged. */
+export function yearMismatchRefusal(appliedFor: number, paidFor: number): string {
+    return `This application is for ${membershipYearLabel(appliedFor)}. You are recording a payment for ${membershipYearLabel(paidFor)}. Confirm the year doesn't match the application to continue.`;
+}
+
+type CertifyOpts =
+    | { year: number; reason?: string; acknowledgeYearMismatch?: boolean; grant?: boolean; requireRequested?: never }
+    | { requireRequested: true; reason?: string };
+
 /**
  * Board override: certify a payment plan and activate without a Shopify payment.
  * Rejects (403) an actor who is not a Board member (a sysadmin is not enough) and
  * the actor's own household; activate() rejects (409) under the row lock unless
- * the process is awaiting payment. Records `year`, or with none the live year.
- * `requireRequested` makes this the decision on an open payment-plan request (see
- * settle), which records the request's stored year and refuses one that has ended.
+ * the process is awaiting payment. Records the Board-named `year`; `grant` marks
+ * it as the grant action's. `requireRequested` makes this the decision on an open
+ * payment-plan request (see settle), which records the request's stored year and
+ * refuses one that has none or has ended.
  */
-export async function certifyPaymentPlan(processId: number, actorId: number, opts?: { reason?: string; year?: number; requireRequested?: boolean }) {
+export async function certifyPaymentPlan(processId: number, actorId: number, opts: CertifyOpts) {
     // Only the Board certifies a payment (owner ruling 10-15). Checked here so every
     // caller (grant, renewal grant, payment-plan approve, certify-payment) is covered.
     const actor = await prisma.person.findUnique({ where: { id: actorId }, select: { isBoardMember: true } });
@@ -384,8 +478,18 @@ export async function certifyPaymentPlan(processId: number, actorId: number, opt
     }
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
     const boundary = settings?.orgMembershipYearBoundary;
-    const appliesToYear = opts?.year ?? liveMembershipYear(boundary, new Date());
-    return activate(processId, { via: "manual", actorId, reason: opts?.reason, appliesToYear, grantedYear: opts?.year, requireRequested: opts?.requireRequested, boundary });
+    if (opts.requireRequested) {
+        return activate(processId, { via: "manual", actorId, reason: opts.reason, requireRequested: true, boundary });
+    }
+    return activate(processId, {
+        via: "manual",
+        actorId,
+        reason: opts.reason,
+        appliesToYear: opts.year,
+        grantedYear: opts.grant ? opts.year : undefined,
+        acknowledgeYearMismatch: opts.acknowledgeYearMismatch,
+        boundary,
+    });
 }
 
 /** An order's membership line and the year it buys; the year is null when no boundary is set. */

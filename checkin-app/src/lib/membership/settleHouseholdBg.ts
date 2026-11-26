@@ -55,7 +55,7 @@ export async function settleHouseholdBg(householdId: number, opts: SettleOptions
     const app = await prisma.orgMembershipProcess.findFirst({
         where: openApplicationOf(householdId),
         orderBy: { id: "desc" },
-        select: { id: true, status: true, appliesToYear: true, createdAt: true, bgSettleFailedAt: true },
+        select: { id: true, status: true, appliesToYear: true, membershipYear: true, createdAt: true, bgSettleFailedAt: true },
     });
     if (!app) return [];
     const failuresBefore = settleFailures;

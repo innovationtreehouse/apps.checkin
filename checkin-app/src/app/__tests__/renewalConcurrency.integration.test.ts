@@ -52,8 +52,8 @@ describe('renewal opening concurrency', () => {
 
     it('two concurrent createRenewalProcess calls yield exactly one in-flight RENEWAL', async () => {
         const results = await Promise.all([
-            createRenewalProcess(orgMembershipId),
-            createRenewalProcess(orgMembershipId),
+            createRenewalProcess(orgMembershipId, 2026),
+            createRenewalProcess(orgMembershipId, 2026),
         ]);
 
         // Exactly one create won; the other lost the race and no-op'd (null).

@@ -32,7 +32,7 @@ async function runStep(step: ClearanceStep, target: StepTarget): Promise<void> {
     }
     if (householdId === null) throw new Error(`application ${processId} has no household`);
     if (step === "PERSON_BG_TRIGGER") await openPersonBgForNewMember(householdId, asOf);
-    else await openPersonAgreementForNewMember(householdId, asOf);
+    else await openPersonAgreementForNewMember(householdId, processId, asOf);
 }
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 1000);

@@ -42,7 +42,7 @@ describe('nightly cron failures', () => {
     it('logs a failed checkout by person id, not email, and counts agreement failures', async () => {
         jest.mocked(prisma.$transaction).mockImplementation(((fn: (t: ReturnType<typeof makeTx>) => unknown) => fn(makeTx())) as never);
         jest.mocked(processVisitCheckout).mockRejectedValue(new Error('lock timeout'));
-        jest.mocked(runPersonAgreementSweep).mockResolvedValue({ opened: 0, failed: 2, yearStart: '' });
+        jest.mocked(runPersonAgreementSweep).mockResolvedValue({ opened: 0, failed: 2, closedAtYearEnd: 0, closeFailed: 0, yearStart: '' });
         const errors = jest.spyOn(console, 'error').mockImplementation(() => {});
 
         const res = await GET(new Request('http://localhost/api/cron/nightly'));
@@ -63,7 +63,7 @@ describe('nightly cron failures', () => {
         jest.mocked(processVisitCheckout).mockReset()
             .mockRejectedValueOnce(new Error('lock timeout'))
             .mockResolvedValueOnce([]);
-        jest.mocked(runPersonAgreementSweep).mockResolvedValue({ opened: 0, failed: 0, yearStart: '' });
+        jest.mocked(runPersonAgreementSweep).mockResolvedValue({ opened: 0, failed: 0, closedAtYearEnd: 0, closeFailed: 0, yearStart: '' });
         jest.spyOn(console, 'error').mockImplementation(() => {});
         const run = newRun();
 

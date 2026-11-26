@@ -7,6 +7,8 @@ import type { DbClient } from "@/lib/db-client";
 import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { ensureHouseholdMembership, type HouseholdStatus } from "@/lib/membership/householdStatus";
 import { householdApplicationOpenOrBlockedWhere, createRenewalProcess, liveMembershipYear } from "@/lib/membership/renewal";
+import { orgToday } from "@/lib/appSettings";
+import { NO_MEMBERSHIP_YEAR_REFUSAL } from "@/lib/programYear";
 
 /**
  * The Board's grant control for one membership year: it either maps a payment
@@ -27,6 +29,8 @@ import { householdApplicationOpenOrBlockedWhere, createRenewalProcess, liveMembe
  *   household gets an INITIAL at INTAKE.
  * - A BLOCKED application: refused. Only a board reset or override moves it on.
  * - DENIED: refused.
+ * - No membership-year boundary set: opening is refused, since an application
+ *   never opens without its year.
  */
 export type GrantResult =
     | { paid: true; process: OrgMembershipProcess }
@@ -62,6 +66,7 @@ export async function grantMembership(
     householdId: number,
     actor: { actorId: number; reason: string },
     year: number,
+    acknowledgeYearMismatch = false,
 ): Promise<GrantResult> {
     await refuseGrantIfDenied(householdId);
     const membership = await ensureHouseholdMembership(prisma, householdId);
@@ -80,13 +85,14 @@ export async function grantMembership(
             throw new PaymentError("wrong_phase", `The household's application is at ${existing.status}; it can be granted once it reaches payment.`);
         }
         // The certify row records the reason and the granted year in its own transaction.
-        await certifyPaymentPlan(existing.id, actor.actorId, { reason: actor.reason, year });
+        await certifyPaymentPlan(existing.id, actor.actorId, { reason: actor.reason, year, acknowledgeYearMismatch, grant: true });
         return { paid: true, process: await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: existing.id } }) };
     }
 
-    if (membership.status === "ACTIVE") return openRenewal(membership.id);
+    const liveYear = await openingYear();
+    if (membership.status === "ACTIVE") return openRenewal(membership.id, liveYear);
 
-    const opened = await openInitial(membership.id, householdId, actor);
+    const opened = await openInitial(membership.id, householdId, actor, liveYear);
     if (opened === "active") {
         throw new PaymentError("wrong_phase", "This household is already an active member; there is no application to pay.");
     }
@@ -97,13 +103,19 @@ export async function grantMembership(
     return { paid: false, ...opened };
 }
 
-/** A lapsed ACTIVE household renews; one already paid for the live year has nothing to pay. */
-async function openRenewal(orgMembershipId: number): Promise<GrantResult> {
+/** The live year on the org's today, which an application the grant opens is for. Refused with no boundary set. */
+async function openingYear(): Promise<number> {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-    const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, new Date());
+    const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, await orgToday());
+    if (liveYear === null) throw new PaymentError("wrong_phase", NO_MEMBERSHIP_YEAR_REFUSAL);
+    return liveYear;
+}
+
+/** A lapsed ACTIVE household renews for the live year; one already paid for it has nothing to pay. */
+async function openRenewal(orgMembershipId: number, liveYear: number): Promise<GrantResult> {
     const settled = await prisma.orgMembershipProcess.findFirst({ where: { orgMembershipId, ...settledThisCycleWhere(liveYear) }, select: { id: true } });
     if (settled) throw new PaymentError("wrong_phase", "This household has already paid for the current membership year.");
-    const process = await createRenewalProcess(orgMembershipId);
+    const process = await createRenewalProcess(orgMembershipId, liveYear);
     if (!process) throw new PaymentError("wrong_phase", "This household's membership changed while you were looking at it. Reload and try again.");
     return { paid: false, process, opened: true };
 }
@@ -118,6 +130,7 @@ async function openInitial(
     orgMembershipId: number,
     householdId: number,
     actor: { actorId: number; reason: string },
+    membershipYear: number,
 ): Promise<{ process: OrgMembershipProcess; opened: boolean } | "denied" | "active" | "blocked"> {
     const findInFlight = (db: DbClient) =>
         db.orgMembershipProcess.findFirst({ where: { orgMembershipId, kind: "INITIAL", status: { in: [...IN_FLIGHT_INITIAL] } }, orderBy: { id: "desc" } });
@@ -133,7 +146,7 @@ async function openInitial(
             });
             if (open.some((p) => p.status === "BLOCKED")) return "blocked" as const;
             if (open[0]) return { process: open[0], opened: false };
-            const process = await tx.orgMembershipProcess.create({ data: { orgMembershipId, kind: "INITIAL", status: "INTAKE" } });
+            const process = await tx.orgMembershipProcess.create({ data: { orgMembershipId, kind: "INITIAL", status: "INTAKE", membershipYear } });
             await tx.auditLog.create({
                 data: {
                     actorId: actor.actorId,
@@ -141,7 +154,7 @@ async function openInitial(
                     tableName: "OrgMembershipProcess",
                     affectedEntityId: process.id,
                     secondaryAffectedEntity: householdId,
-                    newData: { orgMembershipId, kind: "INITIAL", status: "INTAKE", openedByGrant: true, reason: actor.reason },
+                    newData: { orgMembershipId, kind: "INITIAL", status: "INTAKE", membershipYear, openedByGrant: true, reason: actor.reason },
                 },
             });
             return { process, opened: true };

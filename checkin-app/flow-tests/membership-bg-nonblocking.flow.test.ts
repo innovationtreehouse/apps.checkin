@@ -57,8 +57,11 @@ describe("flow: membership background check is non-blocking", () => {
         const afterExternal = await api<State>(applicant, "/api/membership");
         expect(afterExternal.json.process?.status).toBe("PENDING_PAYMENT");
 
-        // Pay before the check clears (board certify stands in for the Shopify webhook).
-        const certify = await api(board, "/api/membership-ops/applications/certify-payment", { method: "POST", body: JSON.stringify({ processId, reason: "flow test: payment plan certified" }) });
+        // Pay before the check clears (board certify stands in for the Shopify webhook), for the
+        // live year the application opened for: the last year the Board may grant.
+        const grantable = await api<{ grantYears?: { year: number }[] }>(board, "/api/membership-ops/households");
+        const year = grantable.json.grantYears?.at(-1)?.year;
+        const certify = await api(board, "/api/membership-ops/applications/certify-payment", { method: "POST", body: JSON.stringify({ processId, reason: "flow test: payment plan certified", year }) });
         expect(certify.status).toBe(200);
 
         const afterPay = await api<State>(applicant, "/api/membership");

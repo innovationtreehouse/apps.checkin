@@ -69,15 +69,24 @@ describe('notRenewingTargetYear', () => {
 });
 
 describe('isNotRenewingRenewal', () => {
-    const renewal = { kind: 'RENEWAL', createdAt: new Date(Date.UTC(2026, 6, 2)) };
+    const renewal = { kind: 'RENEWAL', membershipYear: 2026, createdAt: new Date(Date.UTC(2026, 6, 2)) };
 
     it('flags a renewal opened for the noted year, before or after the boundary passes', () => {
         expect(isNotRenewingRenewal(renewal, 2026, BOUNDARY)).toBe(true);
     });
 
+    it('reads the stored year, not the creation date', () => {
+        expect(isNotRenewingRenewal({ ...renewal, createdAt: new Date(Date.UTC(2025, 6, 2)) }, 2026, BOUNDARY)).toBe(true);
+    });
+
+    it('falls back to the live year at creation for a renewal stored without a year', () => {
+        expect(isNotRenewingRenewal({ ...renewal, membershipYear: null }, 2026, BOUNDARY)).toBe(true);
+        expect(isNotRenewingRenewal({ ...renewal, membershipYear: null, createdAt: new Date(Date.UTC(2025, 6, 2)) }, 2026, BOUNDARY)).toBe(false);
+    });
+
     it('ignores a note for another year, an old renewal, and a non-renewal', () => {
         expect(isNotRenewingRenewal(renewal, 2025, BOUNDARY)).toBe(false);
-        expect(isNotRenewingRenewal({ ...renewal, createdAt: new Date(Date.UTC(2025, 6, 2)) }, 2026, BOUNDARY)).toBe(false);
+        expect(isNotRenewingRenewal({ ...renewal, membershipYear: 2025 }, 2026, BOUNDARY)).toBe(false);
         expect(isNotRenewingRenewal({ ...renewal, kind: 'INITIAL' }, 2026, BOUNDARY)).toBe(false);
         expect(isNotRenewingRenewal(renewal, null, BOUNDARY)).toBe(false);
     });

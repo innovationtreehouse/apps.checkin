@@ -9,7 +9,7 @@ import { disputingReviews, householdCheckStandings, householdQualifies, loadChec
 import { fromWhere, personBgOpen } from "@/lib/membership/lifecycle";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
-import { AGREEMENT_OWED_WHERE, membershipYearAt } from "@/lib/membership/personAgreementTriggers";
+import { AGREEMENT_OWED_WHERE, householdsLatestPaidYears, membershipYearAt } from "@/lib/membership/personAgreementTriggers";
 import { isAdultAsOf } from "@/lib/household/secondLead";
 import { LIVE_VISIT } from "@/lib/visit/filters";
 import { bgObligatedWhere, ENROLLED_PARTICIPANT, recentProgramWhere } from "@/lib/person/filters";
@@ -79,7 +79,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     const bgRecheckMonths = settings?.bgRecheckMonths;
     const boundary = settings?.orgMembershipYearBoundary ?? null;
-    const liveYear = liveMembershipYear(boundary, now);
+    const liveYear = liveMembershipYear(boundary, today);
 
     // householdId -> Set<reason>
     const reasons = new Map<number, Set<string>>();
@@ -229,7 +229,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
 
     // 4c. Position holders, judged against the start of the year each serves in.
     const positionHolderRows = isRecheckPolicySet(bgRecheckMonths) && settings?.orgMembershipYearBoundary
-        ? await positionHolders(prisma, settings.orgMembershipYearBoundary, bgRecheckMonths, now, today)
+        ? await positionHolders(prisma, settings.orgMembershipYearBoundary, bgRecheckMonths, today)
         : [];
 
     // 5. Blanket-stamped background checks: a household clearance with no per-adult
@@ -380,9 +380,9 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     //      board decides.
     const openAgreements = await prisma.orgMembershipProcess.findMany({
         where: { kind: "PERSON_AGREEMENT", status: "PENDING_EXTERNAL_ACTION" },
-        select: { subjectPerson: { select: { id: true, name: true, householdId: true } } },
+        select: { membershipYear: true, subjectPerson: { select: { id: true, name: true, householdId: true } } },
     });
-    const peopleAwaitingAgreement: PersonRow[] = openAgreements
+    const peopleAwaitingAgreement: (PersonRow & { agreementYear: number | null })[] = openAgreements
         .filter((p) => p.subjectPerson)
         .map((p) => ({
             personId: p.subjectPerson!.id,
@@ -391,6 +391,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             programId: null,
             programName: null,
             reason: "AGREEMENT_OUTSTANDING",
+            agreementYear: p.membershipYear,
         }));
 
     // The people the automatic rule asks to sign, over the year the yearly pass uses. With no
@@ -405,14 +406,24 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
                 ...AGREEMENT_OWED_WHERE,
                 household: { ...AGREEMENT_OWED_WHERE.household, archivedAt: null },
                 OR: [{ isDeclaredAdult: true }, { dateOfBirth: { not: null } }],
-                personBgProcesses: { none: { kind: "PERSON_AGREEMENT", OR: [{ contractSignedAt: { gte: agreementSince } }, fromWhere("PENDING_EXTERNAL_ACTION")] } },
+                personBgProcesses: { none: { kind: "PERSON_AGREEMENT", ...fromWhere("PENDING_EXTERNAL_ACTION") } },
             },
         },
         select: { arrivedAt: true, person: { select: { id: true, name: true, householdId: true, dateOfBirth: true, isDeclaredAdult: true } } },
         orderBy: { arrivedAt: "desc" },
     }) : [];
+    // An agreement signed for the household's latest paid year counts; one for any other year does not.
+    const paidYears = await householdsLatestPaidYears([...new Set(freeTimeVisits.map((v) => v.person.householdId))]);
+    const signedAgreements = freeTimeVisits.length ? await prisma.orgMembershipProcess.findMany({
+        where: { kind: "PERSON_AGREEMENT", contractSignedAt: { not: null }, subjectPersonId: { in: [...new Set(freeTimeVisits.map((v) => v.person.id))] } },
+        select: { subjectPersonId: true, membershipYear: true },
+    }) : [];
+    const signedFor = (personId: number, householdId: number) =>
+        signedAgreements.some((a) => a.subjectPersonId === personId && a.membershipYear != null && a.membershipYear === paidYears.get(householdId));
     const lastFreeVisit = new Map<number, (typeof freeTimeVisits)[number]>();
-    for (const v of freeTimeVisits) if (!lastFreeVisit.has(v.person.id) && isAdultAsOf(v.person, today)) lastFreeVisit.set(v.person.id, v);
+    for (const v of freeTimeVisits) {
+        if (!lastFreeVisit.has(v.person.id) && isAdultAsOf(v.person, today) && !signedFor(v.person.id, v.person.householdId)) lastFreeVisit.set(v.person.id, v);
+    }
     const peopleFreeTimeWithoutAgreement = [...lastFreeVisit.values()].map((v) => ({
         personId: v.person.id,
         name: v.person.name || `Person #${v.person.id}`,

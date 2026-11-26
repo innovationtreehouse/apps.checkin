@@ -37,6 +37,7 @@ export const SYSTEM_ACTORS = [
     "system:membership-bg-settle",
     "system:person-agreement-open",
     "system:person-agreement-close-on-lead",
+    "system:person-agreement-year-end",
     "system:bootstrap-sysadmin",
     "system:dev-seed",
     "system:facility-close",

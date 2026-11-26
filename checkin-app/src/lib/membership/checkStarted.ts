@@ -134,8 +134,7 @@ export async function checkStartedRows(callerId: number): Promise<CheckStartedRo
     const select = { id: true, name: true, dateOfBirth: true, isDeclaredAdult: true, lastBackgroundCheck: true } as const;
     const caller = await prisma.person.findUnique({ where: { id: callerId }, select: { ...select, householdId: true, isHouseholdLead: true } });
     if (!caller) return [];
-    const now = new Date();
-    const today = await orgToday(now);
+    const today = await orgToday();
     const others = caller.isHouseholdLead && caller.householdId !== null
         ? (await prisma.person.findMany({ where: { householdId: caller.householdId, id: { not: callerId } }, orderBy: { id: "asc" }, select })).filter((p) => !isKnownMinor(p, today))
         : [];
@@ -143,10 +142,10 @@ export async function checkStartedRows(callerId: number): Promise<CheckStartedRo
     const app = caller.householdId === null ? null : await prisma.orgMembershipProcess.findFirst({
         where: { orgMembership: { householdId: caller.householdId }, kind: { in: ["INITIAL", "RENEWAL"] }, ...openProcess.where },
         orderBy: { id: "desc" },
-        select: { appliesToYear: true, createdAt: true },
+        select: { appliesToYear: true, membershipYear: true, createdAt: true },
     });
     const [threshold, flagged] = await Promise.all([
-        checkValidForApplication(app ?? { appliesToYear: null, createdAt: now }),
+        checkValidForApplication(app ?? { appliesToYear: null, membershipYear: null, createdAt: today }),
         prisma.orgMembershipProcess.findMany({
             where: { kind: "PERSON_BG", subjectPersonId: { in: people.map((p) => p.id) }, bgConsentAt: { not: null }, ...personBgOpen.where },
             select: { subjectPersonId: true },

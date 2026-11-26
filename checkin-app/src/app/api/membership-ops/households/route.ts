@@ -7,6 +7,7 @@ import { apiError } from "@/lib/api-response";
 import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { membershipYearCycle, coveredThrough, bgValidUntilBoundary, grantableYears } from "@/lib/membership/renewal";
+import { applicationYear } from "@/lib/programYear";
 import { grantableApplicationWhere, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { PaymentError } from "@/lib/membership/payment";
 import { grantMembership, grantMessage } from "@/lib/membership/grant";
@@ -22,6 +23,7 @@ import { withArchivedHouseholds } from "@/lib/household/archived";
 import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
 import { householdCheckStandings } from "@/lib/membership/checkStanding";
 import { noteStands } from "@/lib/membership/notRenewing";
+import { orgToday } from "@/lib/appSettings";
 
 export const dynamic = 'force-dynamic';
 
@@ -87,7 +89,7 @@ export const GET = withAuth(
                     where: { id: 1 }, select: { orgMembershipYearBoundary: true, bgRecheckMonths: true },
                 });
                 const detailCycle = settings?.orgMembershipYearBoundary
-                    ? membershipYearCycle(settings.orgMembershipYearBoundary, new Date())
+                    ? membershipYearCycle(settings.orgMembershipYearBoundary, await orgToday())
                     : null;
                 // "Settled for the live year" = ANY fee-paid process (settledThisCycleWhere)
                 // recording that year, INITIAL or RENEWAL. ARCHIVED never completed payment
@@ -171,9 +173,9 @@ export const GET = withAuth(
 
             // The live cycle drives the settled arm of the process include below (no boundary ⇒ matches nothing).
             const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-            const now = new Date();
+            const today = await orgToday();
             const cycle = settings?.orgMembershipYearBoundary
-                ? membershipYearCycle(settings.orgMembershipYearBoundary, now)
+                ? membershipYearCycle(settings.orgMembershipYearBoundary, today)
                 : null;
 
             const households = await prisma.household.findMany({
@@ -204,7 +206,7 @@ export const GET = withAuth(
                                         settledThisCycleWhere(cycle?.cycleStart.getUTCFullYear() ?? null),
                                     ],
                                 },
-                                select: { id: true, status: true },
+                                select: { id: true, status: true, membershipYear: true, createdAt: true },
                             },
                         },
                     },
@@ -220,7 +222,7 @@ export const GET = withAuth(
 
             const notRenewingSince = await notRenewingNotedAt(households.flatMap((h) => {
                 const m = h.orgMembership;
-                return m && noteStands(m.notRenewingYear, settings?.orgMembershipYearBoundary, now) ? [{ id: m.id, year: m.notRenewingYear }] : [];
+                return m && noteStands(m.notRenewingYear, settings?.orgMembershipYearBoundary, today) ? [{ id: m.id, year: m.notRenewingYear }] : [];
             }));
 
             const withGrantable = households.map((h) => {
@@ -228,7 +230,8 @@ export const GET = withAuth(
                 // any other row is a fee-paid process, so the live year is settled.
                 const { processes = [], id: membershipId, notRenewingYear, ...orgMembership } = h.orgMembership ?? {};
                 const notRenewingAt = membershipId === undefined ? undefined : notRenewingSince.get(membershipId);
-                const awaitingPayment = processes.some((p) => p.status === "PENDING_PAYMENT");
+                const awaiting = processes.find((p) => p.status === "PENDING_PAYMENT");
+                const awaitingPayment = !!awaiting;
                 const settledForComingYear = processes.some((p) => p.status !== "PENDING_PAYMENT");
                 // Household-level BG "valid until" — later lastBackgroundCheck among leads
                 // who passed; no per-member values in the list response.
@@ -240,6 +243,8 @@ export const GET = withAuth(
                     ...h,
                     orgMembership: h.orgMembership ? orgMembership : null,
                     awaitingPayment,
+                    // The year the application awaiting payment was opened for.
+                    awaitingPaymentYear: awaiting ? applicationYear(awaiting, settings?.orgMembershipYearBoundary) : null,
                     settledForComingYear,
                     bgValidUntil,
                     notRenewing: notRenewingYear != null && notRenewingAt ? { year: notRenewingYear, since: notRenewingAt } : null,
@@ -249,7 +254,7 @@ export const GET = withAuth(
 
             return NextResponse.json({
                 households: withGrantable,
-                grantYears: grantableYears(settings?.orgMembershipYearBoundary, now),
+                grantYears: grantableYears(settings?.orgMembershipYearBoundary, today),
             });
         } catch (error) {
             logger.error("Failed to fetch households:", error);
@@ -280,7 +285,7 @@ export const POST = withAuth(
         try {
             if (auth.type !== "session") return apiError("Unauthorized", 401);
             const body = await req.json();
-            const { householdId, active, deny, year, reason } = body;
+            const { householdId, active, deny, year, reason, acknowledgeYearMismatch } = body;
 
             if (!householdId) {
                 return apiError("Household ID is required", 400);
@@ -344,11 +349,11 @@ export const POST = withAuth(
             if (year !== undefined) {
                 if (!trimmedReason) return apiError("A reason is required to grant a year or open an application.", 400);
                 const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-                if (!grantableYears(settings?.orgMembershipYearBoundary, new Date()).some((y) => y.year === year)) {
+                if (!grantableYears(settings?.orgMembershipYearBoundary, await orgToday()).some((y) => y.year === year)) {
                     return apiError("That membership year can't be granted now. Reload the page and try again.", 400);
                 }
                 try {
-                    const result = await grantMembership(householdId, { actorId: auth.user.id, reason: trimmedReason }, year);
+                    const result = await grantMembership(householdId, { actorId: auth.user.id, reason: trimmedReason }, year, acknowledgeYearMismatch === true);
                     return NextResponse.json({
                         success: true,
                         ...result,

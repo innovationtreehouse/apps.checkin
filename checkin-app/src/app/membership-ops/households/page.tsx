@@ -12,6 +12,7 @@ import { AdminEditHouseholdModal } from '@/components/admin/AdminEditHouseholdMo
 import { sharesHousehold } from '@/lib/conflictOfInterest';
 import { formatDateOnly } from '@/lib/time';
 import { membershipYearLabel } from '@/lib/programYear';
+import { YearMismatchWarning, yearMismatchUnacknowledged } from '@/app/membership-ops/applications/CertifyDialog';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { isMembershipLapsed } from '@/lib/membership/lapsed';
 
@@ -23,7 +24,8 @@ type GrantYear = { year: number; label: string };
 // What a click on the year's control does: map a payment to the application
 // awaiting it, or open a renewal or joining application for the family to complete.
 type GrantEffect = "grant" | "openRenewal" | "openApplication";
-type PendingGrant = { effect: GrantEffect; year: GrantYear };
+// `appliedFor` is the year the application a grant pays was opened for.
+type PendingGrant = { effect: GrantEffect; year: GrantYear; appliedFor?: number | null };
 
 const EFFECT_VERB: Record<GrantEffect, string> = {
   grant: "Grant",
@@ -52,6 +54,7 @@ type Household = {
   householdMembers?: { id: number; name?: string | null; email?: string | null; isBoardMember?: boolean; emailUndeliverableAt?: string | null }[] | null;
   // An application (joining or renewing) is at PENDING_PAYMENT: granting certifies it.
   awaitingPayment?: boolean;
+  awaitingPaymentYear?: number | null;
   bgValidUntil?: string | null;
   // The household has said it won't renew into `year`, on `since`.
   notRenewing?: { year: number; since: string } | null;
@@ -84,6 +87,8 @@ export default function AdminHouseholdsPage() {
   const [grantReason, setGrantReason] = useState("");
   // The effect and year the reason modal confirms.
   const [pendingGrant, setPendingGrant] = useState<PendingGrant | null>(null);
+  const [grantAcknowledged, setGrantAcknowledged] = useState(false);
+  const grantAppliedFor = pendingGrant?.effect === "grant" ? pendingGrant.appliedFor ?? null : null;
 
   const revokeMembership = async (householdId: number) => {
     clearError('revoke-membership');
@@ -99,12 +104,12 @@ export default function AdminHouseholdsPage() {
   };
 
   // The server picks the effect at click time and its message names the one it took.
-  const grant = async (householdId: number, reason: string, pending: PendingGrant) => {
+  const grant = async (householdId: number, reason: string, pending: PendingGrant, acknowledgeYearMismatch: boolean) => {
     clearError('grant-membership');
     try {
       const data = await api<{ message?: string }>('/api/membership-ops/households', {
         method: 'POST',
-        body: JSON.stringify({ householdId, year: pending.year.year, reason })
+        body: JSON.stringify({ householdId, year: pending.year.year, reason, acknowledgeYearMismatch })
       });
       showSuccess(data?.message || fallbackSuccess(pending));
     } catch (e) {
@@ -116,16 +121,18 @@ export default function AdminHouseholdsPage() {
     setPendingGrant(pending);
     setPendingGrantHouseholdId(householdId);
     setGrantReason("");
+    setGrantAcknowledged(false);
     openGrantModal();
   };
 
   const confirmGrant = async () => {
     if (pendingGrantHouseholdId === null || pendingGrant === null || !grantReason.trim()) return;
+    if (yearMismatchUnacknowledged(grantAppliedFor, pendingGrant.year.year, grantAcknowledged)) return;
     closeGrantModal();
     const householdId = pendingGrantHouseholdId;
     const reason = grantReason.trim();
     setPendingGrantHouseholdId(null);
-    await grant(householdId, reason, pendingGrant);
+    await grant(householdId, reason, pendingGrant, grantAcknowledged);
   };
 
   // Deny blocks login for every member of the household; restore (deny=false) returns it
@@ -351,7 +358,7 @@ export default function AdminHouseholdsPage() {
                                   ? ownHouseholdTitle
                                   : undefined
                             }
-                            onClick={() => openGrant(household.id, { effect: inProgressEffect, year: yearInProgress })}
+                            onClick={() => openGrant(household.id, { effect: inProgressEffect, year: yearInProgress, appliedFor: household.awaitingPaymentYear })}
                           >
                             {EFFECT_VERB[inProgressEffect]} {yearInProgress.label}
                           </Button>}
@@ -376,7 +383,7 @@ export default function AdminHouseholdsPage() {
                         variant="light"
                         disabled={settledForComingYear}
                         title={settledForComingYear ? "This household is already set for this year." : undefined}
-                        onClick={() => openGrant(household.id, { effect: "grant", year: comingYear })}
+                        onClick={() => openGrant(household.id, { effect: "grant", year: comingYear, appliedFor: household.awaitingPaymentYear })}
                       >
                         {settledForComingYear ? "Granted" : "Grant"} {comingYear.label}
                       </Button>
@@ -424,6 +431,7 @@ export default function AdminHouseholdsPage() {
         centered
       >
         {pendingGrant && <Text mb="sm">{modalBody(pendingGrant)}</Text>}
+        <YearMismatchWarning appliedFor={grantAppliedFor} paidFor={pendingGrant?.year.year ?? null} acknowledged={grantAcknowledged} onAcknowledge={setGrantAcknowledged} />
         <Textarea
           value={grantReason}
           onChange={(e) => setGrantReason(e.currentTarget.value)}
@@ -436,7 +444,7 @@ export default function AdminHouseholdsPage() {
         />
         <Group justify="flex-end">
           <Button variant="default" onClick={closeGrantModal}>Cancel</Button>
-          <Button onClick={confirmGrant} disabled={!grantReason.trim()}>{pendingGrant ? EFFECT_VERB[pendingGrant.effect] : "Grant"}</Button>
+          <Button onClick={confirmGrant} disabled={!grantReason.trim() || yearMismatchUnacknowledged(grantAppliedFor, pendingGrant?.year.year ?? null, grantAcknowledged)}>{pendingGrant ? EFFECT_VERB[pendingGrant.effect] : "Grant"}</Button>
         </Group>
       </Modal>
     </Stack>

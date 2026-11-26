@@ -239,14 +239,15 @@ describe('Membership payment API', () => {
 
     it('board certify-payment activates without a Shopify payment', async () => {
         asBoard(boardId);
-        const res = await CERTIFY(new Request('http://localhost:4000/x', { method: 'POST', body: JSON.stringify({ processId: certProc, reason: 'Paid by check, deposited manually' }) }) as never);
+        const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
+        const year = liveMembershipYear(settings?.orgMembershipYearBoundary, new Date());
+        const res = await CERTIFY(new Request('http://localhost:4000/x', { method: 'POST', body: JSON.stringify({ processId: certProc, reason: 'Paid by check, deposited manually', year }) }) as never);
         expect(res.status).toBe(200);
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: certProc } });
         expect(proc?.status).toBe('ACTIVE');
         expect(proc?.manualPaymentById).toBe(boardId);
         expect(proc?.certificationNote).toBe('Paid by check, deposited manually');
-        const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        expect(proc?.appliesToYear).toBe(liveMembershipYear(settings?.orgMembershipYearBoundary, new Date()));
+        expect(proc?.appliesToYear).toBe(year);
 
         // The audit row records WHO recorded the payment — the acting board member, not SYSTEM_ACTOR.
         const audit = await prisma.auditLog.findFirst({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: certProc }, orderBy: { id: 'desc' } });

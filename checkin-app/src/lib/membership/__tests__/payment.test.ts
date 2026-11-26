@@ -204,7 +204,7 @@ describe('work after the payment commits', () => {
         const { outcome } = await activateByProcessId(PROCESS_ID, 'order-5', { appliesToYear: 2026 });
 
         expect(outcome).toBe('active');
-        expect(openAgreement).toHaveBeenCalledWith(3, expect.any(Date));
+        expect(openAgreement).toHaveBeenCalledWith(3, PROCESS_ID, expect.any(Date));
         expect(logBackendError).toHaveBeenCalledWith(failure, expect.stringContaining('background-check trigger'), { processId: PROCESS_ID, householdId: 3 });
         expect(prisma.clearanceStepFailure.upsert).toHaveBeenCalledTimes(1);
         expect(prisma.clearanceStepFailure.upsert).toHaveBeenCalledWith(expect.objectContaining({
@@ -327,14 +327,14 @@ describe('BLOCKED', () => {
 describe('certifyPaymentPlan checks under the row lock', () => {
     it('rejects a process that is no longer awaiting payment', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'ARCHIVED', paidAt: null, orgMembershipId: MEMBERSHIP_ID });
-        await expect(certifyPaymentPlan(PROCESS_ID, 1)).rejects.toMatchObject({ code: 'wrong_phase' });
+        await expect(certifyPaymentPlan(PROCESS_ID, 1, { year: 2026 })).rejects.toMatchObject({ code: 'wrong_phase' });
         expect(prisma.$queryRaw).toHaveBeenCalled();
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
 
     it('refuses an actor who is not a Board member, even a sysadmin', async () => {
         prisma.person.findUnique.mockResolvedValue({ isBoardMember: false });
-        await expect(certifyPaymentPlan(PROCESS_ID, 1)).rejects.toMatchObject({ code: 'forbidden' });
+        await expect(certifyPaymentPlan(PROCESS_ID, 1, { year: 2026 })).rejects.toMatchObject({ code: 'forbidden' });
         expect(prisma.person.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 1 } }));
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
@@ -342,14 +342,14 @@ describe('certifyPaymentPlan checks under the row lock', () => {
     it("refuses the actor's own household", async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), orgMembershipId: MEMBERSHIP_ID, orgMembership: { householdId: 3 } });
         hasHouseholdConflict.mockResolvedValue(true);
-        await expect(certifyPaymentPlan(PROCESS_ID, 1)).rejects.toMatchObject({ code: 'forbidden' });
+        await expect(certifyPaymentPlan(PROCESS_ID, 1, { year: 2026 })).rejects.toMatchObject({ code: 'forbidden' });
         expect(hasHouseholdConflict).toHaveBeenCalledWith(prisma, 1, 3);
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
 
     it('reads the household status with FOR UPDATE, before the process lock', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), orgMembershipId: MEMBERSHIP_ID, orgMembership: { householdId: 3 } });
-        await certifyPaymentPlan(PROCESS_ID, 1);
+        await certifyPaymentPlan(PROCESS_ID, 1, { year: 2026 });
         const sqls = prisma.$queryRaw.mock.calls.map(([sql]: [TemplateStringsArray]) => sql.join('?'));
         expect(sqls).toEqual([
             expect.stringMatching(/FROM "OrgMembership" WHERE id = \? FOR UPDATE/),
@@ -360,61 +360,63 @@ describe('certifyPaymentPlan checks under the row lock', () => {
     it('refuses a DENIED household', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), orgMembershipId: MEMBERSHIP_ID });
         household.status = 'DENIED';
-        await expect(certifyPaymentPlan(PROCESS_ID, 1)).rejects.toMatchObject({ code: 'wrong_phase' });
+        await expect(certifyPaymentPlan(PROCESS_ID, 1, { year: 2026 })).rejects.toMatchObject({ code: 'wrong_phase' });
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
 });
 
 describe('the year a settlement records', () => {
-    const awaiting = { id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), bgClearedAt: null, orgMembershipId: MEMBERSHIP_ID };
+    const awaiting = { id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), bgClearedAt: null, orgMembershipId: MEMBERSHIP_ID, membershipYear: 2026, createdAt: new Date(Date.UTC(2026, 9, 1)) };
     const recordedYear = () => prisma.orgMembershipProcess.updateMany.mock.calls[0][0].data.appliesToYear;
 
     beforeEach(() => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue(awaiting);
         prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) });
     });
-    afterEach(() => jest.useRealTimers());
-    const at = (date: Date) => jest.useFakeTimers({ now: date, doNotFake: ['nextTick', 'queueMicrotask', 'setImmediate', 'setTimeout'] });
 
     it('a Shopify payment records the year of its line', async () => {
         await activateByProcessId(PROCESS_ID, 'order-7', { appliesToYear: 2031 });
         expect(recordedYear()).toBe(2031);
     });
 
-    it.each([
-        ['the day before the renewal window opens', new Date(Date.UTC(2027, 5, 30)), 2026],
-        ['the day the renewal window opens', new Date(Date.UTC(2027, 6, 1)), 2027],
-    ])('a board certify with no year records the live year on %s', async (_label, now, year) => {
-        at(now);
-        await certifyPaymentPlan(PROCESS_ID, 1);
-        expect(recordedYear()).toBe(year);
-    });
-
     it('a board certify records the year it is given', async () => {
-        at(new Date(Date.UTC(2027, 6, 15)));
         await certifyPaymentPlan(PROCESS_ID, 1, { year: 2026 });
         expect(recordedYear()).toBe(2026);
     });
 
-    it("a board grant's year and reason go on the certify's own audit row; a certify without a year adds none", async () => {
-        await certifyPaymentPlan(PROCESS_ID, 1, { year: 2026, reason: 'Paid by check' });
+    it("refuses a year other than the application's own without the acknowledgement, writing nothing", async () => {
+        await expect(certifyPaymentPlan(PROCESS_ID, 1, { year: 2027 })).rejects.toMatchObject({
+            code: 'wrong_phase',
+            message: expect.stringContaining('This application is for 2026-2027. You are recording a payment for 2027-2028.'),
+        });
+        expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('records an acknowledged mismatched year, with both years and the acknowledgement on the audit row', async () => {
+        await certifyPaymentPlan(PROCESS_ID, 1, { year: 2027, acknowledgeYearMismatch: true });
+        expect(recordedYear()).toBe(2027);
+        expect(prisma.orgMembershipProcess.updateMany.mock.calls[0][0].data).not.toHaveProperty('membershipYear');
+        expect(prisma.auditLog.create.mock.calls[0][0].data.newData).toMatchObject({ appliesToYear: 2027, membershipYear: 2026, acknowledgeYearMismatch: true });
+    });
+
+    it('judges a row stored without a year by the live year at its creation', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...awaiting, membershipYear: null, createdAt: new Date(Date.UTC(2027, 6, 2)) });
+        await expect(certifyPaymentPlan(PROCESS_ID, 1, { year: 2026 })).rejects.toMatchObject({ message: expect.stringContaining('This application is for 2027-2028.') });
+    });
+
+    it("a board grant's year and reason go on the certify's own audit row; a certify adds no grantedYear", async () => {
+        await certifyPaymentPlan(PROCESS_ID, 1, { year: 2026, reason: 'Paid by check', grant: true });
         expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
         expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
             secondaryAffectedEntity: expect.any(Number),
-            newData: { grantedYear: 2026, reason: 'Paid by check', certificationNote: 'Paid by check' },
+            newData: { grantedYear: 2026, reason: 'Paid by check', certificationNote: 'Paid by check', appliesToYear: 2026, membershipYear: 2026 },
         });
 
         prisma.auditLog.create.mockClear();
         prisma.orgMembershipProcess.findUnique.mockResolvedValue(awaiting);
-        await certifyPaymentPlan(PROCESS_ID, 1, { reason: 'Paid by check' });
+        await certifyPaymentPlan(PROCESS_ID, 1, { year: 2026, reason: 'Paid by check' });
         expect(prisma.auditLog.create.mock.calls[0][0].data.newData).not.toHaveProperty('grantedYear');
         expect(prisma.auditLog.create.mock.calls[0][0].data).not.toHaveProperty('secondaryAffectedEntity');
-    });
-
-    it('a board certify records no year when no boundary is set', async () => {
-        prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: null });
-        await certifyPaymentPlan(PROCESS_ID, 1);
-        expect(recordedYear()).toBeNull();
     });
 });
 
@@ -436,11 +438,18 @@ describe('a payment-plan approval certifies the request year', () => {
         expect(recordedYear()).toBe(2026);
     });
 
-    it('a request with no stored year is certified for the live year, never refused', async () => {
+    it('refuses a request with no stored year, writing nothing', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...request, paymentPlanYear: null, stageEnteredAt: new Date(Date.UTC(2025, 5, 1)) });
-        at(new Date(Date.UTC(2027, 8, 2)));
+        await expect(certifyPaymentPlan(PROCESS_ID, 1, { reason: 'Plan agreed', requireRequested: true }))
+            .rejects.toMatchObject({ code: 'wrong_phase', message: 'This request has no membership year. Deny it; the family can ask again.' });
+        expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("is never refused for a request year that differs from the application's", async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...request, membershipYear: 2025, paymentPlanYear: 2026, stageEnteredAt: request.createdAt });
+        at(new Date(Date.UTC(2027, 6, 15)));
         await certifyPaymentPlan(PROCESS_ID, 1, { reason: 'Plan agreed', requireRequested: true });
-        expect(recordedYear()).toBe(2027);
+        expect(recordedYear()).toBe(2026);
     });
 
     it('approves the stored year on the day before its cutoff', async () => {
@@ -452,7 +461,7 @@ describe('a payment-plan approval certifies the request year', () => {
 
     it("refuses a request on its year's cutoff date, writing nothing", async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...request, paymentPlanYear: 2026, stageEnteredAt: request.createdAt });
-        at(new Date(Date.UTC(2027, 8, 1)));
+        at(new Date(Date.UTC(2027, 8, 1, 12)));
         await expect(certifyPaymentPlan(PROCESS_ID, 1, { reason: 'Plan agreed', requireRequested: true }))
             .rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('2026-2027, which has ended') });
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();

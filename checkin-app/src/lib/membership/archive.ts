@@ -9,7 +9,8 @@ import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { personActor, type AuditActor } from "@/lib/auditActor";
 import { type TxClient } from "@/lib/db-client";
 import { lockHouseholdRows } from "@/lib/household/archiveGuard";
-import { liveMembershipYear, reopenYearRefusal } from "@/lib/programYear";
+import { applicationYear, liveMembershipYear, membershipYearEnded, membershipYearLabel, reopenYearRefusal } from "@/lib/programYear";
+import { orgToday } from "@/lib/appSettings";
 
 // Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
 const settleModule = () => import("@/lib/membership/settleHouseholdBg");
@@ -150,8 +151,10 @@ export async function closeForRestore(
  * second joining application; a household application is reopened only within its
  * own membership year. Person-scoped kinds allow one open item per subject.
  */
-async function reopenRefusal(tx: Prisma.TransactionClient, process: OrgMembershipProcess, householdId: number | null, boundary: Date | null | undefined): Promise<string | null> {
-    const yearRefusal = reopenYearRefusal(process.kind, process.createdAt, boundary, new Date());
+async function reopenRefusal(tx: Prisma.TransactionClient, process: OrgMembershipProcess, householdId: number | null, boundary: Date | null | undefined, today: Date): Promise<string | null> {
+    const yearRefusal = process.kind === "PERSON_AGREEMENT"
+        ? agreementYearRefusal(process.membershipYear, boundary, today)
+        : reopenYearRefusal(process.kind, applicationYear(process, boundary), boundary, today);
     if (yearRefusal) return yearRefusal;
 
     const membership = householdId == null ? null : await tx.orgMembership.findUnique({ where: { householdId }, select: { status: true } });
@@ -172,6 +175,12 @@ async function reopenRefusal(tx: Prisma.TransactionClient, process: OrgMembershi
     });
     if (sibling) return `Another application (#${sibling.id}) is already open for this household. Resolve or close it first.`;
     return null;
+}
+
+/** Why an agreement for `year` can't be reopened, or null: its year has ended. */
+function agreementYearRefusal(year: number | null, boundary: Date | null | undefined, today: Date): string | null {
+    if (year == null || !boundary || !membershipYearEnded(year, boundary, today)) return null;
+    return `This agreement is for ${membershipYearLabel(year)}, which has ended, so it can't be reopened.`;
 }
 
 /**
@@ -208,8 +217,9 @@ const FORGET_SIGNING_REQUEST = { zohoEnvelopeId: null, zohoActionId: null, zohoS
 /**
  * Board "Reopen": returns a closed application to the step it was closed from
  * (`archivedFromStatus`, captured by the close write). Refuses with the reason when
- * the household is DENIED, already has another open application, or the next
- * year's renewal window has opened since the application's own year, then picks up a
+ * the household is DENIED, already has another open application, the next
+ * year's renewal window has opened since the application's own year, or an
+ * agreement's year has ended, then picks up a
  * signature made while closed and re-runs the external advance so a gate met while
  * closed doesn't strand the application. When the household was denied since the
  * close, the unsigned signing request is forgotten in the reopen write instead, and
@@ -228,6 +238,7 @@ export async function unarchiveApplication(processId: number, actorId: number) {
         throw new ReviewError("wrong_phase", "Cannot determine the step this application was closed from.");
     }
     const householdId = await applicantHousehold(prisma, process);
+    const today = await orgToday();
 
     let reopened: { forgotRequest: boolean } | null;
     try {
@@ -239,7 +250,7 @@ export async function unarchiveApplication(processId: number, actorId: number) {
                 throw new ReviewError("wrong_phase", "The Board closed this check review as opened for the wrong person. Reopen it with a reason instead.");
             }
             const settings = await tx.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-            const refusal = await reopenRefusal(tx, process, householdId, settings?.orgMembershipYearBoundary);
+            const refusal = await reopenRefusal(tx, process, householdId, settings?.orgMembershipYearBoundary, today);
             if (refusal) throw new ReviewError("wrong_phase", refusal);
             const forgotRequest = householdId != null && process.zohoEnvelopeId != null && process.contractSignedAt == null
                 && await deniedSinceClose(tx, processId, householdId);

@@ -49,6 +49,38 @@ export async function getProductByHandle(storeDomain: string, accessToken: strin
     return body.products?.[0] ?? null;
 }
 
+/** Whether a variant can still be sold: `missing` when Shopify has no such variant, `archived` when its product is archived. */
+export type VariantSaleState = "sellable" | "missing" | "archived";
+
+/**
+ * Reads a variant and its product's status through the Admin GraphQL API, to tell whether
+ * a checkout for it can be paid. Throws when Shopify can't be reached or answers with an
+ * error, so a failed lookup is never reported as a retired product.
+ */
+export async function variantSaleState(variantId: string): Promise<VariantSaleState> {
+    const storeDomain = config.shopifyStoreDomain();
+    const accessToken = await getAccessToken();
+    if (!storeDomain || !accessToken) throw new Error("Shopify is not configured or could not be signed in to");
+    const res = await shopifyFetch(
+        `https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
+            body: JSON.stringify({
+                query: "query MembershipVariant($id: ID!) { productVariant(id: $id) { id product { status } } }",
+                variables: { id: `gid://shopify/ProductVariant/${variantId}` },
+            }),
+        },
+        "Shopify read membership variant",
+    );
+    if (!res.ok) throw new ShopifyStatusError(res.status);
+    const body: { data?: { productVariant?: { product?: { status?: string } | null } | null }; errors?: unknown } = await res.json();
+    if (body.errors) throw new Error(`Shopify productVariant GraphQL errors: ${JSON.stringify(body.errors)}`);
+    const found = body.data?.productVariant;
+    if (!found?.product) return "missing";
+    return found.product.status === "ARCHIVED" ? "archived" : "sellable";
+}
+
 /**
  * Resolve the variants of a membership product from a pasted storefront URL,
  * read through the Shopify Admin API.

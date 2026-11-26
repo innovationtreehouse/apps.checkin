@@ -173,16 +173,20 @@ describe('checkValidFor: a check counts when it is valid at the start of the yea
 
     describe('for a household application', () => {
         it('uses the year the application paid for', async () => {
-            expect(await checkValidForApplication({ appliesToYear: 2027, createdAt: at('2026-03-01') }, policy)).toEqual(at('2025-06-01'));
+            expect(await checkValidForApplication({ appliesToYear: 2027, membershipYear: 2026, createdAt: at('2026-03-01') }, policy)).toEqual(at('2025-06-01'));
+        });
+
+        it('uses the year it was opened for before payment', async () => {
+            expect(await checkValidForApplication({ appliesToYear: null, membershipYear: 2026, createdAt: at('2026-03-01') }, policy)).toEqual(at('2024-06-01'));
         });
 
         it('uses the year a renewal opened for, however late it is begun', async () => {
             // Opened in the window before the 2026 boundary: it is the 2026 renewal.
-            expect(await checkValidForApplication({ appliesToYear: null, createdAt: at('2026-07-15') }, policy)).toEqual(at('2024-06-01'));
+            expect(await checkValidForApplication({ appliesToYear: null, membershipYear: null, createdAt: at('2026-07-15') }, policy)).toEqual(at('2024-06-01'));
         });
 
         it('uses the year in progress for a join outside renewal season', async () => {
-            expect(await checkValidForApplication({ appliesToYear: null, createdAt: at('2026-03-01') }, policy)).toEqual(at('2023-06-01'));
+            expect(await checkValidForApplication({ appliesToYear: null, membershipYear: null, createdAt: at('2026-03-01') }, policy)).toEqual(at('2023-06-01'));
         });
     });
 });

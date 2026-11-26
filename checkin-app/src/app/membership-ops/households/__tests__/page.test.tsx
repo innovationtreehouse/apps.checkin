@@ -185,7 +185,7 @@ describe("membership-ops/households page", () => {
         "/api/membership-ops/households",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ householdId: 2, year: 2026, reason: "Paid by check" }),
+          body: JSON.stringify({ householdId: 2, year: 2026, reason: "Paid by check", acknowledgeYearMismatch: false }),
         }),
       ),
     );
@@ -374,6 +374,29 @@ describe("membership-ops/households page", () => {
       expect(screen.queryByRole("button", { name: COMING })).not.toBeInTheDocument();
     });
 
+    it("warns when the year differs from the application's, and grants only once that is acknowledged", async () => {
+      setSession({ id: 1, isBoardMember: true });
+      const applied2026 = { ...inSeason, households: inSeason.households.map((h) => ({ ...h, awaitingPaymentYear: 2026 })) };
+      const fetchMock = mockFetchJson({ "/api/membership-ops/households": applied2026 });
+      renderWithProviders(<AdminHouseholdsPage />);
+      await screen.findByText("The Smiths");
+
+      fireEvent.click(screen.getAllByRole("button", { name: COMING })[0]);
+      fireEvent.change(await screen.findByLabelText(/^Reason/), { target: { value: "Mapped a store payment" } });
+      expect(screen.getByText("This application is for 2026-2027. You are recording a payment for 2027-2028.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Grant" })).toBeDisabled();
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "I understand the year doesn't match the application" }));
+      fireEvent.click(screen.getByRole("button", { name: "Grant" }));
+
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/membership-ops/households",
+          expect.objectContaining({ method: "POST", body: JSON.stringify({ householdId: 1, year: 2027, reason: "Mapped a store payment", acknowledgeYearMismatch: true }) }),
+        ),
+      );
+    });
+
     it("opens a modal requiring a reason, then posts that year", async () => {
       setSession({ id: 1, isBoardMember: true });
       const fetchMock = mockFetchJson({ "/api/membership-ops/households": inSeason });
@@ -394,7 +417,7 @@ describe("membership-ops/households page", () => {
           "/api/membership-ops/households",
           expect.objectContaining({
             method: "POST",
-            body: JSON.stringify({ householdId: 1, year: 2027, reason: "Family paid cash at the front desk" }),
+            body: JSON.stringify({ householdId: 1, year: 2027, reason: "Family paid cash at the front desk", acknowledgeYearMismatch: false }),
           }),
         ),
       );

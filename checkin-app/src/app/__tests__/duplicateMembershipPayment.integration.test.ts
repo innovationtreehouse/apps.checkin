@@ -87,7 +87,7 @@ describe('a second payment for a settled membership year', () => {
 
     it('paid after the Board certified a plan raises a duplicate membership payment', async () => {
         const { processId } = await makeApplicant('PENDING_PAYMENT');
-        await certifyPaymentPlan(processId, boardId, { reason: 'plan agreed' });
+        await certifyPaymentPlan(processId, boardId, { reason: 'plan agreed', year: 2026 });
 
         const { exceptions } = await payAgain(processId);
 

@@ -114,6 +114,7 @@ export const classifications = {
         shopifyOrderId: 'internal',
         paidAt: 'internal',
         appliesToYear: 'public',
+        membershipYear: 'public',
         manualPaymentById: 'internal',
         certificationNote: 'internal',
         renewalReminderSentAt: 'internal',
