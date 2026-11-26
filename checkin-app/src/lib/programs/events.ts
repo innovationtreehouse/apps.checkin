@@ -10,6 +10,8 @@ import { OPEN_VISIT_REFUSAL } from "@/lib/visitTimes";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
+import { resolveDisplayTimezone } from "@/lib/appSettings";
+import { formatDate } from "@/lib/time";
 
 export interface EventEditor {
     id: number;
@@ -74,6 +76,29 @@ export interface EventTimeEdit {
     applyToFuture?: boolean;
 }
 
+/**
+ * The first of `events` that has started and has a live visit linked to it. Only the
+ * Board or a sysadmin may cancel such a session.
+ */
+async function firstSessionWithAttendance(events: Pick<Event, "id" | "startAt">[]): Promise<Pick<Event, "id" | "startAt"> | null> {
+    const now = Date.now();
+    const started = events.filter(e => e.startAt.getTime() <= now);
+    if (started.length === 0) return null;
+    const visit = await prisma.visit.findFirst({
+        where: { associatedEventId: { in: started.map(e => e.id) }, ...LIVE_VISIT },
+        select: { associatedEventId: true },
+        orderBy: { event: { startAt: "asc" } },
+    });
+    return started.find(e => e.id === visit?.associatedEventId) ?? null;
+}
+
+const ATTENDED_CANCEL_REFUSAL = "This session has attendance; only the Board or a sysadmin can cancel it.";
+
+async function attendedSeriesRefusal(session: Pick<Event, "startAt">): Promise<string> {
+    const date = formatDate(session.startAt, { timeZone: await resolveDisplayTimezone(), dateStyle: "medium" });
+    return `The ${date} session has attendance; only the Board or a sysadmin can cancel it. Nothing in the series was cancelled.`;
+}
+
 /** Reschedule or cancel an event, alone or with the rest of its series. */
 export async function editEventTime(
     ctx: EventEditContext,
@@ -104,6 +129,8 @@ export async function editEventTime(
         });
 
         if (action === 'cancel') {
+            const attended = ctx.isSysAdminOrBoard ? null : await firstSessionWithAttendance(futureEvents);
+            if (attended) return refuse("forbidden", await attendedSeriesRefusal(attended));
             const eventIds = futureEvents.map(e => e.id);
             // Cleanup RSVPs and Visits first to avoid foreign key constraints.
             // All three writes in one transaction so a mid-way failure rolls back.
@@ -131,6 +158,9 @@ export async function editEventTime(
 
     // Apply ONLY to this single event
     if (action === 'cancel') {
+        if (!ctx.isSysAdminOrBoard && await firstSessionWithAttendance([event])) {
+            return refuse("forbidden", ATTENDED_CANCEL_REFUSAL);
+        }
         // All three writes in one transaction so a mid-way failure rolls back.
         await prisma.$transaction([
             prisma.rSVP.deleteMany({ where: { eventId: event.id } }),
