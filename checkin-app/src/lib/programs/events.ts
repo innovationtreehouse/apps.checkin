@@ -10,6 +10,8 @@ import { OPEN_VISIT_REFUSAL } from "@/lib/visitTimes";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
+import { personActor, recordAudit } from "@/lib/auditActor";
+import type { TxClient } from "@/lib/db-client";
 
 export interface EventEditor {
     id: number;
@@ -104,14 +106,7 @@ export async function editEventTime(
         });
 
         if (action === 'cancel') {
-            const eventIds = futureEvents.map(e => e.id);
-            // Cleanup RSVPs and Visits first to avoid foreign key constraints.
-            // All three writes in one transaction so a mid-way failure rolls back.
-            await prisma.$transaction([
-                prisma.rSVP.deleteMany({ where: { eventId: { in: eventIds } } }),
-                prisma.visit.updateMany({ where: { associatedEventId: { in: eventIds } }, data: { associatedEventId: null } }),
-                prisma.event.deleteMany({ where: { id: { in: eventIds } } }),
-            ]);
+            await prisma.$transaction(tx => cancelEvents(tx, ctx.actorId, futureEvents));
             invalidateAttendanceCache();
             return { ok: true, value: { count: futureEvents.length } };
         }
@@ -131,12 +126,7 @@ export async function editEventTime(
 
     // Apply ONLY to this single event
     if (action === 'cancel') {
-        // All three writes in one transaction so a mid-way failure rolls back.
-        await prisma.$transaction([
-            prisma.rSVP.deleteMany({ where: { eventId: event.id } }),
-            prisma.visit.updateMany({ where: { associatedEventId: event.id }, data: { associatedEventId: null } }),
-            prisma.event.delete({ where: { id: event.id } }),
-        ]);
+        await prisma.$transaction(tx => cancelEvents(tx, ctx.actorId, [event]));
         invalidateAttendanceCache();
         return { ok: true, value: {} };
     }
@@ -149,6 +139,50 @@ export async function editEventTime(
         }
     });
     return { ok: true, value: { event: updatedEvent } };
+}
+
+/**
+ * Delete events with their RSVPs, detaching their visits first. Each detached
+ * visit and each deleted event gets an audit row naming the actor.
+ */
+async function cancelEvents(tx: TxClient, actorId: number, events: Event[]): Promise<void> {
+    const actor = personActor(actorId);
+    const eventIds = events.map(e => e.id);
+    const visits = await tx.visit.findMany({ where: { associatedEventId: { in: eventIds } } });
+
+    await tx.rSVP.deleteMany({ where: { eventId: { in: eventIds } } });
+    if (visits.length > 0) {
+        await tx.visit.updateMany({ where: { id: { in: visits.map(v => v.id) } }, data: { associatedEventId: null } });
+        await tx.auditLog.createMany({
+            data: visits.map(v => ({
+                ...actor,
+                action: "EDIT" as const,
+                tableName: "Visit",
+                affectedEntityId: v.id,
+                secondaryAffectedEntity: v.personId,
+                oldData: {
+                    arrivedAt: v.arrivedAt, departedAt: v.departedAt,
+                    arrivedVia: v.arrivedVia, departedVia: v.departedVia,
+                    associatedEventId: v.associatedEventId
+                },
+                newData: { associatedEventId: null, type: "event_cancelled" },
+            }))
+        });
+    }
+    await tx.event.deleteMany({ where: { id: { in: eventIds } } });
+    for (const e of events) {
+        await recordAudit(tx, actor, {
+            action: "DELETE",
+            tableName: "Event",
+            affectedEntityId: e.id,
+            secondaryAffectedEntity: e.programId,
+            oldData: {
+                programId: e.programId, name: e.name,
+                startAt: e.startAt.toISOString(), endAt: e.endAt.toISOString(),
+                recurringGroupId: e.recurringGroupId,
+            },
+        });
+    }
 }
 
 export interface AttendanceCorrection {

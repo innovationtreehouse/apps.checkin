@@ -50,6 +50,7 @@ const TYPE_LABEL: Record<string, string> = {
   staff_removal: "Staff removal",
   staff_restore: "Staff restore",
   conflict_resolution: "Conflict resolution",
+  event_cancelled: "Session cancelled",
 };
 
 // `newData.type` names the ROUTE, not the actor relationship — a household lead
