@@ -53,33 +53,32 @@ export async function getProductByHandle(storeDomain: string, accessToken: strin
 export type VariantSaleState = "sellable" | "missing" | "archived";
 
 /**
- * Reads a variant and its product through the Admin API to tell whether a checkout for it
- * can be paid. Throws when Shopify can't be reached or answers with an error, so a failed
- * lookup is never reported as a retired product.
+ * Reads a variant and its product's status through the Admin GraphQL API, to tell whether
+ * a checkout for it can be paid. Throws when Shopify can't be reached or answers with an
+ * error, so a failed lookup is never reported as a retired product.
  */
 export async function variantSaleState(variantId: string): Promise<VariantSaleState> {
     const storeDomain = config.shopifyStoreDomain();
     const accessToken = await getAccessToken();
     if (!storeDomain || !accessToken) throw new Error("Shopify is not configured or could not be signed in to");
-    const headers = { "X-Shopify-Access-Token": accessToken };
-    const variantRes = await shopifyFetch(
-        `https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/variants/${encodeURIComponent(variantId)}.json?fields=id,product_id`,
-        { method: "GET", headers },
-        "Shopify read variant",
+    const res = await shopifyFetch(
+        `https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": accessToken },
+            body: JSON.stringify({
+                query: "query MembershipVariant($id: ID!) { productVariant(id: $id) { id product { status } } }",
+                variables: { id: `gid://shopify/ProductVariant/${variantId}` },
+            }),
+        },
+        "Shopify read membership variant",
     );
-    if (variantRes.status === 404) return "missing";
-    if (!variantRes.ok) throw new ShopifyStatusError(variantRes.status);
-    const { variant }: { variant?: { product_id?: number | string } } = await variantRes.json();
-    if (variant?.product_id == null) return "missing";
-    const productRes = await shopifyFetch(
-        `https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products/${encodeURIComponent(String(variant.product_id))}.json?fields=id,status`,
-        { method: "GET", headers },
-        "Shopify read product",
-    );
-    if (productRes.status === 404) return "missing";
-    if (!productRes.ok) throw new ShopifyStatusError(productRes.status);
-    const { product }: { product?: AdminProduct } = await productRes.json();
-    return product?.status === "archived" ? "archived" : "sellable";
+    if (!res.ok) throw new ShopifyStatusError(res.status);
+    const body: { data?: { productVariant?: { product?: { status?: string } | null } | null }; errors?: unknown } = await res.json();
+    if (body.errors) throw new Error(`Shopify productVariant GraphQL errors: ${JSON.stringify(body.errors)}`);
+    const found = body.data?.productVariant;
+    if (!found?.product) return "missing";
+    return found.product.status === "ARCHIVED" ? "archived" : "sellable";
 }
 
 /**
