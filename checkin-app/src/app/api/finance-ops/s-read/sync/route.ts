@@ -91,7 +91,7 @@ export const POST = handler(
  * page can just hide the status line rather than special-case a success body that
  * means "no answer".
  *
- * Same board/sysadmin gate as the POST. `sync_run` is operational metadata (status,
+ * Board only, as the registry gates it. `sync_run` is operational metadata (status,
  * kind, timings, row counts) about the store as a whole — no per-person or
  * per-order data — but it rides the same queue-level boundary as the rest of
  * finance-ops rather than being widened for no caller.

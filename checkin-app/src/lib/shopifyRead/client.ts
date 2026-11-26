@@ -309,13 +309,14 @@ export async function scheduledReadState(): Promise<ScheduledReadState | null> {
 
 const SYNC_RUN_SELECT = { status: true, kind: true, startedAt: true, finishedAt: true, counts: true, error: true } as const;
 
-/** The latest finished daily read, and the latest repair (ADMIN or BACKFILL run) that finished after it. */
+/** The latest finished daily read, a daily read started after it that is still running, and the latest repair (ADMIN or BACKFILL run) that finished after it. */
 export interface MirrorSyncStatus {
     scheduled: MirrorSyncRun | null;
+    running: MirrorSyncRun | null;
     laterRepair: MirrorSyncRun | null;
 }
 
-/** The daily read and any later repair, or null when the mirror is unconfigured. A manual sync is an INCREMENTAL run, so it counts as a daily read. */
+/** The daily read, any running one, and any later repair, or null when the mirror is unconfigured. A manual sync is an INCREMENTAL run, so it counts as a daily read. */
 export async function syncStatus(): Promise<MirrorSyncStatus | null> {
     const db = await getClient();
     if (!db) return null;
@@ -325,17 +326,29 @@ export async function syncStatus(): Promise<MirrorSyncStatus | null> {
         select: SYNC_RUN_SELECT,
     });
     const after = scheduled ? scheduled.finishedAt ?? scheduled.startedAt : null;
-    const laterRepair = await db.syncRun.findFirst({
-        where: {
-            kind: { in: ["ADMIN", "BACKFILL"] },
-            status: { not: "RUNNING" },
-            objectScope: { not: RETENTION_SCOPE },
-            finishedAt: after ? { gt: after } : { not: null },
-        },
-        orderBy: { finishedAt: "desc" },
-        select: SYNC_RUN_SELECT,
-    });
-    return { scheduled, laterRepair };
+    const [laterRepair, running] = await Promise.all([
+        db.syncRun.findFirst({
+            where: {
+                kind: { in: ["ADMIN", "BACKFILL"] },
+                status: { not: "RUNNING" },
+                objectScope: { not: RETENTION_SCOPE },
+                finishedAt: after ? { gt: after } : { not: null },
+            },
+            orderBy: { finishedAt: "desc" },
+            select: SYNC_RUN_SELECT,
+        }),
+        db.syncRun.findFirst({
+            where: {
+                kind: "INCREMENTAL",
+                status: "RUNNING",
+                objectScope: { not: RETENTION_SCOPE },
+                ...(scheduled && { startedAt: { gt: scheduled.startedAt } }),
+            },
+            orderBy: { startedAt: "desc" },
+            select: SYNC_RUN_SELECT,
+        }),
+    ]);
+    return { scheduled, running, laterRepair };
 }
 
 /**

@@ -58,7 +58,7 @@ type ReconcileRun = { configured: boolean; ordersScanned: number; reversalsRaise
 type SyncFetch = { ok: true; run: SyncRun | null } | { ok: false };
 
 // Mirrors GET /api/finance-ops/s-read/sync/status.
-type SyncStatus = { scheduled: SyncRun | null; laterRepair: SyncRun | null };
+type SyncStatus = { scheduled: SyncRun | null; running: SyncRun | null; laterRepair: SyncRun | null };
 
 // Polling budget after a manual sync: 20 × 6s ≈ 2 minutes. Bounded on purpose —
 // every poll queries the mirror and keeps the scale-to-zero Aurora cluster awake,
@@ -83,9 +83,10 @@ function describeRun(run: SyncRun): string {
   return `${relTime(run.finishedAt ?? run.startedAt)} (${run.status.toLowerCase()})`;
 }
 
-/** The daily read's line, then a repair's line when one finished after it. */
-function describeSyncStatus({ scheduled, laterRepair }: SyncStatus): string[] {
-  const lines = [`Last daily Shopify read: ${scheduled ? describeRun(scheduled) : 'never'}.`];
+/** A running daily read's line, the last finished daily read's line, then a repair's line when one finished after it. */
+function describeSyncStatus({ scheduled, running, laterRepair }: SyncStatus): string[] {
+  const lines = running ? [`Daily Shopify read running, started ${relTime(running.startedAt)}.`] : [];
+  lines.push(`Last daily Shopify read: ${scheduled ? describeRun(scheduled) : 'never'}.`);
   if (laterRepair) {
     const who = laterRepair.kind === 'BACKFILL' ? 'Backfilled' : 'Repaired by a sysadmin';
     lines.push(`${who} ${describeRun(laterRepair)}.`);

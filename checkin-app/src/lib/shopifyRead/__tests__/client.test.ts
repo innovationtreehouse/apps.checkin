@@ -160,15 +160,16 @@ describe('latestSyncRun', () => {
 });
 
 describe('syncStatus', () => {
-    type Where = { kind: unknown; finishedAt?: unknown };
+    type Where = { kind: unknown; status: unknown; finishedAt?: unknown; startedAt?: unknown };
+    const isRunning = (where: Where) => where.status === 'RUNNING';
     const at = (iso: string) => new Date(iso);
     const daily = { status: 'FAILED', kind: 'INCREMENTAL', startedAt: at('2026-11-23T06:00:00Z'), finishedAt: at('2026-11-23T06:05:00Z'), counts: null, error: 'boom' };
     const repair = { status: 'COMPLETED', kind: 'ADMIN', startedAt: at('2026-11-23T08:00:00Z'), finishedAt: at('2026-11-23T08:10:00Z'), counts: null, error: null };
 
     it('reads the latest finished daily read, then only a repair that finished after it', async () => {
-        db.syncRun.findFirst.mockImplementation(async ({ where }: { where: Where }) => (where.kind === 'INCREMENTAL' ? daily : repair));
+        db.syncRun.findFirst.mockImplementation(async ({ where }: { where: Where }) => (isRunning(where) ? null : where.kind === 'INCREMENTAL' ? daily : repair));
 
-        expect(await freshClient().syncStatus()).toEqual({ scheduled: daily, laterRepair: repair });
+        expect(await freshClient().syncStatus()).toEqual({ scheduled: daily, running: null, laterRepair: repair });
         const [scheduled, later] = db.syncRun.findFirst.mock.calls.map((c) => c[0]);
         expect(scheduled).toMatchObject({
             where: { kind: 'INCREMENTAL', status: { not: 'RUNNING' }, objectScope: { not: 'retention' } },
@@ -181,16 +182,37 @@ describe('syncStatus', () => {
     });
 
     it('reports no repair when none finished after the daily read', async () => {
-        db.syncRun.findFirst.mockImplementation(async ({ where }: { where: Where }) => (where.kind === 'INCREMENTAL' ? daily : null));
+        db.syncRun.findFirst.mockImplementation(async ({ where }: { where: Where }) => (isRunning(where) ? null : where.kind === 'INCREMENTAL' ? daily : null));
 
-        expect(await freshClient().syncStatus()).toEqual({ scheduled: daily, laterRepair: null });
+        expect(await freshClient().syncStatus()).toEqual({ scheduled: daily, running: null, laterRepair: null });
     });
 
     it('reports no daily read when none has finished, and any finished repair', async () => {
         db.syncRun.findFirst.mockImplementation(async ({ where }: { where: Where }) => (where.kind === 'INCREMENTAL' ? null : repair));
 
-        expect(await freshClient().syncStatus()).toEqual({ scheduled: null, laterRepair: repair });
+        expect(await freshClient().syncStatus()).toEqual({ scheduled: null, running: null, laterRepair: repair });
         expect(db.syncRun.findFirst.mock.calls[1][0].where.finishedAt).toEqual({ not: null });
+    });
+
+    it('reports a daily read still running after the last finished one, without hiding how that one ended', async () => {
+        const inFlight = { status: 'RUNNING', kind: 'INCREMENTAL', startedAt: at('2026-11-24T06:00:00Z'), finishedAt: null, counts: null, error: null };
+        db.syncRun.findFirst.mockImplementation(async ({ where }: { where: Where }) => (isRunning(where) ? inFlight : where.kind === 'INCREMENTAL' ? daily : null));
+
+        expect(await freshClient().syncStatus()).toEqual({ scheduled: daily, running: inFlight, laterRepair: null });
+        const runningQuery = db.syncRun.findFirst.mock.calls.map((c) => c[0]).find((q) => isRunning(q.where));
+        expect(runningQuery).toMatchObject({
+            where: { kind: 'INCREMENTAL', status: 'RUNNING', objectScope: { not: 'retention' }, startedAt: { gt: daily.startedAt } },
+            orderBy: { startedAt: 'desc' },
+        });
+    });
+
+    it('reports a running daily read when none has finished yet', async () => {
+        const inFlight = { status: 'RUNNING', kind: 'INCREMENTAL', startedAt: at('2026-11-24T06:00:00Z'), finishedAt: null, counts: null, error: null };
+        db.syncRun.findFirst.mockImplementation(async ({ where }: { where: Where }) => (isRunning(where) ? inFlight : null));
+
+        expect(await freshClient().syncStatus()).toEqual({ scheduled: null, running: inFlight, laterRepair: null });
+        const runningQuery = db.syncRun.findFirst.mock.calls.map((c) => c[0]).find((q) => isRunning(q.where));
+        expect(runningQuery.where).not.toHaveProperty('startedAt');
     });
 });
 
