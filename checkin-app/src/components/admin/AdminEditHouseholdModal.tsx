@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useOrgTime } from "@/components/TimezoneProvider";
 import { Alert, Button, Divider, Group, Loader, Modal, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { api, useLoad } from "@/lib/api";
@@ -79,6 +80,7 @@ export function AdminEditHouseholdModal({
   onClose: () => void;
   onSaved?: (household: AdminHousehold) => void;
 }) {
+  const today = useOrgTime().today();
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY);
   const [initial, setInitial] = useState<FormState>(EMPTY);
@@ -306,7 +308,7 @@ export function AdminEditHouseholdModal({
               {/* Promote a non-lead member. Youth excluded (mirrors
                   membership-audit/broken); cap of 2 hides the controls once full. */}
               {leadIds.length < MAX_HOUSEHOLD_LEADS && (() => {
-                const promotable = members.filter((m) => !leadIds.includes(m.id) && !isYouth(m.dateOfBirth));
+                const promotable = members.filter((m) => !leadIds.includes(m.id) && !isYouth(m.dateOfBirth, today));
                 if (promotable.length === 0) return null;
                 return (
                   <>

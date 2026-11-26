@@ -17,6 +17,8 @@ import { FORCE_CLOSE_CONFIRM_SECONDS } from "@/app/api/scan/scanResponse";
 import { toResponse } from "@/app/api/scan/scanResponse";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
 
+const today = new Date("2026-10-12T00:00:00.000Z");
+
 /** A scan service's outcome as the kiosk receives it. */
 const wire = async (outcome: Promise<ScanOutcome>) => toResponse(await outcome, { signedRequest: true });
 
@@ -57,7 +59,7 @@ function fakeDb(remaining: Array<{ name: string | null; email: string | null }>,
 
 /** processCheckout with only the kiosk generation and replay-ness varied. */
 const badge = (db: DbClient, legacy: LegacyKiosk | null, isReplay = false) =>
-    wire(processCheckout(keyholder, 42, db, new Date(), isReplay, legacy));
+    wire(processCheckout(keyholder, 42, today, db, new Date(), isReplay, legacy));
 
 beforeEach(() => {
     jest.mocked(processVisitCheckout).mockResolvedValue([{ id: 77 }] as never);

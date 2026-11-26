@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, Suspense } from 'react';
+import { useOrgTime } from "@/components/TimezoneProvider";
 import { useSearchParams } from 'next/navigation';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { MEMBERSHIP_OPS_ADMIN_ROLES } from '@/lib/nav/sections/membershipOps';
@@ -27,6 +28,7 @@ export default function NewParticipantPage() {
 }
 
 function NewParticipantForm() {
+  const today = useOrgTime().today();
   const { ready, loading: authLoading } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
   const searchParams = useSearchParams();
   const queryHouseholdId = searchParams.get('householdId');
@@ -44,7 +46,7 @@ function NewParticipantForm() {
   const [householdId, setHouseholdId] = useState("");
   const [householdSearch, setHouseholdSearch] = useState("");
 
-  const isYouthSelected = isYouth(dob);
+  const isYouthSelected = isYouth(dob, today);
 
   const [saving, setSaving] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{ email?: string }>({});

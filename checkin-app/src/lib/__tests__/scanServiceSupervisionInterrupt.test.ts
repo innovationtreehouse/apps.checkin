@@ -16,6 +16,8 @@ import { processVisitCheckout } from "@/lib/attendanceTransitions";
 import { processCheckin, processCheckout, type ScanOutcome } from "@/lib/attendance/scan";
 import { toResponse } from "@/app/api/scan/scanResponse";
 
+const today = new Date("2026-10-12T00:00:00.000Z");
+
 /** A scan service's outcome as the kiosk receives it. */
 const wire = async (outcome: Promise<ScanOutcome>) => toResponse(await outcome, { signedRequest: true });
 
@@ -94,7 +96,7 @@ async function checkout(
     youthRows?: ReturnType<typeof youthVisit>[],
 ) {
     const { db, update } = fakeDb(householdIds, warnedAt, youthPresent, youthRows);
-    const res = await wire(processCheckout(adult, DEPARTING_VISIT, db));
+    const res = await wire(processCheckout(adult, DEPARTING_VISIT, today, db));
     return { res, body: await res.json(), update, db };
 }
 
@@ -232,7 +234,7 @@ describe("a departure that removes no supervising adult", () => {
             openVisits([10, 20]).map(v => ({ ...v, id: v.id === DEPARTING_VISIT ? 999 : v.id })),
         );
 
-        const res = await wire(processCheckout(adult, DEPARTING_VISIT, db));
+        const res = await wire(processCheckout(adult, DEPARTING_VISIT, today, db));
 
         expect(res.status).toBe(200);
         expect((await res.json()).warning).toBeUndefined();
@@ -248,7 +250,7 @@ describe("a departure by someone who is not a supervising adult", () => {
         const parent = { id: DEPARTING_VISIT, person: { householdId: 30, isDeclaredAdult: true, dateOfBirth: null } };
         (db.visit.findMany as jest.Mock).mockImplementation(({ select }) =>
             select.person.select.lastBackgroundCheck ? staying : [...staying, parent, ...others]);
-        const res = await wire(processCheckout(adult, DEPARTING_VISIT, db));
+        const res = await wire(processCheckout(adult, DEPARTING_VISIT, today, db));
         return { res, body: await res.json(), update, db };
     }
 
@@ -296,7 +298,7 @@ describe("a departure by someone who is not a supervising adult", () => {
 describe("youth check-in below two supervising adults", () => {
     it("warns but is never blocked", async () => {
         const { db } = fakeDb([10]);
-        const res = await wire(processCheckin(youth, db));
+        const res = await wire(processCheckin(youth, today, db));
         const body = await res.json();
 
         expect(res.status).toBe(200);
@@ -306,22 +308,22 @@ describe("youth check-in below two supervising adults", () => {
 
     it("says nothing when the room is two deep", async () => {
         const { db } = fakeDb([10, 20]);
-        expect((await (await wire(processCheckin(youth, db))).json()).warning).toBeUndefined();
+        expect((await (await wire(processCheckin(youth, today, db))).json()).warning).toBeUndefined();
     });
 
     it("says nothing when an adult of the youth's own household is inside", async () => {
         const { db } = fakeDb([10], null, false, [youthVisit(ARRIVING_VISIT, 10)]);
-        expect((await (await wire(processCheckin(youth, db))).json()).warning).toBeUndefined();
+        expect((await (await wire(processCheckin(youth, today, db))).json()).warning).toBeUndefined();
     });
 
     it("warns a youth whose household has no adult inside, though another's does", async () => {
         const { db } = fakeDb([10], null, false, [youthVisit(901, 10), youthVisit(ARRIVING_VISIT, LONE_HOUSEHOLD)]);
-        expect((await (await wire(processCheckin(youth, db))).json()).warning).toMatch(/fewer than 2 supervising adults/i);
+        expect((await (await wire(processCheckin(youth, today, db))).json()).warning).toMatch(/fewer than 2 supervising adults/i);
     });
 
     it("costs an adult check-in no supervision query at all", async () => {
         const { db } = fakeDb([10]);
-        await wire(processCheckin(adult, db));
+        await wire(processCheckin(adult, today, db));
         expect(db.visit.findMany).not.toHaveBeenCalled();
     });
 });
@@ -336,7 +338,7 @@ describe("a REPLAYED departure skips the ladder entirely", () => {
     it("departs instead of demanding a confirm nobody can give", async () => {
         const { db, update } = fakeDb([10, 20]);
 
-        const res = await wire(processCheckout(adult, DEPARTING_VISIT, db, SCANNED_AT, true));
+        const res = await wire(processCheckout(adult, DEPARTING_VISIT, today, db, SCANNED_AT, true));
         const body = await res.json();
 
         expect(res.status).toBe(200);
@@ -350,7 +352,7 @@ describe("a REPLAYED departure skips the ladder entirely", () => {
     it("still departs when the room is left with NO supervising adult", async () => {
         const { db } = fakeDb([10]);
 
-        const res = await wire(processCheckout(adult, DEPARTING_VISIT, db, SCANNED_AT, true));
+        const res = await wire(processCheckout(adult, DEPARTING_VISIT, today, db, SCANNED_AT, true));
 
         expect(res.status).toBe(200);
         expect((await res.json()).type).toBe("checkout");

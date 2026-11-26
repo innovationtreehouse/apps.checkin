@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { orgToday } from "@/lib/appSettings";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
@@ -41,7 +42,8 @@ export const PATCH = withAuth(
                 where: { id: userId },
                 select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true },
             });
-            if (isYouth(me?.dateOfBirth)) {
+            const today = await orgToday();
+            if (isYouth(me?.dateOfBirth, today)) {
                 return apiError("Youth profiles are read-only.", 403);
             }
 
@@ -63,7 +65,7 @@ export const PATCH = withAuth(
 
             // The profile form always submits both age fields, so either one
             // stands for both; notification-only PATCHes leave them unchanged.
-            const age = dob !== undefined || over25 !== undefined ? normalizeAdultDob(dob || null, !!over25) : {};
+            const age = dob !== undefined || over25 !== undefined ? normalizeAdultDob(dob || null, today, !!over25) : {};
             if (changesAge(age, me) && leavesAgeUnknown(age, me)) {
                 return apiError(AGE_REQUIRED_REFUSAL, 400);
             }

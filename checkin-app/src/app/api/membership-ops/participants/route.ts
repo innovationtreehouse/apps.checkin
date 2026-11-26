@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { orgToday } from "@/lib/appSettings";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { logBackendError } from "@/lib/logger";
@@ -87,6 +88,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         // Set when the person joins a household that already existed before this request.
         let joinsExistingHousehold = false;
 
+        const today = await orgToday();
         if (parentEmail) {
             // Reads are not normalized by the client extension, so a case variant of a
             // stored address must still find that parent and their household.
@@ -105,7 +107,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 }
                 parent = await withTx(prisma, async (tx) => {
                     await removeAliasesForSignInEmail(tx, parentEmail, personActor(auth.user.id), "participant_add");
-                    return createInOwnHousehold(tx, { email: parentEmail, name: parentName.trim(), ...normalizeAdultDob(parentDob, !!parentOver25) });
+                    return createInOwnHousehold(tx, { email: parentEmail, name: parentName.trim(), ...normalizeAdultDob(parentDob, today, !!parentOver25) });
                 });
             } else {
                 joinsExistingHousehold = true;
@@ -148,7 +150,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                         id: await mintPersonId(tx),
                         name: nameWrite(name),
                         ...(email && { email }),
-                        ...normalizeAdultDob(dob, !!over25),
+                        ...normalizeAdultDob(dob, today, !!over25),
                         householdId: targetHouseholdId
                     }
                 });
@@ -159,7 +161,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 return createInOwnHousehold(tx, {
                     name: nameWrite(name)!,
                     ...(email && { email }),
-                    ...normalizeAdultDob(dob, !!over25),
+                    ...normalizeAdultDob(dob, today, !!over25),
                 });
             });
         }

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { orgToday } from "@/lib/appSettings";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
@@ -195,7 +196,7 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
                 where: { id: participantId },
                 select: { dateOfBirth: true, isDeclaredAdult: true }
             });
-            if (!person || !isKnownAdult(person)) {
+            if (!person || !isKnownAdult(person, await orgToday())) {
                 return apiError("A core volunteer must be an adult.", 400);
             }
         }

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { orgToday } from "@/lib/appSettings";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
@@ -87,12 +88,13 @@ export const GET = withAuth(
                 orderBy: { name: "asc" },
             });
             const kva = await kvaStandingByPerson();
+            const today = await orgToday();
             // Don't leak dob (PII); expose only a youth flag for filtering. isOperations has
             // no column, so every flag is derived through the one `roles` relation.
             const people = rows.map(({ dateOfBirth, roles, ...p }) => ({
                 ...p,
                 ...rolesToFlags(roles),
-                isYouth: isYouth(dateOfBirth),
+                isYouth: isYouth(dateOfBirth, today),
                 ...(kva.get(p.id) ?? { kvaSignedCurrent: false, kvaSignedAt: null, kvaOpenProcessId: null }),
             }));
             return NextResponse.json({ people });

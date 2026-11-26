@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { VALID_CONTACT_WHERE } from "@/lib/emergencyContacts/valid";
 import { isYouth } from "@/lib/time";
+import { orgToday } from "@/lib/appSettings";
 import { LIVE_KEYHOLDER, LIVE_VISIT } from "@/lib/visit/filters";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, uncoveredYouth } from "@/lib/supervision";
 import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
@@ -122,6 +123,7 @@ async function computeFullAttendance(kiosk: boolean) {
         orderBy: { arrivedAt: "desc" },
     });
 
+    const today = await orgToday();
     // Pre-compute isYouth once per visit to avoid repeated calculations.
     // This map feeds the two-deep safety calc: a declared adult (null DoB is
     // the NORMAL state for 26+) counts as an adult; only a truly
@@ -131,7 +133,7 @@ async function computeFullAttendance(kiosk: boolean) {
     for (const v of activeVisits) {
         youthMap.set(v.id, v.person.isDeclaredAdult
             ? false
-            : isYouth(v.person.dateOfBirth, { unknownIs: 'youth' }));
+            : isYouth(v.person.dateOfBirth, today, { unknownIs: 'youth' }));
     }
 
     // The flag alone is not authority: only those the shared keyholder filter keeps count.
@@ -195,7 +197,7 @@ async function computeFullAttendance(kiosk: boolean) {
         facilityOpen: keyholderVisits.some(v => opensBuilding(v.arrivedAt)),
         isLastKeyholder: keyholderVisits.length === 1,
         isTwoDeepViolation: unaccompaniedYouth.length > 0
-            && supervisingAdultCount(await supervisingAdultVisits()) < MIN_SUPERVISING_ADULTS,
+            && supervisingAdultCount(await supervisingAdultVisits(prisma, today)) < MIN_SUPERVISING_ADULTS,
     };
 
     // Drop email/googleId from the wire: resolve the same name-or-email-prefix

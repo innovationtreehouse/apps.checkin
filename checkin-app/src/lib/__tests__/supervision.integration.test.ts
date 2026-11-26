@@ -17,6 +17,7 @@ import { processCheckin, processCheckout, type ScanOutcome } from '@/lib/attenda
 import { toResponse } from '@/app/api/scan/scanResponse';
 import { supervisingAdultCount, supervisingAdultVisits } from '@/lib/supervision';
 import type { Person } from '@/generated/prisma/client';
+import { orgToday } from '@/lib/appSettings';
 
 /** A scan service's outcome as the kiosk receives it. */
 const wire = async (outcome: Promise<ScanOutcome>) => toResponse(await outcome, { signedRequest: true });
@@ -160,7 +161,7 @@ describe('supervising adults (integration)', () => {
         }
     });
 
-    const count = async () => supervisingAdultCount(await supervisingAdultVisits());
+    const count = async () => supervisingAdultCount(await supervisingAdultVisits(prisma, await orgToday()));
 
     describe('the test itself', () => {
         it('counts cleared adults of ACTIVE member households, one per household', async () => {
@@ -243,7 +244,7 @@ describe('supervising adults (integration)', () => {
             await checkIn('ben');
             const cal = await checkIn('cal');
 
-            const res = await wire(processCheckout(people.cal, cal.id));
+            const res = await wire(processCheckout(people.cal, cal.id, await orgToday()));
             const body = await res.json();
 
             expect(res.status).toBe(200);
@@ -256,14 +257,14 @@ describe('supervising adults (integration)', () => {
             await checkIn('fay');
             const ben = await checkIn('ben');
 
-            const first = await wire(processCheckout(people.ben, ben.id));
+            const first = await wire(processCheckout(people.ben, ben.id, await orgToday()));
             expect(first.status).toBe(400);
             expect((await first.json()).type).toBe('warning');
             const stamped = await prisma.visit.findUnique({ where: { id: ben.id } });
             expect(stamped?.supervisionWarnedAt).not.toBeNull();
             expect(stamped?.departedAt).toBeNull();
 
-            const second = await wire(processCheckout(people.ben, ben.id));
+            const second = await wire(processCheckout(people.ben, ben.id, await orgToday()));
             expect(second.status).toBe(200);
             expect((await prisma.visit.findUnique({ where: { id: ben.id } }))?.departedAt).not.toBeNull();
         });
@@ -272,7 +273,7 @@ describe('supervising adults (integration)', () => {
             await checkIn('ann');
             const ben = await checkIn('ben');
 
-            const res = await wire(processCheckout(people.ben, ben.id));
+            const res = await wire(processCheckout(people.ben, ben.id, await orgToday()));
 
             expect(res.status).toBe(200);
             expect((await res.json()).warning).toMatch(/leaves only 1 supervising adult/i);
@@ -286,7 +287,7 @@ describe('supervising adults (integration)', () => {
             const al = await checkIn('al');
             await checkIn('ben');
 
-            const res = await wire(processCheckout(people.al, al.id));
+            const res = await wire(processCheckout(people.al, al.id, await orgToday()));
 
             expect(res.status).toBe(200);
             expect((await res.json()).warning).toBeUndefined();
@@ -295,7 +296,7 @@ describe('supervising adults (integration)', () => {
         it('warns a youth checking in below two, and lets them in anyway', async () => {
             await checkIn('ann');
 
-            const res = await wire(processCheckin(people.fay));
+            const res = await wire(processCheckin(people.fay, await orgToday()));
             const body = await res.json();
 
             expect(res.status).toBe(200);

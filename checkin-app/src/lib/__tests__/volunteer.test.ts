@@ -2,6 +2,9 @@ import { canSeeCatalog, canSubmitReceipts, isTreehouseVolunteer } from '@/lib/vo
 import { ROLE_FLAGS } from '@/lib/roles';
 import { ORG_DOMAIN } from '@/lib/config';
 import { ageBand } from '@/lib/programAge';
+import { APP_TIMEZONE, calendarDayIn } from '@/lib/time';
+
+const today = calendarDayIn(new Date(), APP_TIMEZONE);
 
 const activeAdult = { isActiveOrgMember: true, ageBand: 'adult' as const };
 
@@ -84,11 +87,11 @@ describe('canSubmitReceipts', () => {
     });
 
     it('refuses an ACTIVE member with no date of birth and no over-25 declaration', () => {
-        expect(canSubmitReceipts({ isActiveOrgMember: true, ageBand: ageBand({ dateOfBirth: null }) })).toBe(false);
+        expect(canSubmitReceipts({ isActiveOrgMember: true, ageBand: ageBand({ dateOfBirth: null }, today) })).toBe(false);
     });
 
     it('admits an ACTIVE member who declared they are over 25', () => {
-        expect(canSubmitReceipts({ isActiveOrgMember: true, ageBand: ageBand({ dateOfBirth: null, isDeclaredAdult: true }) })).toBe(true);
+        expect(canSubmitReceipts({ isActiveOrgMember: true, ageBand: ageBand({ dateOfBirth: null, isDeclaredAdult: true }, today) })).toBe(true);
     });
 
     it('admits a verified staff account of unknown age without a membership', () => {
@@ -96,7 +99,7 @@ describe('canSubmitReceipts', () => {
     });
 
     it('admits a Board member who is a youth by date of birth', () => {
-        const youth = ageBand({ dateOfBirth: new Date(Date.now() - 10 * 365 * 86_400_000) });
+        const youth = ageBand({ dateOfBirth: new Date(Date.now() - 10 * 365 * 86_400_000) }, today);
         expect(youth).toBe('youth');
         expect(canSubmitReceipts({ ageBand: youth, isBoardMember: true })).toBe(true);
     });

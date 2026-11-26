@@ -217,7 +217,7 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
         if (!mentor) {
             return apiError("Program Leader not found", 400);
         }
-        if (!isLeaderAgeEligible(mentor)) {
+        if (!isLeaderAgeEligible(mentor, await orgToday())) {
             return apiError("Program Leader must be at least 23 years old", 400);
         }
         const noEmail = leaderEmailRefusal(mentor);

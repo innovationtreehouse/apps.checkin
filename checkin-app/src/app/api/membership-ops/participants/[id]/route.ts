@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { orgToday } from "@/lib/appSettings";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
@@ -120,7 +121,7 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
 
         // A new address gets its own first sign-in, and a youth stays where they were added:
         // a Board edit closes a household question that the record's youth cannot answer.
-        if (emailChanged || (auth.user.isBoardMember && isYouth(priorDob))) {
+        if (emailChanged || (auth.user.isBoardMember && isYouth(priorDob, await orgToday()))) {
             updateData.householdJoinPending = false;
         }
 

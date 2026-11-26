@@ -6,34 +6,30 @@
  */
 import { adultPhoneOnly, emailWithheldParticipants, leaderMaySeeEmail, rosterHousehold, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
 
-beforeAll(() => {
-    jest.useFakeTimers({ now: new Date("2026-10-27T17:00:00Z"), doNotFake: ["nextTick", "setImmediate", "setTimeout", "setInterval", "queueMicrotask"] });
-});
-afterAll(() => jest.useRealTimers());
-
+const today = new Date("2026-10-27T00:00:00Z");
 const TURNS_13_TODAY = new Date("2013-10-27T00:00:00Z");
 const TURNS_13_TOMORROW = new Date("2013-10-28T00:00:00Z");
 const person = (dateOfBirth: Date | null) => ({ id: 1, name: "Kid", email: "kid@example.com", dateOfBirth });
 
 describe("leaderMaySeeEmail", () => {
-    it("hides under 13", () => expect(leaderMaySeeEmail(TURNS_13_TOMORROW)).toBe(false));
-    it("shows on the 13th birthday", () => expect(leaderMaySeeEmail(TURNS_13_TODAY)).toBe(true));
-    it("hides an unknown date of birth", () => expect(leaderMaySeeEmail(null)).toBe(false));
+    it("hides under 13", () => expect(leaderMaySeeEmail(TURNS_13_TOMORROW, today)).toBe(false));
+    it("shows on the 13th birthday", () => expect(leaderMaySeeEmail(TURNS_13_TODAY, today)).toBe(true));
+    it("hides an unknown date of birth", () => expect(leaderMaySeeEmail(null, today)).toBe(false));
 });
 
 describe("rosterPerson", () => {
     it("nulls the email of an under-13 participant for a leader", () => {
-        expect(rosterPerson(person(TURNS_13_TOMORROW), true)).toEqual({ id: 1, name: "Kid", email: null });
+        expect(rosterPerson(person(TURNS_13_TOMORROW), true, today)).toEqual({ id: 1, name: "Kid", email: null });
     });
     it("keeps the email of a 13-year-old for a leader", () => {
-        expect(rosterPerson(person(TURNS_13_TODAY), true)).toEqual({ id: 1, name: "Kid", email: "kid@example.com" });
+        expect(rosterPerson(person(TURNS_13_TODAY), true, today)).toEqual({ id: 1, name: "Kid", email: "kid@example.com" });
     });
     it("nulls the email when the date of birth is unknown", () => {
-        expect(rosterPerson(person(null), true)).toEqual({ id: 1, name: "Kid", email: null });
+        expect(rosterPerson(person(null), true, today)).toEqual({ id: 1, name: "Kid", email: null });
     });
     it("leaves the email alone for a viewer who is not a leader, and never ships the date of birth", () => {
-        expect(rosterPerson(person(TURNS_13_TOMORROW), false)).toEqual({ id: 1, name: "Kid", email: "kid@example.com" });
-        expect(rosterPerson(person(null), false)).not.toHaveProperty("dateOfBirth");
+        expect(rosterPerson(person(TURNS_13_TOMORROW), false, today)).toEqual({ id: 1, name: "Kid", email: "kid@example.com" });
+        expect(rosterPerson(person(null), false, today)).not.toHaveProperty("dateOfBirth");
     });
 });
 
@@ -61,10 +57,10 @@ describe("emailWithheldParticipants", () => {
         { personId: 3, person: { dateOfBirth: null } },
     ];
     it("names under-13 and unknown date of birth for a leader", () => {
-        expect([...emailWithheldParticipants(participants, true)]).toEqual([1, 3]);
+        expect([...emailWithheldParticipants(participants, true, today)]).toEqual([1, 3]);
     });
     it("names nobody for a viewer who is not a leader", () => {
-        expect(emailWithheldParticipants(participants, false).size).toBe(0);
+        expect(emailWithheldParticipants(participants, false, today).size).toBe(0);
     });
 });
 

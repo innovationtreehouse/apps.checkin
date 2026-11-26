@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from 'react';
+import { useOrgTime } from "@/components/TimezoneProvider";
 import { errorMessage, showError, showSuccess } from '@checkin/component-ui';
 import { Badge, Button, Card, Checkbox, Group, SimpleGrid, Stack, Text, TextInput, Title } from '@mantine/core';
 import { api } from '@/lib/api';
@@ -24,6 +25,7 @@ export default function HouseholdMembersSection({ members, userId, viewerIsLead,
   onWarn: (text: string) => void;
   onContactWarning: (warning: ContactWarning) => boolean;
 }) {
+  const today = useOrgTime().today();
   const [editingHouseholdMemberId, setEditingHouseholdMemberId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState({ name: "", nickname: "", email: "", dob: "", phone: "", isLead: false, over25: false, allergies: "" });
   // Errors for the inline edit form. phone shown only after a Save attempt, so
@@ -85,7 +87,7 @@ export default function HouseholdMembersSection({ members, userId, viewerIsLead,
       <SimpleGrid cols={{ base: 1, sm: 2 }} mb="lg">
         {sortedHouseholdMembers.map((p) => {
           const householdMemberIsLead = isLead(p.id);
-          const isAdult = (p.dateOfBirth && calculateAge(p.dateOfBirth) >= 18) || p.isDeclaredAdult;
+          const isAdult = (p.dateOfBirth && calculateAge(p.dateOfBirth, today) >= 18) || p.isDeclaredAdult;
           // A household lead needs a phone on file — flag the box so the
           // lead can see exactly which member to fix (mirrors the nav todo).
           const leadMissingPhone = householdMemberIsLead && !p.phone;
@@ -97,13 +99,13 @@ export default function HouseholdMembersSection({ members, userId, viewerIsLead,
                     <TextInput size="xs" label="Name" description="Printed on name badges exactly as typed — please double-check the spelling." value={editForm.name} error={editErrors.name} onChange={(e) => { setEditForm({ ...editForm, name: e.currentTarget.value }); setEditErrors({ ...editErrors, name: undefined }); }} />
                     <TextInput size="xs" label="Nickname (optional)" description="Printed on the name badge in place of the first name." value={editForm.nickname} onChange={(e) => setEditForm({ ...editForm, nickname: e.currentTarget.value })} />
                     <TextInput size="xs" inputMode="email" label="Email" value={editForm.email} disabled={p.emailLocked} description={p.emailLocked ? lockedEmailHelp(boardReplyTo) : undefined} error={editErrors.email} onChange={(e) => { setEditForm({ ...editForm, email: e.currentTarget.value }); setEditErrors({ ...editErrors, email: undefined }); }} />
-                    <Checkbox size="xs" label="Individual is over 25" disabled={agesLocked || isYouth(p.dateOfBirth)} description={agesLocked ? AGE_LEAD_ONLY_REFUSAL : isYouth(p.dateOfBirth) ? UNDER_18_DECLARATION_REFUSAL : undefined} checked={editForm.over25} onChange={(e) => { setEditForm({ ...editForm, over25: e.currentTarget.checked, dob: e.currentTarget.checked ? "" : editForm.dob }); setEditErrors({ ...editErrors, dob: undefined }); }} />
+                    <Checkbox size="xs" label="Individual is over 25" disabled={agesLocked || isYouth(p.dateOfBirth, today)} description={agesLocked ? AGE_LEAD_ONLY_REFUSAL : isYouth(p.dateOfBirth, today) ? UNDER_18_DECLARATION_REFUSAL : undefined} checked={editForm.over25} onChange={(e) => { setEditForm({ ...editForm, over25: e.currentTarget.checked, dob: e.currentTarget.checked ? "" : editForm.dob }); setEditErrors({ ...editErrors, dob: undefined }); }} />
                     {!editForm.over25 && (
                       <TextInput size="xs" type="date" label="Date of Birth" value={editForm.dob} disabled={agesLocked} error={editErrors.dob} onChange={(e) => { setEditForm({ ...editForm, dob: e.currentTarget.value }); setEditErrors({ ...editErrors, dob: undefined }); }} />
                     )}
                     <TextInput size="xs" type="tel" label="Phone" value={editForm.phone} error={editErrors.phone} onChange={(e) => { setEditForm({ ...editForm, phone: e.currentTarget.value }); setEditErrors({ ...editErrors, phone: undefined }); }} />
                     <TextInput size="xs" label="Allergies (optional)" value={editForm.allergies} onChange={(e) => setEditForm({ ...editForm, allergies: e.currentTarget.value })} />
-                    {p.id !== userId && (editForm.over25 || (editForm.dob && calculateAge(editForm.dob) >= 18)) && (
+                    {p.id !== userId && (editForm.over25 || (editForm.dob && calculateAge(editForm.dob, today) >= 18)) && (
                       <Checkbox label="Household Lead" checked={editForm.isLead} onChange={(e) => setEditForm({ ...editForm, isLead: e.currentTarget.checked })} />
                     )}
                     <Group gap="xs">
@@ -116,7 +118,7 @@ export default function HouseholdMembersSection({ members, userId, viewerIsLead,
                 <>
                   <Group justify="space-between" align="flex-start" wrap="nowrap" gap="xs">
                     <Text fw={600} style={{ wordBreak: 'break-word' }}>{p.name || "Unnamed"}</Text>
-                    {(() => { const b = ageBadge(p); return <Badge color={b.color} variant={b.variant} style={{ flexShrink: 0 }}>{b.label}</Badge>; })()}
+                    {(() => { const b = ageBadge(p, today); return <Badge color={b.color} variant={b.variant} style={{ flexShrink: 0 }}>{b.label}</Badge>; })()}
                   </Group>
                   {p.email && <Text size="sm" c="dimmed" style={{ wordBreak: 'break-word' }}>{p.email}</Text>}
                   {p.phone && <Text size="sm" c="dimmed" style={{ wordBreak: 'break-word' }}>{formatPhone(p.phone)}</Text>}
@@ -128,7 +130,7 @@ export default function HouseholdMembersSection({ members, userId, viewerIsLead,
                     {!householdMemberIsLead && isAdult && viewerIsLead && (
                       <Button size="compact-xs" variant="light" onClick={() => handleMakeLead(p.id)}>Make Lead</Button>
                     )}
-                    {(p.id === userId ? !isYouth(p.dateOfBirth) : viewerIsLead) && (
+                    {(p.id === userId ? !isYouth(p.dateOfBirth, today) : viewerIsLead) && (
                       <Button size="compact-xs" variant="subtle" color="gray" onClick={() => {
                         setEditingHouseholdMemberId(p.id);
                         setEditErrors({});

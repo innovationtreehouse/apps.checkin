@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { orgToday } from "@/lib/appSettings";
 import { isValidContact } from "@/lib/emergencyContacts/valid";
 import { logger } from "@/lib/logger";
 import prisma from '@/lib/prisma';
@@ -27,7 +28,7 @@ export const GET = withAuth(
             }
 
             // Youth are never required to provide a phone number
-            const needsPhone = !user.phone && !isYouth(user.dateOfBirth);
+            const needsPhone = !user.phone && !isYouth(user.dateOfBirth, await orgToday());
             const isLead = user.isHouseholdLead;
 
             // A lead needs a contact when no valid (non-member, complete) one exists.

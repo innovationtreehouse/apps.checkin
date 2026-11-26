@@ -177,8 +177,10 @@ are already gone.
 - **A day is never taken from a moment.** Keeping the date part of "now" answers
   in whatever zone the process happens to be running in; a day comes from a day.
   When "today" genuinely is the question — an age as of now — name the zone that
-  decides it: `orgCalendarDay()` in `lib/time.ts` is the one seam that turns an
-  instant into a day, and every caller downstream of it works in days.
+  decides it: `calendarDayIn(instant, zone)` in `lib/time.ts` is the one seam that
+  turns an instant into a day. Server code takes the org's day from `orgToday()`
+  (`lib/appSettings.ts`), client code from `useOrgTime().today()`, and every caller
+  downstream of it works in days.
 
 Nothing in the type system separates the two: both are a date object in the code,
 and in a UTC test environment both are right. The failure appears later as a

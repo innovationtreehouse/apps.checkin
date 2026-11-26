@@ -9,6 +9,8 @@ import type { DbClient } from "@/lib/db-client";
 import { processCheckin, processCheckout, type ScanOutcome } from "@/lib/attendance/scan";
 import { toResponse } from "@/app/api/scan/scanResponse";
 
+const today = new Date("2026-10-12T00:00:00.000Z");
+
 /** A scan service's outcome as the kiosk receives it. */
 const wire = async (outcome: Promise<ScanOutcome>) => toResponse(await outcome, { signedRequest: true });
 
@@ -53,7 +55,7 @@ function fakeDb() {
 }
 
 const checkin = async (over: Partial<Person>) =>
-    (await wire(processCheckin(person(over), fakeDb()))).json();
+    (await wire(processCheckin(person(over), today, fakeDb()))).json();
 
 describe("the scan response's participant", () => {
     it("carries the nickname the person goes by", async () => {
@@ -79,7 +81,7 @@ describe("the scan response's participant", () => {
     });
 
     it("is the same DTO on the way out", async () => {
-        const res = await wire(processCheckout(person({ nickname: "Bo" }), 42, fakeDb()));
+        const res = await wire(processCheckout(person({ nickname: "Bo" }), 42, today, fakeDb()));
         const body = await res.json();
         expect(body.participant).toEqual({ id: 1, name: "Bo" });
         expect(JSON.stringify(body)).not.toContain("@example.com");

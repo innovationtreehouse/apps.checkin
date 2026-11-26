@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { orgToday } from "@/lib/appSettings";
 import { ageBand } from "@/lib/programAge";
 
 /**
@@ -20,5 +21,5 @@ export async function householdPaymentViewer(personId: number): Promise<{ househ
         where: { id: personId, isHouseholdLead: true },
         select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true },
     });
-    return lead && ageBand(lead) === "adult" ? { householdId: lead.householdId } : null;
+    return lead && ageBand(lead, await orgToday()) === "adult" ? { householdId: lead.householdId } : null;
 }

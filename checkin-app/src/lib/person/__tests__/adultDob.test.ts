@@ -1,4 +1,7 @@
 import { changesAge, mayDeclareAges, normalizeAdultDob } from "@/lib/person/adultDob";
+import { APP_TIMEZONE, calendarDayIn } from "@/lib/time";
+
+const today = calendarDayIn(new Date(), APP_TIMEZONE);
 
 // No DoB above the program-age ceiling (25). The boundary is the whole point.
 describe("normalizeAdultDob", () => {
@@ -17,41 +20,41 @@ describe("normalizeAdultDob", () => {
     { over25: false, flag: { isDeclaredAdult: false } },
   ])("over25 $over25", ({ over25, flag }) => {
     it("writes only the declaration when no date was submitted", () => {
-      expect(normalizeAdultDob(undefined, over25)).toStrictEqual(flag);
+      expect(normalizeAdultDob(undefined, today, over25)).toStrictEqual(flag);
     });
 
     it.each([null, ""])("clears the date and writes the declaration for dob %j", (dob) => {
-      expect(normalizeAdultDob(dob, over25)).toStrictEqual({ dateOfBirth: null, ...flag });
+      expect(normalizeAdultDob(dob, today, over25)).toStrictEqual({ dateOfBirth: null, ...flag });
     });
 
     it("lets a date under the ceiling supersede the declaration", () => {
       const dob = yearsAgo(14);
-      expect(normalizeAdultDob(dob, over25)).toStrictEqual({ dateOfBirth: dob, isDeclaredAdult: false });
+      expect(normalizeAdultDob(dob, today, over25)).toStrictEqual({ dateOfBirth: dob, isDeclaredAdult: false });
     });
 
     it("strips a date over the ceiling and declares adult regardless", () => {
-      expect(normalizeAdultDob(yearsAgo(26), over25)).toStrictEqual({ dateOfBirth: null, isDeclaredAdult: true });
+      expect(normalizeAdultDob(yearsAgo(26), today, over25)).toStrictEqual({ dateOfBirth: null, isDeclaredAdult: true });
     });
   });
 
   it("keeps a declaration when a form with no over-25 box saves a blank date", () => {
-    expect(normalizeAdultDob(null)).not.toHaveProperty("isDeclaredAdult");
+    expect(normalizeAdultDob(null, today)).not.toHaveProperty("isDeclaredAdult");
   });
 
   it("writes nothing when neither field was submitted", () => {
-    expect(normalizeAdultDob(undefined)).toStrictEqual({});
+    expect(normalizeAdultDob(undefined, today)).toStrictEqual({});
   });
 
   it("keeps a real DoB and un-declares for age <= 25", () => {
     const dob = yearsAgo(25);
-    expect(normalizeAdultDob(dob)).toEqual({ dateOfBirth: dob, isDeclaredAdult: false });
+    expect(normalizeAdultDob(dob, today)).toEqual({ dateOfBirth: dob, isDeclaredAdult: false });
     const teen = yearsAgo(14);
-    expect(normalizeAdultDob(teen)).toEqual({ dateOfBirth: teen, isDeclaredAdult: false });
+    expect(normalizeAdultDob(teen, today)).toEqual({ dateOfBirth: teen, isDeclaredAdult: false });
   });
 
   it("strips the DoB and declares adult for age > 25", () => {
-    expect(normalizeAdultDob(yearsAgo(26))).toEqual({ dateOfBirth: null, isDeclaredAdult: true });
-    expect(normalizeAdultDob(yearsAgo(40))).toEqual({ dateOfBirth: null, isDeclaredAdult: true });
+    expect(normalizeAdultDob(yearsAgo(26), today)).toEqual({ dateOfBirth: null, isDeclaredAdult: true });
+    expect(normalizeAdultDob(yearsAgo(40), today)).toEqual({ dateOfBirth: null, isDeclaredAdult: true });
   });
 
   // This is the choke-point that owns the calendar-date storage convention
@@ -60,7 +63,7 @@ describe("normalizeAdultDob", () => {
   // non-midnight DoB silently fails SQL age filters cut at UTC midnight.
   it("stores a date-only string at UTC midnight", () => {
     const teenBirthYear = new Date().getUTCFullYear() - 14;
-    expect(normalizeAdultDob(`${teenBirthYear}-05-04`).dateOfBirth!.toISOString())
+    expect(normalizeAdultDob(`${teenBirthYear}-05-04`, today).dateOfBirth!.toISOString())
       .toBe(`${teenBirthYear}-05-04T00:00:00.000Z`);
   });
 
@@ -71,35 +74,31 @@ describe("normalizeAdultDob", () => {
     const DOB = "2000-07-24T00:00:00.000Z";
     beforeAll(() => {
       process.env.TZ = "America/Chicago";
-      jest.useFakeTimers();
     });
     afterAll(() => {
-      jest.useRealTimers();
       if (realTz === undefined) delete process.env.TZ; else process.env.TZ = realTz;
     });
 
     it("keeps the DoB at noon on the day before the 26th birthday", () => {
-      jest.setSystemTime(new Date("2026-07-23T17:00:00.000Z"));
-      expect(normalizeAdultDob(DOB)).toEqual({ dateOfBirth: new Date(DOB), isDeclaredAdult: false });
+      expect(normalizeAdultDob(DOB, calendarDayIn("2026-07-23T17:00:00.000Z", "America/Chicago"))).toEqual({ dateOfBirth: new Date(DOB), isDeclaredAdult: false });
     });
 
     it("strips the DoB on the 26th birthday", () => {
-      jest.setSystemTime(new Date("2026-07-24T17:00:00.000Z"));
-      expect(normalizeAdultDob(DOB)).toEqual({ dateOfBirth: null, isDeclaredAdult: true });
+      expect(normalizeAdultDob(DOB, calendarDayIn("2026-07-24T17:00:00.000Z", "America/Chicago"))).toEqual({ dateOfBirth: null, isDeclaredAdult: true });
     });
   });
 
   describe("a declaration with no submitted date", () => {
     it("is displaced by a date on file", () => {
-      expect(normalizeAdultDob(undefined, true, yearsAgo(14))).toEqual({ isDeclaredAdult: false });
+      expect(normalizeAdultDob(undefined, today, true, yearsAgo(14))).toEqual({ isDeclaredAdult: false });
     });
 
     it("sets the flag when no date is on file", () => {
-      expect(normalizeAdultDob(undefined, true, null)).toEqual({ isDeclaredAdult: true });
+      expect(normalizeAdultDob(undefined, today, true, null)).toEqual({ isDeclaredAdult: true });
     });
 
     it("yields to an explicit blank date", () => {
-      expect(normalizeAdultDob("", true, yearsAgo(14))).toEqual({ dateOfBirth: null, isDeclaredAdult: true });
+      expect(normalizeAdultDob("", today, true, yearsAgo(14))).toEqual({ dateOfBirth: null, isDeclaredAdult: true });
     });
   });
 });
@@ -121,25 +120,25 @@ describe("changesAge", () => {
   const onFile = { dateOfBirth: dob, isDeclaredAdult: false };
 
   it("sees no change in the same date resubmitted", () => {
-    expect(changesAge(normalizeAdultDob("2012-05-01", false, dob), onFile)).toBe(false);
+    expect(changesAge(normalizeAdultDob("2012-05-01", today, false, dob), onFile)).toBe(false);
   });
   it("sees no change when nothing is submitted", () => {
-    expect(changesAge(normalizeAdultDob(undefined), onFile)).toBe(false);
+    expect(changesAge(normalizeAdultDob(undefined, today), onFile)).toBe(false);
   });
   it("sees a new date", () => {
-    expect(changesAge(normalizeAdultDob("2010-05-01", false, dob), onFile)).toBe(true);
+    expect(changesAge(normalizeAdultDob("2010-05-01", today, false, dob), onFile)).toBe(true);
   });
   it("sees a blanked date", () => {
-    expect(changesAge(normalizeAdultDob("", false, dob), onFile)).toBe(true);
+    expect(changesAge(normalizeAdultDob("", today, false, dob), onFile)).toBe(true);
   });
   it("sees a new over-25 declaration", () => {
-    expect(changesAge(normalizeAdultDob("", true), { dateOfBirth: null, isDeclaredAdult: false })).toBe(true);
+    expect(changesAge(normalizeAdultDob("", today, true), { dateOfBirth: null, isDeclaredAdult: false })).toBe(true);
   });
   it("sees no change in a declaration resubmitted", () => {
-    expect(changesAge(normalizeAdultDob("", true), { dateOfBirth: null, isDeclaredAdult: true })).toBe(false);
+    expect(changesAge(normalizeAdultDob("", today, true), { dateOfBirth: null, isDeclaredAdult: true })).toBe(false);
   });
   it("treats any age on a new person as a change, and none as no change", () => {
-    expect(changesAge(normalizeAdultDob("2012-05-01"), null)).toBe(true);
-    expect(changesAge(normalizeAdultDob(""), null)).toBe(false);
+    expect(changesAge(normalizeAdultDob("2012-05-01", today), null)).toBe(true);
+    expect(changesAge(normalizeAdultDob("", today), null)).toBe(false);
   });
 });

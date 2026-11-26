@@ -63,7 +63,7 @@ function isRoster(answer: unknown): answer is AttendanceResponse {
 const shownError = (error: string) => (error === "Unauthorized" ? "Access Denied: Please sign in to view attendance." : error);
 
 function KioskDisplayInner() {
-  const { formatTime } = useOrgTime();
+  const { formatTime, today } = useOrgTime();
   const searchParams = useSearchParams();
   const { data: session } = useSession();
   const [selectedParticipant, setSelectedParticipant] = useState<Person | null>(null);
@@ -131,7 +131,7 @@ function KioskDisplayInner() {
   // Prefer the server-computed flag (the only youth signal the kiosk payload carries),
   // fall back to the birth date the privileged payload still ships. This feeds the
   // supervision columns, so an unknown birth date fails closed as youth.
-  const visitIsYouth = (v: Visit) => v.participant.isYouth ?? isYouth(v.participant.dateOfBirth, { unknownIs: "youth" });
+  const visitIsYouth = (v: Visit) => v.participant.isYouth ?? isYouth(v.participant.dateOfBirth, today(), { unknownIs: "youth" });
 
   const fullAttendance = isFull ? (data as FullResponse).attendance : [];
   const keyholderList = fullAttendance.filter(v => v.participant.isKeyholder);

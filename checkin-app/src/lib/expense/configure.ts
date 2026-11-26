@@ -87,19 +87,20 @@ export const signoff: SignoffDirectory = {
   },
 
   async isAdult(personId) {
-    const { isKnownAdult } = await import("@/lib/programAge");
+    const [{ isKnownAdult }, { orgToday }] = await Promise.all([import("@/lib/programAge"), import("@/lib/appSettings")]);
     const person = await (await db()).person.findFirst({ where: { id: personId }, select: { dateOfBirth: true, isDeclaredAdult: true } });
-    return person !== null && isKnownAdult(person);
+    return person !== null && isKnownAdult(person, await orgToday());
   },
 
   async searchAdults(query, limit) {
-    const { isKnownAdult } = await import("@/lib/programAge");
+    const [{ isKnownAdult }, { orgToday }] = await Promise.all([import("@/lib/programAge"), import("@/lib/appSettings")]);
     const matches = await (await db()).person.findMany({
       where: { name: { contains: query, mode: "insensitive" }, household: { archivedAt: null } },
       select: { id: true, name: true, dateOfBirth: true, isDeclaredAdult: true },
       orderBy: [{ name: "asc" }, { id: "asc" }],
     });
-    return matches.filter(isKnownAdult).slice(0, limit).map(({ id, name }) => ({ personId: id, name }));
+    const today = await orgToday();
+    return matches.filter((p) => isKnownAdult(p, today)).slice(0, limit).map(({ id, name }) => ({ personId: id, name }));
   },
 
   async addNonMemberAdult(name, actorId) {

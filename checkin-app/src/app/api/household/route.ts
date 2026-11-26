@@ -68,7 +68,7 @@ export const GET = handler('GET /api/household', async ({ auth }) => {
                 _count, budgetOwnersOwned, budgetOwnerTreasurerships, instancesLed,
                 household: _household, lastBackgroundCheck, canAccessStaging, ...peer
             } = m;
-            const isAdult = m.isDeclaredAdult || (!!m.dateOfBirth && !isYouth(m.dateOfBirth));
+            const isAdult = m.isDeclaredAdult || (!!m.dateOfBirth && !isYouth(m.dateOfBirth, today));
             // Every adult carries bgStatus while the policy is set, so its presence says nothing about a check
             // on file. Only the computed status leaves, never the date; the stripper keeps it for the person and their lead.
             if (!settings || !bgTracked || !isAdult) return { ...peer, emailLocked: isEmailLocked(m) };
@@ -126,6 +126,7 @@ export const PATCH = handler('PATCH /api/household', async ({ req, auth }) => {
     const householdId = hh.householdId;
     // Every new member carries an age, so adding one is an age write.
     if (!(await setsHouseholdAges(prisma, userId, householdId))) throw forbidden(AGE_LEAD_ONLY_REFUSAL);
+    const today = await orgToday();
 
     try {
         const { member, warning } = await prisma.$transaction(async (tx) => {
@@ -140,7 +141,7 @@ export const PATCH = handler('PATCH /api/household', async ({ req, auth }) => {
                     id: await mintPersonId(tx),
                     name: memberName,
                     ...(memberEmail && { email: memberEmail.toLowerCase() }),
-                    ...normalizeAdultDob(memberDob, memberOver25),
+                    ...normalizeAdultDob(memberDob, today, memberOver25),
                     ...(memberPhone && { phone: formatPhone(memberPhone) }),
                     allergies: memberAllergies || null,
                     householdId,

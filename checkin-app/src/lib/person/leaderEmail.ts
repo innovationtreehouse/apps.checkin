@@ -4,8 +4,8 @@ import { calculateAge } from "@/lib/time";
 export const LEADER_EMAIL_MIN_AGE = 13;
 
 /** An unknown date of birth fails closed: the email stays hidden. */
-export function leaderMaySeeEmail(dateOfBirth: Date | string | null): boolean {
-    return !!dateOfBirth && calculateAge(dateOfBirth) >= LEADER_EMAIL_MIN_AGE;
+export function leaderMaySeeEmail(dateOfBirth: Date | string | null, today: Date): boolean {
+    return !!dateOfBirth && calculateAge(dateOfBirth, today) >= LEADER_EMAIL_MIN_AGE;
 }
 
 /**
@@ -16,8 +16,9 @@ export function leaderMaySeeEmail(dateOfBirth: Date | string | null): boolean {
 export function rosterPerson<P extends { email: string | null; dateOfBirth: Date | null }>(
     { dateOfBirth, ...person }: P,
     viewerIsLeader: boolean,
+    today: Date,
 ): Omit<P, "dateOfBirth"> {
-    return viewerIsLeader && !leaderMaySeeEmail(dateOfBirth) ? { ...person, email: null } : person;
+    return viewerIsLeader && !leaderMaySeeEmail(dateOfBirth, today) ? { ...person, email: null } : person;
 }
 
 /**
@@ -37,9 +38,10 @@ export function adultPhoneOnly<P extends { phone: string | null; dateOfBirth: Da
 export function emailWithheldParticipants(
     participants: { personId: number; person: { dateOfBirth: Date | null } }[],
     viewerIsLeader: boolean,
+    today: Date,
 ): Set<number> {
     return new Set(viewerIsLeader
-        ? participants.filter(p => !leaderMaySeeEmail(p.person.dateOfBirth)).map(p => p.personId)
+        ? participants.filter(p => !leaderMaySeeEmail(p.person.dateOfBirth, today)).map(p => p.personId)
         : []);
 }
 

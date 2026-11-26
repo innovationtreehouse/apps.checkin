@@ -1,4 +1,5 @@
 import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
+import { orgToday } from "@/lib/appSettings";
 import prisma from "@/lib/prisma";
 import { isYouth } from "@/lib/time";
 import { mayDeclareAges } from "@/lib/person/adultDob";
@@ -151,7 +152,7 @@ async function addHouseholdLeadTx(
     // Checked after the already-lead return: re-saving an existing lead promotes nobody.
     if (denied) throw new HouseholdLeadDeniedError(householdId, participantId);
     // Youth exclusion (server-side; UI also filters). null/unknown DOB is allowed.
-    if (person && isYouth(person.dateOfBirth)) {
+    if (person && isYouth(person.dateOfBirth, await orgToday(new Date(), tx))) {
         throw new HouseholdLeadYouthError(householdId, participantId);
     }
 

@@ -1,9 +1,8 @@
 import type { Prisma } from "@/generated/prisma/client";
-import prisma from "@/lib/prisma";
 import type { DbClient } from "@/lib/db-client";
 import { personRecordIsActiveOrgMember } from "@/lib/orgMembership";
 import { bgValidUntilBoundary } from "@/lib/membership/renewal";
-import { isYouth, orgCalendarDay } from "@/lib/time";
+import { isYouth } from "@/lib/time";
 
 /**
  * SUPERVISING ADULT — the single test behind both the departure interrupt
@@ -62,10 +61,11 @@ function clearanceIsValid(
  * drop the count, because the household is still represented.
  */
 export async function supervisingAdultVisits(
-    db: DbClient = prisma,
+    db: DbClient,
+    /** The org's calendar day, for age and clearance; `now` decides which meetings are under way. */
+    today: Date,
     now: Date = new Date(),
 ): Promise<Map<number, number>> {
-    const today = orgCalendarDay(now);
     const settings = (await db.boardSettings.findUnique({
         where: { id: 1 },
         select: { orgMembershipYearBoundary: true, bgRecheckMonths: true },
@@ -96,7 +96,7 @@ export async function supervisingAdultVisits(
     const supervising = new Map<number, number>();
     for (const visit of openVisits) {
         const p = visit.person;
-        const isAdult = p.isDeclaredAdult || !isYouth(p.dateOfBirth, { unknownIs: "youth" });
+        const isAdult = p.isDeclaredAdult || !isYouth(p.dateOfBirth, today, { unknownIs: "youth" });
         if (!isAdult) continue;
         if (!personRecordIsActiveOrgMember(p)) continue;
         if (!clearanceIsValid(p.lastBackgroundCheck, settings, today)) continue;
@@ -117,7 +117,7 @@ export function uncoveredYouth<T extends { youth: boolean; householdId: number }
 }
 
 /** Every open visit, as the youth/household rows {@link uncoveredYouth} reads. Unknown age fails closed as youth. */
-async function openPresence(db: DbClient) {
+async function openPresence(db: DbClient, today: Date) {
     const open = await db.visit.findMany({
         where: { departedAt: null, deletedAt: null },
         select: { id: true, person: { select: { householdId: true, isDeclaredAdult: true, dateOfBirth: true } } },
@@ -125,13 +125,13 @@ async function openPresence(db: DbClient) {
     return open.map(v => ({
         id: v.id,
         householdId: v.person.householdId,
-        youth: !v.person.isDeclaredAdult && isYouth(v.person.dateOfBirth, { unknownIs: "youth" }),
+        youth: !v.person.isDeclaredAdult && isYouth(v.person.dateOfBirth, today, { unknownIs: "youth" }),
     }));
 }
 
 /** Open visits of youth no adult of their own household covers ({@link uncoveredYouth}). */
-export async function uncoveredYouthVisitIds(db: DbClient = prisma): Promise<number[]> {
-    return uncoveredYouth(await openPresence(db)).map(v => v.id);
+export async function uncoveredYouthVisitIds(db: DbClient, today: Date): Promise<number[]> {
+    return uncoveredYouth(await openPresence(db, today)).map(v => v.id);
 }
 
 /**
@@ -141,8 +141,9 @@ export async function uncoveredYouthVisitIds(db: DbClient = prisma): Promise<num
 export async function uncoveredYouthAroundDeparture(
     db: DbClient,
     departingVisitId: number,
+    today: Date,
 ): Promise<{ before: number[]; after: number[] }> {
-    const present = await openPresence(db);
+    const present = await openPresence(db, today);
     return {
         before: uncoveredYouth(present).map(v => v.id),
         after: uncoveredYouth(present.filter(v => v.id !== departingVisitId)).map(v => v.id),

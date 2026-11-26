@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { orgToday } from "@/lib/appSettings";
 import { logger } from "@/lib/logger";
 import prisma from '@/lib/prisma';
 import { withAuth } from "@/lib/auth";
@@ -36,7 +37,7 @@ export const POST = withAuth(
                 return apiError("User not found", 404);
             }
             if (phone !== undefined) {
-                if (isYouth(user.dateOfBirth)) {
+                if (isYouth(user.dateOfBirth, await orgToday())) {
                     return apiError("Youth profiles are read-only.", 403);
                 }
                 if (phone !== "" && !isValidPhone(phone)) {

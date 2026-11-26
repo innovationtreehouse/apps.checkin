@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { orgToday } from "@/lib/appSettings";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
@@ -82,7 +83,8 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         }
 
         // Same rule as the enroll route's lead path: only a known adult lead takes on a payment.
-        if (leadRecord && !isKnownAdult(leadRecord)) {
+        const today = await orgToday();
+        if (leadRecord && !isKnownAdult(leadRecord, today)) {
             return apiError(leadRecord.dateOfBirth
                 ? "A household lead under 18 can't request a payment plan."
                 : "Add your date of birth (or confirm you are over 25) before requesting a payment plan.", 403);
@@ -94,7 +96,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         if (isSelf && !isKnownAdult({
             dateOfBirth: participant.person?.dateOfBirth ?? null,
             isDeclaredAdult: participant.person?.isDeclaredAdult,
-        })) {
+        }, today)) {
             return apiError("A household lead must request a payment plan for a participant under 18.", 403);
         }
 

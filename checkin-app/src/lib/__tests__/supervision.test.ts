@@ -15,6 +15,10 @@ jest.mock("@/lib/prisma", () => ({
 }));
 
 import { supervisingAdultCount, supervisingAdultVisits, uncoveredYouth } from "@/lib/supervision";
+import { APP_TIMEZONE, calendarDayIn } from "@/lib/time";
+import prismaDb from "@/lib/prisma";
+
+const today = calendarDayIn(new Date(), APP_TIMEZONE);
 
 const yearsAgo = (n: number) => {
     const d = new Date();
@@ -46,9 +50,9 @@ beforeEach(() => {
     boardSettingsFindUnique.mockResolvedValue({ orgMembershipYearBoundary: new Date(Date.UTC(2000, 7, 1)), bgRecheckMonths: 24 });
 });
 
-async function count(rows: ReturnType<typeof visit>[]) {
+async function count(rows: ReturnType<typeof visit>[], day: Date = today) {
     findMany.mockResolvedValue(rows);
-    return supervisingAdultCount(await supervisingAdultVisits());
+    return supervisingAdultCount(await supervisingAdultVisits(prismaDb, day));
 }
 
 describe("who counts as a supervising adult", () => {
@@ -130,11 +134,32 @@ describe("supervisingAdultCount(excludeVisitId)", () => {
     });
 });
 
+describe("the org's calendar day", () => {
+    // 12:30 AM on the 12th in New York, 11:30 PM on the 11th in Chicago.
+    const instant = "2026-10-12T04:30:00.000Z";
+    const newYork = calendarDayIn(instant, "America/New_York");
+    const chicago = calendarDayIn(instant, "America/Chicago");
+
+    it("judges a clearance that runs out on the 11th against the org's day", async () => {
+        // Boundary Oct 11, recheck every 12 months: a check on 2025-10-11 is valid through 2026-10-11.
+        boardSettingsFindUnique.mockResolvedValue({ orgMembershipYearBoundary: new Date(Date.UTC(2000, 9, 11)), bgRecheckMonths: 12 });
+        const rows = [visit(1, 10), visit(2, 20, { lastBackgroundCheck: new Date("2025-10-11T15:00:00Z") })];
+        expect(await count(rows, chicago)).toBe(2);
+        expect(await count(rows, newYork)).toBe(1);
+    });
+
+    it("counts an 18th birthday from the org's midnight", async () => {
+        const rows = [visit(1, 10), visit(2, 20, { dateOfBirth: new Date("2008-10-12T00:00:00.000Z") })];
+        expect(await count(rows, newYork)).toBe(2);
+        expect(await count(rows, chicago)).toBe(1);
+    });
+});
+
 describe("the programme-meeting probe", () => {
     it("excludes a participant only while a meeting of their programme brackets now", async () => {
         const now = new Date("2026-08-18T15:00:00Z");
         findMany.mockResolvedValue([]);
-        await supervisingAdultVisits(undefined, now);
+        await supervisingAdultVisits(prismaDb, today, now);
 
         const where = findMany.mock.calls[0][0].select.person.select.programParticipants.where;
         expect(where).toEqual({

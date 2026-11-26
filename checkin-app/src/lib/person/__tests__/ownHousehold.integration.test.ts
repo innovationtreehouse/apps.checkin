@@ -5,6 +5,7 @@ import prisma from '@/lib/prisma';
 import { isActiveOrgMember } from '@/lib/orgMembership';
 import { isKnownAdult } from '@/lib/programAge';
 import { addNonMemberAdult } from '@/lib/person/ownHousehold';
+import { orgToday } from '@/lib/appSettings';
 
 const TAG = 'own-household-test';
 const ACTOR = 424242;
@@ -29,7 +30,7 @@ describe('addNonMemberAdult', () => {
             select: { email: true, dateOfBirth: true, isDeclaredAdult: true, isHouseholdLead: true, householdId: true },
         });
         expect(person).toMatchObject({ email: null, dateOfBirth: null, isDeclaredAdult: true, isHouseholdLead: true });
-        expect(isKnownAdult(person)).toBe(true);
+        expect(isKnownAdult(person, await orgToday())).toBe(true);
         expect(await prisma.person.count({ where: { householdId: person.householdId } })).toBe(1);
         expect(await isActiveOrgMember(added.id)).toBe(false);
 

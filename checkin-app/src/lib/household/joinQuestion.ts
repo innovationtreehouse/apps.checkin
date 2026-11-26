@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { orgToday } from "@/lib/appSettings";
 import type { Prisma } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 import { nameWrite } from "@/lib/person/name";
@@ -29,7 +30,7 @@ export async function asksHouseholdQuestion(db: DbClient, personId: number): Pro
         where: { id: personId },
         select: { householdId: true, dateOfBirth: true, _count: { select: { accounts: true } } },
     });
-    if (!person || person._count.accounts > 0 || isYouth(person.dateOfBirth)) return false;
+    if (!person || person._count.accounts > 0 || isYouth(person.dateOfBirth, await orgToday(new Date(), db))) return false;
     const peer = await db.person.findFirst({
         where: { householdId: person.householdId, id: { not: personId }, accounts: { some: {} } },
         select: { id: true },
@@ -62,6 +63,7 @@ function nameFromIdToken(idToken: string | null | undefined): string | undefined
  * no longer matches its record, so the jwt callback ends it.
  */
 export async function answerHouseholdQuestion(personId: number, join: boolean): Promise<void> {
+    const today = await orgToday();
     await prisma.$transaction(async (tx) => {
         const person = await tx.person.findUnique({
             where: { id: personId },
@@ -70,7 +72,7 @@ export async function answerHouseholdQuestion(personId: number, join: boolean): 
         if (!person?.householdJoinPending || !person.email) {
             throw new JoinQuestionError("not_pending");
         }
-        if (isYouth(person.dateOfBirth)) throw new JoinQuestionError("youth");
+        if (isYouth(person.dateOfBirth, today)) throw new JoinQuestionError("youth");
         if (await lockAndFindDeniedHousehold(tx, [person.householdId]) !== null) {
             throw new JoinQuestionError("denied");
         }

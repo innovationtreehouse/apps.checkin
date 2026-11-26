@@ -81,7 +81,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
         // Enrolling someone takes on their payment, so a household lead acting for
         // them must be a known adult; a youth or unknown-age lead stays a lead.
-        if (!isSelfEnrollment && !isSysAdminOrBoard && !basis && leadRecord && !isKnownAdult(leadRecord)) {
+        if (!isSelfEnrollment && !isSysAdminOrBoard && !basis && leadRecord && !isKnownAdult(leadRecord, today)) {
             return apiError(leadRecord.dateOfBirth
                 ? "A household lead under 18 can't enroll a participant."
                 : "Add your date of birth (or confirm you are over 25) before enrolling someone.", 403);
@@ -196,7 +196,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             // them — the guardian-consent line at 18, independent of the
             // program's own minAge/maxAge above. Unverifiable age refuses too,
             // and routes to the age capture the enroll page already offers.
-            if (isSelfEnrollment && participantData && !isKnownAdult(participantData)) {
+            if (isSelfEnrollment && participantData && !isKnownAdult(participantData, today)) {
                 return apiError(participantData.dateOfBirth
                     ? "A household lead must enroll a participant under 18."
                     : "Add your date of birth (or confirm you are over 25) before enrolling yourself.", 403);
@@ -409,7 +409,7 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
                 where: { id: participantId },
                 select: { dateOfBirth: true, isDeclaredAdult: true },
             });
-            if (self && !isKnownAdult(self)) {
+            if (self && !isKnownAdult(self, await orgToday())) {
                 return apiError("A household lead must withdraw a participant under 18.", 403);
             }
         }

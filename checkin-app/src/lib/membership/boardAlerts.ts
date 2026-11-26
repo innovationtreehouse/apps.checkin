@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { orgToday } from "@/lib/appSettings";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
@@ -68,7 +69,8 @@ export async function notifyBoardCheckRejected(reviewId: number): Promise<void> 
  * save commits. Never throws.
  */
 export async function notifyBoardOfYouthLeads(before: { id: number; dateOfBirth: Date | null }[]): Promise<void> {
-    const newlyYouth = before.filter((p) => !isYouth(p.dateOfBirth)).map((p) => p.id);
+    const today = await orgToday();
+    const newlyYouth = before.filter((p) => !isYouth(p.dateOfBirth, today)).map((p) => p.id);
     if (newlyYouth.length === 0) return;
     let leads;
     try {
@@ -80,7 +82,7 @@ export async function notifyBoardOfYouthLeads(before: { id: number; dateOfBirth:
         logger.error("Youth-lead board ping failed:", { ids: newlyYouth }, error);
         return;
     }
-    for (const lead of leads.filter((p) => isYouth(p.dateOfBirth))) {
+    for (const lead of leads.filter((p) => isYouth(p.dateOfBirth, today))) {
         await emailBoardMembers("board.youthHouseholdLead", {
             personName: lead.name,
             householdName: lead.household.name,

@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { orgToday } from "@/lib/appSettings";
 import { logger, logBackendError } from "@/lib/logger";
 import { personActor } from "@/lib/auditActor";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
@@ -288,6 +289,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
     // saved (above), and the rest of the form (children) still saves below. We
     // collect the skipped promotion and hand it back so the form can say exactly
     // what happened, instead of failing the whole save with a single error.
+    const today = await orgToday();
     const rejections: IntakeRejection[] = [];
     const refusals: SelfGrantRefusal[] = [];
     const deniedPromotions: HouseholdLeadDeniedError[] = [];
@@ -297,7 +299,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
     const differs = (submitted: string | null | undefined, stored: string | null | undefined) =>
         submitted !== undefined && (submitted || null) !== (stored || null);
     const isYouthSelfEdit = (personId: number | undefined, submitted: Pick<ParentInput, "name" | "dob" | "over25" | "allergies">) => {
-        if (personId !== userId || !isYouth(user.dateOfBirth)) return false;
+        if (personId !== userId || !isYouth(user.dateOfBirth, today)) return false;
         const changed = !!submitted.over25
             || differs(submitted.name ?? undefined, user.name)
             || differs(submitted.dob, user.dateOfBirth?.toISOString().slice(0, 10))
@@ -403,7 +405,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     where: { id: userId },
                     data: {
                         ...(input.primaryParent.name !== undefined && { name: nameWrite(input.primaryParent.name) }),
-                        ...ageWrite(normalizeAdultDob(input.primaryParent.dob, input.primaryParent.over25, user.dateOfBirth), user, "primaryParent"),
+                        ...ageWrite(normalizeAdultDob(input.primaryParent.dob, today, input.primaryParent.over25, user.dateOfBirth), user, "primaryParent"),
                         ...(input.primaryParent.allergies !== undefined && { allergies: input.primaryParent.allergies }),
                     },
                 });
@@ -422,14 +424,14 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     }
                     const spOnFile = user.household?.householdMembers.find((p) => p.id === sp.id);
                     const spDobOnFile = spOnFile?.dateOfBirth;
-                    if (replacesUnder18Date(sp.dob, sp.over25, spDobOnFile)) {
+                    if (replacesUnder18Date(sp.dob, sp.over25, spDobOnFile, today)) {
                         throw new IntakeError("under_18_declared", UNDER_18_DECLARATION_REFUSAL, ["secondaryParent"]);
                     }
                     await tx.person.update({
                         where: { id: sp.id },
                         data: {
                             ...(sp.name !== undefined && sp.name !== null && { name: nameWrite(sp.name) }),
-                            ...ageWrite(normalizeAdultDob(sp.dob, sp.over25, spDobOnFile), spOnFile, "secondaryParent"),
+                            ...ageWrite(normalizeAdultDob(sp.dob, today, sp.over25, spDobOnFile), spOnFile, "secondaryParent"),
                             ...(sp.allergies !== undefined && { allergies: sp.allergies }),
                         },
                     });
@@ -444,7 +446,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                             householdId,
                             name: newSpName,
                             ...(sp.email && { email: sp.email.toLowerCase() }),
-                            ...ageWrite(normalizeAdultDob(sp.dob, sp.over25), null, "secondaryParent"),
+                            ...ageWrite(normalizeAdultDob(sp.dob, today, sp.over25), null, "secondaryParent"),
                             allergies: sp.allergies ?? null,
                         },
                     });
@@ -474,7 +476,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                         where: { id: child.id },
                         data: {
                             ...(child.name !== undefined && { name: nameWrite(child.name) }),
-                            ...ageWrite(normalizeAdultDob(child.dob), user.household?.householdMembers.find((p) => p.id === child.id), "children"),
+                            ...ageWrite(normalizeAdultDob(child.dob, today), user.household?.householdMembers.find((p) => p.id === child.id), "children"),
                             ...(child.allergies !== undefined && { allergies: child.allergies }),
                         },
                     });
@@ -487,7 +489,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                             householdId,
                             name: newChildName,
                             ...(child.email && { email: child.email.toLowerCase() }),
-                            ...ageWrite(normalizeAdultDob(child.dob), null, "children"),
+                            ...ageWrite(normalizeAdultDob(child.dob, today), null, "children"),
                             allergies: child.allergies ?? null,
                         },
                     });

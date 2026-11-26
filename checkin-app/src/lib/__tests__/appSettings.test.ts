@@ -3,6 +3,7 @@
  * @jest-environment node
  */
 import { APP_TIMEZONE } from '@/lib/time';
+import type { DbClient } from '@/lib/db-client';
 
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
@@ -48,7 +49,7 @@ describe('resolveDisplayTimezone', () => {
 });
 
 describe('orgToday', () => {
-    let orgToday: (now?: Date) => Promise<Date>;
+    let orgToday: (now?: Date, db?: DbClient) => Promise<Date>;
     let upsert: jest.Mock;
     beforeEach(() => {
         jest.resetModules();
@@ -67,5 +68,23 @@ describe('orgToday', () => {
     it('falls back to APP_TIMEZONE when the settings row cannot be read', async () => {
         upsert.mockRejectedValue(new Error('database is starting up'));
         expect((await orgToday(instant)).toISOString()).toBe('2026-10-11T00:00:00.000Z');
+    });
+
+    describe('with a transaction client', () => {
+        const txWith = (findUnique: jest.Mock) => ({ appSettings: { findUnique, upsert: jest.fn() } });
+
+        it('reads the zone through the given client and never upserts', async () => {
+            const tx = txWith(jest.fn().mockResolvedValue({ timezone: 'America/New_York' }));
+            expect((await orgToday(instant, tx as unknown as DbClient)).toISOString()).toBe('2026-10-12T00:00:00.000Z');
+            expect(tx.appSettings.findUnique).toHaveBeenCalledWith({ where: { id: 1 }, select: { timezone: true } });
+            expect(tx.appSettings.upsert).not.toHaveBeenCalled();
+            expect(upsert).not.toHaveBeenCalled();
+        });
+
+        it('falls back to APP_TIMEZONE when the row is missing', async () => {
+            const tx = txWith(jest.fn().mockResolvedValue(null));
+            expect((await orgToday(instant, tx as unknown as DbClient)).toISOString()).toBe('2026-10-11T00:00:00.000Z');
+            expect(upsert).not.toHaveBeenCalled();
+        });
     });
 });

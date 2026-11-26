@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { orgToday } from "@/lib/appSettings";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
@@ -117,8 +118,9 @@ export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth
 
     if (!event.program) return { Event: event };
     const viewerIsLeader = auth.type === 'session' && !auth.user.isSysadmin && !auth.user.isBoardMember;
-    const participants = event.program.participants.map(p => ({ ...p, person: rosterPerson(p.person, viewerIsLeader) }));
-    const emailWithheldFrom = emailWithheldParticipants(event.program.participants, viewerIsLeader);
+    const today = await orgToday();
+    const participants = event.program.participants.map(p => ({ ...p, person: rosterPerson(p.person, viewerIsLeader, today) }));
+    const emailWithheldFrom = emailWithheldParticipants(event.program.participants, viewerIsLeader, today);
     const volunteers = event.program.volunteers.map(v => ({ ...v, person: withholdEmail(v.person, emailWithheldFrom) }));
     return { Event: { ...event, program: { ...event.program, volunteers, participants } } };
 });
