@@ -228,6 +228,7 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
             await raiseDeniedHouseholdActivity({
                 householdId: membership.householdId,
                 processId: proc.id,
+                shopifyOrderId: order.legacyId || null,
                 what: `Shopify membership payment (order ${order.legacyId || "?"}) on application #${proc.id}, found by the nightly reconcile`,
             });
         } else {

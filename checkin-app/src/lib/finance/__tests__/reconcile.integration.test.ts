@@ -13,12 +13,19 @@ import { snapshotBoardSettings } from "@/test-helpers/boardSettings";
 import { runReconcile } from "@/lib/finance/reconcile";
 import { raiseReversalByOrderId, returnTestOrderStock } from "@/lib/finance/reconcile/reversals";
 import { recordPaymentException } from "@/lib/finance/reconcile/exceptions";
+import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
 import { refundableApplication } from "@/lib/membership/lifecycle";
 import { orderEntitlesEnrollment, type EntitlementOrder } from "@/lib/finance/reconcile/program";
 import { activateProgramEnrollment } from "@/lib/programs/activateEnrollment";
 import { systemActor } from "@/lib/auditActor";
 import { signCheckout } from "@/lib/programs/checkoutSignature";
 import type { IncomeMirrorLineRow, MirrorOrder } from "@/lib/shopifyRead/client";
+
+jest.mock("@/lib/membership/boardAlerts", () => {
+    const actual = jest.requireActual("@/lib/membership/boardAlerts");
+    return { ...actual, notifyBoardPaymentException: jest.fn(actual.notifyBoardPaymentException) };
+});
+const notifyBoard = notifyBoardPaymentException as jest.Mock;
 
 jest.mock("@/lib/email", () => ({
     sendEmail: jest.fn().mockResolvedValue(true),
@@ -290,6 +297,38 @@ describe("forward recovery", () => {
         expect(await prisma.paymentException.count({ where: { kind: "UNMATCHED_ORDER", shopifyOrderId: oid } })).toBe(0);
         await runReconcile();
         expect(await prisma.paymentException.count({ where: { processId } })).toBe(1);
+    });
+
+    it("keeps a resolved DENIED activity row resolved when the same order is scanned again", async () => {
+        const oid = `${TAG}-denied-resolved`;
+        const { processId } = await makeApplicant({ email: `denied-resolved-${TAG}@ex.com`, status: "ACTIVE", household: "DENIED", paid: true, shopifyOrderId: `${TAG}-denied-resolved-first` });
+        orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
+        const scanned = order({ legacyId: oid, noteAttributes: attrs({ Membership_Process_ID: String(processId) }) });
+        ordersChangedSince.mockResolvedValue([scanned]);
+        await runReconcile();
+        const raised = await prisma.paymentException.findFirstOrThrow({ where: { kind: "DENIED_HOUSEHOLD_ACTIVITY", processId } });
+        expect(raised.shopifyOrderId).toBe(oid);
+        await prisma.paymentException.update({ where: { id: raised.id }, data: { status: "RESOLVED", resolvedAt: new Date(), resolutionNote: "Board: refunded by hand" } });
+
+        notifyBoard.mockClear();
+        ordersChangedSince.mockResolvedValue([{ ...scanned, updatedAt: new Date() }]);
+        await runReconcile();
+        expect(notifyBoard).not.toHaveBeenCalledWith("DENIED_HOUSEHOLD_ACTIVITY", expect.anything(), raised.id);
+        const after = await prisma.paymentException.findUniqueOrThrow({ where: { id: raised.id } });
+        expect(after.status).toBe("RESOLVED");
+        expect(after.resolutionNote).toBe("Board: refunded by hand");
+        expect(await prisma.paymentException.count({ where: { kind: "DENIED_HOUSEHOLD_ACTIVITY", processId } })).toBe(1);
+    });
+
+    it("raises one DENIED activity row per order on the same application", async () => {
+        const { processId } = await makeApplicant({ email: `denied-two-${TAG}@ex.com`, status: "ACTIVE", household: "DENIED", paid: true, shopifyOrderId: `${TAG}-denied-two-first` });
+        orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
+        const ids = [`${TAG}-denied-two-a`, `${TAG}-denied-two-b`];
+        ordersChangedSince.mockResolvedValue(ids.map((legacyId) => order({ legacyId, noteAttributes: attrs({ Membership_Process_ID: String(processId) }) })));
+
+        await runReconcile();
+        const rows = await prisma.paymentException.findMany({ where: { kind: "DENIED_HOUSEHOLD_ACTIVITY", processId }, select: { shopifyOrderId: true } });
+        expect(rows.map((r) => r.shopifyOrderId).sort()).toEqual([...ids].sort());
     });
 
     it("finds the Board's recorded refund of an order by its JSON audit row on this process only", async () => {

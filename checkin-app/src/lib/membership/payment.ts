@@ -313,6 +313,7 @@ async function settle(
         await raiseDeniedHouseholdActivity({
             householdId: result.householdId!,
             processId,
+            shopifyOrderId: opts.shopifyOrderId ?? null,
             what: `Shopify membership payment (order ${opts.shopifyOrderId || "?"}) on application #${processId}`,
         });
     }
