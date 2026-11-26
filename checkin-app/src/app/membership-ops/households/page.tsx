@@ -20,6 +20,28 @@ import { householdQueryMatcher, personQueryMatcher } from "@/lib/searchId";
 
 type GrantYear = { year: number; label: string };
 
+// What a click on the year's control does: map a payment to the application
+// awaiting it, or open a renewal or joining application for the family to complete.
+type GrantEffect = "grant" | "openRenewal" | "openApplication";
+type PendingGrant = { effect: GrantEffect; year: GrantYear };
+
+const EFFECT_VERB: Record<GrantEffect, string> = {
+  grant: "Grant",
+  openRenewal: "Open renewal",
+  openApplication: "Open application",
+};
+
+const effectFor = (awaitingPayment: boolean, status?: string): GrantEffect =>
+  awaitingPayment ? "grant" : status === "ACTIVE" ? "openRenewal" : "openApplication";
+
+const fallbackSuccess = ({ effect, year }: PendingGrant) =>
+  effect === "grant" ? `Granted ${year.label}.` : effect === "openRenewal" ? "Renewal opened." : "Application opened.";
+
+const modalBody = ({ effect, year }: PendingGrant) =>
+  effect === "grant"
+    ? `Mark this household's application as paid for ${year.label} without a Shopify payment. The membership becomes active once its background check clears.`
+    : `Open ${effect === "openRenewal" ? "a renewal" : "a joining application"} for the family to complete. No payment is recorded; grant ${year.label} once it reaches payment.`;
+
 type Household = {
   id: number;
   name?: string | null;
@@ -42,8 +64,8 @@ const fmtDate = (s?: string | null) =>
 
 export default function AdminHouseholdsPage() {
   const { user: me, ready, loading: authLoading } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
-  // Certifying a payment is Board-only (the server 403s a sysadmin), so a Grant that
-  // would certify is hidden from anyone else. One that only opens an application stays.
+  // Certifying a payment is Board-only (the server 403s a sysadmin), so a Grant is
+  // hidden from anyone else. Opening a renewal or an application stays.
   const isBoard = me?.isBoardMember === true;
   const { formatDate, today: orgToday } = useOrgTime();
   const today = orgToday();
@@ -60,8 +82,8 @@ export default function AdminHouseholdsPage() {
   const [grantOpened, { open: openGrantModal, close: closeGrantModal }] = useDisclosure(false);
   const [pendingGrantHouseholdId, setPendingGrantHouseholdId] = useState<number | null>(null);
   const [grantReason, setGrantReason] = useState("");
-  // The year the reason modal confirms.
-  const [pendingGrantYear, setPendingGrantYear] = useState<GrantYear | null>(null);
+  // The effect and year the reason modal confirms.
+  const [pendingGrant, setPendingGrant] = useState<PendingGrant | null>(null);
 
   const revokeMembership = async (householdId: number) => {
     clearError('revoke-membership');
@@ -76,35 +98,34 @@ export default function AdminHouseholdsPage() {
     }
   };
 
-  // A grant pays an application (money only) and records the year on its button. The
-  // background check still applies, and the server rejects a board member's own household.
-  const grant = async (householdId: number, reason: string, grantYear: GrantYear) => {
+  // The server picks the effect at click time and its message names the one it took.
+  const grant = async (householdId: number, reason: string, pending: PendingGrant) => {
     clearError('grant-membership');
     try {
       const data = await api<{ message?: string }>('/api/membership-ops/households', {
         method: 'POST',
-        body: JSON.stringify({ householdId, year: grantYear.year, reason })
+        body: JSON.stringify({ householdId, year: pending.year.year, reason })
       });
-      showSuccess(data?.message || `Granted ${grantYear.label}.`);
+      showSuccess(data?.message || fallbackSuccess(pending));
     } catch (e) {
       showError(errorMessage(e), { key: 'grant-membership' });
     }
   };
 
-  const openGrant = (householdId: number, grantYear: GrantYear) => {
-    setPendingGrantYear(grantYear);
+  const openGrant = (householdId: number, pending: PendingGrant) => {
+    setPendingGrant(pending);
     setPendingGrantHouseholdId(householdId);
     setGrantReason("");
     openGrantModal();
   };
 
   const confirmGrant = async () => {
-    if (pendingGrantHouseholdId === null || pendingGrantYear === null || !grantReason.trim()) return;
+    if (pendingGrantHouseholdId === null || pendingGrant === null || !grantReason.trim()) return;
     closeGrantModal();
     const householdId = pendingGrantHouseholdId;
     const reason = grantReason.trim();
     setPendingGrantHouseholdId(null);
-    await grant(householdId, reason, pendingGrantYear);
+    await grant(householdId, reason, pendingGrant);
   };
 
   // Deny blocks login for every member of the household; restore (deny=false) returns it
@@ -210,6 +231,7 @@ export default function AdminHouseholdsPage() {
               const awaitingPayment = household.awaitingPayment === true;
               const showGrantInProgress = !!yearInProgress && (isBoard || !awaitingPayment) &&
                 (!hasActiveMembership || (!isStaffHousehold && (awaitingPayment || isMembershipLapsed(household.validUntil, today))));
+              const inProgressEffect = effectFor(awaitingPayment, status);
 
               return (
                 <Table.Tr key={household.id}>
@@ -329,9 +351,9 @@ export default function AdminHouseholdsPage() {
                                   ? ownHouseholdTitle
                                   : undefined
                             }
-                            onClick={() => openGrant(household.id, yearInProgress)}
+                            onClick={() => openGrant(household.id, { effect: inProgressEffect, year: yearInProgress })}
                           >
-                            Grant {yearInProgress.label}
+                            {EFFECT_VERB[inProgressEffect]} {yearInProgress.label}
                           </Button>}
                           <Button
                             size="xs" fz={15}
@@ -354,7 +376,7 @@ export default function AdminHouseholdsPage() {
                         variant="light"
                         disabled={settledForComingYear}
                         title={settledForComingYear ? "This household is already set for this year." : undefined}
-                        onClick={() => openGrant(household.id, comingYear)}
+                        onClick={() => openGrant(household.id, { effect: "grant", year: comingYear })}
                       >
                         {settledForComingYear ? "Granted" : "Grant"} {comingYear.label}
                       </Button>
@@ -398,17 +420,15 @@ export default function AdminHouseholdsPage() {
       <Modal
         opened={grantOpened}
         onClose={closeGrantModal}
-        title={<Text span fw={700} fz="lg">Grant {pendingGrantYear?.label}</Text>}
+        title={pendingGrant && <Text span fw={700} fz="lg">{EFFECT_VERB[pendingGrant.effect]} {pendingGrant.year.label}</Text>}
         centered
       >
-        <Text mb="sm">
-          Mark this household&apos;s application as paid for {pendingGrantYear?.label} without a Shopify payment. The membership becomes active once its background check clears; if there is no application yet, one is opened for the family to complete.
-        </Text>
+        {pendingGrant && <Text mb="sm">{modalBody(pendingGrant)}</Text>}
         <Textarea
           value={grantReason}
           onChange={(e) => setGrantReason(e.currentTarget.value)}
           label="Reason"
-          placeholder="Why is this being granted?"
+          placeholder={pendingGrant?.effect === "grant" ? "Why is this being granted?" : "Why is this being opened?"}
           autosize
           minRows={3}
           mb="lg"
@@ -416,7 +436,7 @@ export default function AdminHouseholdsPage() {
         />
         <Group justify="flex-end">
           <Button variant="default" onClick={closeGrantModal}>Cancel</Button>
-          <Button onClick={confirmGrant} disabled={!grantReason.trim()}>Grant</Button>
+          <Button onClick={confirmGrant} disabled={!grantReason.trim()}>{pendingGrant ? EFFECT_VERB[pendingGrant.effect] : "Grant"}</Button>
         </Group>
       </Modal>
     </Stack>

@@ -3,7 +3,7 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 
-import { act, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { notifications, notificationsStore } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import { pinTimezone } from "@/test-helpers/tz";
@@ -60,7 +60,7 @@ describe("membership-ops/households page", () => {
     expect(container.textContent).not.toContain("Aug 14, 2024");
   });
 
-  it("offers the year's Grant beside Revoke only on a lapsed active household", async () => {
+  it("offers the year's renewal beside Revoke only on a lapsed active household", async () => {
     setSession({ id: 1, isBoardMember: true, householdId: 500 });
     mockFetchJson({
       "/api/membership-ops/households": {
@@ -75,10 +75,10 @@ describe("membership-ops/households page", () => {
     await screen.findByText("The Smiths");
 
     expect(screen.getAllByRole("button", { name: "Revoke Membership" })).toHaveLength(2);
-    expect(screen.getAllByRole("button", { name: "Grant 2026-2027" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Open renewal 2026-2027" })).toHaveLength(1);
   });
 
-  it("offers a sysadmin the lapsed-row Grant only when it would open a renewal, not certify a payment", async () => {
+  it("offers a sysadmin the lapsed row's Open renewal, but not a Grant that maps a payment", async () => {
     setSession({ id: 1, isSysadmin: true, householdId: 500 });
     const lapsed = { ...households.households[0], validUntil: "2026-08-01T00:00:00.000Z" };
     mockFetchJson({
@@ -90,7 +90,8 @@ describe("membership-ops/households page", () => {
     renderWithProviders(<AdminHouseholdsPage />);
     await screen.findByText("The Payables");
 
-    expect(screen.getAllByRole("button", { name: "Grant 2026-2027" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Open renewal 2026-2027" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Grant 2026-2027" })).not.toBeInTheDocument();
   });
 
   it("loads and renders households with membership status", async () => {
@@ -173,11 +174,11 @@ describe("membership-ops/households page", () => {
     renderWithProviders(<AdminHouseholdsPage />);
     await screen.findByText("The Joneses");
 
-    fireEvent.click(screen.getByRole("button", { name: "Grant 2026-2027" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open application 2026-2027" }));
     const reasonInput = await screen.findByLabelText(/^Reason/);
-    expect(screen.getByRole("button", { name: "Grant" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open application" })).toBeDisabled();
     fireEvent.change(reasonInput, { target: { value: "Paid by check" } });
-    fireEvent.click(screen.getByRole("button", { name: "Grant" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open application" }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -196,7 +197,7 @@ describe("membership-ops/households page", () => {
     renderWithProviders(<AdminHouseholdsPage />);
     await screen.findByText("The Joneses");
 
-    expect(screen.getByRole("button", { name: "Grant 2026-2027" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open application 2026-2027" })).toBeDisabled();
   });
 
   it("keeps Grant enabled for a board member in a different household", async () => {
@@ -205,7 +206,7 @@ describe("membership-ops/households page", () => {
     renderWithProviders(<AdminHouseholdsPage />);
     await screen.findByText("The Joneses");
 
-    expect(screen.getByRole("button", { name: "Grant 2026-2027" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Open application 2026-2027" })).toBeEnabled();
   });
 
   it("flags a household whose member has an undeliverable email", async () => {
@@ -265,7 +266,72 @@ describe("membership-ops/households page", () => {
     renderWithProviders(<AdminHouseholdsPage />);
     await screen.findByText("The Joneses");
 
-    expect(screen.queryByRole("button", { name: /^Grant/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(Grant|Open)/ })).not.toBeInTheDocument();
+  });
+
+  describe("names the effect a click will have", () => {
+    const grantYears = [{ year: 2026, label: "2026-2027" }];
+    const lapsed = { ...households.households[0], validUntil: "2026-08-01T00:00:00.000Z" };
+    const rows = [
+      { ...lapsed, id: 4, name: "The Payables", awaitingPayment: true },
+      { ...lapsed, id: 5, name: "The Renewers" },
+      { ...households.households[1], id: 6, name: "The Joiners" },
+    ];
+
+    const confirmOn = async (rowName: string, control: string, confirm: string, serverMessage?: string) => {
+      const fetchMock = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Response(JSON.stringify(init?.method === "POST" ? (serverMessage ? { message: serverMessage } : {}) : { households: rows, grantYears })),
+      );
+      global.fetch = fetchMock as unknown as typeof fetch;
+      renderWithProviders(<AdminHouseholdsPage />);
+      await screen.findByText(rowName);
+
+      const row = screen.getByText(rowName).closest("tr") as HTMLElement;
+      fireEvent.click(within(row).getByRole("button", { name: control }));
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByText(control)).toBeInTheDocument();
+      fireEvent.change(within(dialog).getByLabelText(/^Reason/), { target: { value: "Board decision" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: confirm }));
+      await waitFor(() => expect(notificationsStore.getState().notifications).toHaveLength(1));
+      return notificationsStore.getState().notifications[0];
+    };
+
+    it("labels each row by what it will do: Grant only where an application awaits payment", async () => {
+      setSession({ id: 1, isBoardMember: true, householdId: 500 });
+      mockFetchJson({ "/api/membership-ops/households": { households: rows, grantYears } });
+      renderWithProviders(<AdminHouseholdsPage />);
+      await screen.findByText("The Joiners");
+
+      const control = (name: string) => within(screen.getByText(name).closest("tr") as HTMLElement).getByRole("button", { name: /^(Grant|Open) / });
+      expect(control("The Payables")).toHaveTextContent("Grant 2026-2027");
+      expect(control("The Renewers")).toHaveTextContent("Open renewal 2026-2027");
+      expect(control("The Joiners")).toHaveTextContent("Open application 2026-2027");
+    });
+
+    it("confirms a grant as Granted", async () => {
+      setSession({ id: 1, isBoardMember: true, householdId: 500 });
+      const shown = await confirmOn("The Payables", "Grant 2026-2027", "Grant");
+      expect(shown).toMatchObject({ message: "Granted 2026-2027.", color: "green" });
+    });
+
+    it("confirms an opened renewal without saying Granted", async () => {
+      setSession({ id: 1, isBoardMember: true, householdId: 500 });
+      const shown = await confirmOn("The Renewers", "Open renewal 2026-2027", "Open renewal");
+      expect(shown).toMatchObject({ message: "Renewal opened.", color: "green" });
+    });
+
+    it("confirms an opened application without saying Granted", async () => {
+      setSession({ id: 1, isBoardMember: true, householdId: 500 });
+      const shown = await confirmOn("The Joiners", "Open application 2026-2027", "Open application");
+      expect(shown).toMatchObject({ message: "Application opened.", color: "green" });
+    });
+
+    it("shows the server's words for the effect it took", async () => {
+      setSession({ id: 1, isBoardMember: true, householdId: 500 });
+      const message = "Renewal opened: the family completes it, then grant once it reaches payment.";
+      const shown = await confirmOn("The Renewers", "Open renewal 2026-2027", "Open renewal", message);
+      expect(shown).toMatchObject({ message });
+    });
   });
 
   describe("the coming year's Grant", () => {

@@ -9,7 +9,7 @@ import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { membershipYearCycle, coveredThrough, bgValidUntilBoundary, grantableYears } from "@/lib/membership/renewal";
 import { grantableApplicationWhere, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { PaymentError } from "@/lib/membership/payment";
-import { grantMembership } from "@/lib/membership/grant";
+import { grantMembership, grantMessage } from "@/lib/membership/grant";
 import { ensureHouseholdMembership, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { notifyBoardOfDenial } from "@/lib/membership/denial";
 import { personActor } from "@/lib/auditActor";
@@ -340,9 +340,9 @@ export const POST = withAuth(
                 return NextResponse.json({ success: true, membership: await prisma.orgMembership.findUnique({ where: { id: outcome } }) });
             }
 
-            // A grant pays an application (money only) and records the year on the button pressed.
+            // The year's control: pays an application awaiting payment, or opens a renewal or joining application.
             if (year !== undefined) {
-                if (!trimmedReason) return apiError("A reason is required to certify a payment", 400);
+                if (!trimmedReason) return apiError("A reason is required to grant a year or open an application.", 400);
                 const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
                 if (!grantableYears(settings?.orgMembershipYearBoundary, new Date()).some((y) => y.year === year)) {
                     return apiError("That membership year can't be granted now. Reload the page and try again.", 400);
@@ -352,9 +352,7 @@ export const POST = withAuth(
                     return NextResponse.json({
                         success: true,
                         ...result,
-                        message: result.paid
-                            ? (result.process.status === "ACTIVE" ? "Granted: the membership is active." : "Granted: the membership activates once the background check clears.")
-                            : "Application opened: the family completes it, then grant again once it reaches payment.",
+                        message: grantMessage(result),
                     });
                 } catch (e) {
                     if (e instanceof PaymentError) {
