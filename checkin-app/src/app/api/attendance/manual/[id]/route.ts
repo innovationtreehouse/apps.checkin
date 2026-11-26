@@ -1,10 +1,10 @@
 import { handler, ApiResponseError, badRequest, notFound, unauthorized } from "@/security/handler";
 import prisma from "@/lib/prisma";
-import type { Prisma } from "@/generated/prisma/client";
+import type { Prisma, Visit } from "@/generated/prisma/client";
 import { OPEN_VISIT_REFUSAL, parseVisitTime, departureAfterArrival, withinMaxDuration, isUnchangedTime } from "@/lib/visitTimes";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { correctCloseTime } from "@/lib/attendance/close";
-import { editSignificance, deleteSignificance } from "@/lib/visit/significance";
+import { editSignificance, deleteSignificance, type Significance } from "@/lib/visit/significance";
 import { visitSubject } from "@/lib/visit/scope";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { logBackendError } from "@/lib/logger";
@@ -89,14 +89,12 @@ export const PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]'
             throw badRequest("A visit cannot be longer than 24 hours.");
         }
 
-        const significance = editSignificance(visit, { arrivedAt: nextArrived, departedAt: nextDeparted }, { byProxy });
-
         // Same per-person advisory lock as every other visit write: an edit
         // must not race the kiosk, the sweep, or a concurrent submit. The lock
         // is keyed on the visit's PERSON, not the actor — that is the key the
         // one-open-visit invariant is per, so a lead's edit serializes against
         // the member's own kiosk scan.
-        const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient): Promise<{ openSince: Date } | { edited: Visit; significance: Significance; before: Visit } | null> => {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(${Number(visit.personId)})`;
             // Scope and liveness re-asserted under the lock: a DELETE that
             // landed since the pre-check must not have its tombstone overwritten.
@@ -119,6 +117,8 @@ export const PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]'
             }
             const overlaps = await findVisitOverlaps(tx, visit.personId, { arrivedAt: nextArrived, departedAt: nextDeparted }, visitId);
             if (overlaps.openSince) return { openSince: overlaps.openSince };
+            // Scored from the in-lock row, so a write that raced the pre-check can't skew the flag.
+            const significance = editSignificance(live, { arrivedAt: nextArrived, departedAt: nextDeparted }, { byProxy });
             // A corrected time becomes a typed clock: an edited arrival stamps
             // arrivedVia TYPED, an edited departure stamps departedVia TYPED.
             // Significance already read the pre-edit source above, so restamping
@@ -147,22 +147,22 @@ export const PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]'
                     tableName: "Visit",
                     affectedEntityId: edited.id,
                     secondaryAffectedEntity: visit.personId,
-                    oldData: { id: visit.id, arrivedAt: visit.arrivedAt, departedAt: visit.departedAt, arrivedVia: visit.arrivedVia, departedVia: visit.departedVia },
+                    oldData: { id: live.id, arrivedAt: live.arrivedAt, departedAt: live.departedAt, arrivedVia: live.arrivedVia, departedVia: live.departedVia },
                     newData: { arrivedAt: nextArrived, departedAt: nextDeparted, type: "self_correction", ...overlapFlag(overlaps.closedIds, significance) },
                 }
             });
-            return edited;
+            return { edited, significance, before: live };
         }, { maxWait: 5000, timeout: 15000 });
         if (!updated) throw notFound("Visit not found.");
         if ('openSince' in updated) throw new ApiResponseError(409, await openOverlapRefusal(updated.openSince));
         invalidateAttendanceCache();
-        const surviving = updated;
+        const { edited: surviving, significance, before } = updated;
 
         if (significance.flagged) {
             // Server-side: no TimezoneProvider here, so the configured zone is passed in.
             const timeZone = await resolveDisplayTimezone();
             flagBoard("edit", surviving.id, auth.user.name ?? `person #${userId}`, byProxy, significance.score,
-                `${formatDateTime(visit.arrivedAt, { timeZone })} → ${formatDateTime(nextArrived, { timeZone })}`);
+                `${formatDateTime(before.arrivedAt, { timeZone })} → ${formatDateTime(nextArrived, { timeZone })}`);
         }
 
         // The bag, not a hand-built body: stripBag keeps arrivedAt/departedAt for
@@ -189,19 +189,23 @@ export const DELETE = handler<{ id: string }>('DELETE /api/attendance/manual/[id
         if (!visit.departedAt) throw new ApiResponseError(409, OPEN_VISIT_REFUSAL);
         const byProxy = visit.personId !== userId;
 
-        const significance = deleteSignificance(visit, { byProxy });
-
         // Tombstone, never a row removal: the deletion is reviewable in the corrections review
         // and reversible by clearing deletedAt. Same advisory lock as above, and
         // scope/liveness re-asserted inside it so a racing second delete is
         // a 404 rather than a re-stamped deletedAt.
         const tombstoned = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(${Number(visit.personId)})`;
+            const live = await tx.visit.findFirst({
+                where: { id: visitId, personId: visit.personId, deletedAt: null },
+            });
+            if (!live) return null;
             const { count } = await tx.visit.updateMany({
                 where: { id: visitId, personId: visit.personId, deletedAt: null },
                 data: { deletedAt: new Date(), deletedById: userId },
             });
-            if (count === 0) return false;
+            if (count === 0) return null;
+            // Scored and audited from the in-lock row, not the pre-check read.
+            const significance = deleteSignificance(live, { byProxy });
             await tx.auditLog.create({
                 data: {
                     actorId: userId,
@@ -209,19 +213,20 @@ export const DELETE = handler<{ id: string }>('DELETE /api/attendance/manual/[id
                     tableName: "Visit",
                     affectedEntityId: visitId,
                     secondaryAffectedEntity: visit.personId,
-                    oldData: { arrivedAt: visit.arrivedAt, departedAt: visit.departedAt, arrivedVia: visit.arrivedVia, departedVia: visit.departedVia },
+                    oldData: { arrivedAt: live.arrivedAt, departedAt: live.departedAt, arrivedVia: live.arrivedVia, departedVia: live.departedVia },
                     newData: { type: "self_correction", significance },
                 }
             });
-            return true;
+            return { significance, before: live };
         });
         if (!tombstoned) throw notFound("Visit not found.");
         invalidateAttendanceCache();
+        const { significance, before } = tombstoned;
 
         // Every delete flags: that is the floor.
         const timeZone = await resolveDisplayTimezone();
         flagBoard("delete", visitId, auth.user.name ?? `person #${userId}`, byProxy, significance.score,
-            `Visit ${formatDateTime(visit.arrivedAt, { timeZone })} – ${formatDateTime(visit.departedAt, { timeZone })} tombstoned.`);
+            `Visit ${formatDateTime(before.arrivedAt, { timeZone })} – ${formatDateTime(before.departedAt, { timeZone })} tombstoned.`);
 
         // Empty bag — a tombstone ships no model data, so the registry declares
         // `envelope: null` and the 200 body is `{}` (stripBag drops any

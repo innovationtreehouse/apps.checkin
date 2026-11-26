@@ -7,6 +7,7 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/overlap";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
+import { appendPresenceEvent, PresenceClass } from "@/lib/presence/events";
 
 // Staff insert-for-others at an arbitrary past time: the path for a
 // genuine unenrolled walk-in, which the event-roster mark (program-scoped, event
@@ -68,6 +69,22 @@ export const POST = handler('POST /api/facility/visits/insert', async ({ req, au
                 departedVia: "TYPED",
                 associatedEventId: eventId,
             },
+        });
+        await appendPresenceEvent(tx, {
+            personId: subjectId,
+            occurredAt: ar.value,
+            direction: "IN",
+            source: "TYPED",
+            classification: PresenceClass.PROJECTED,
+            visitId: visit.id,
+        });
+        await appendPresenceEvent(tx, {
+            personId: subjectId,
+            occurredAt: dr.value,
+            direction: "OUT",
+            source: "TYPED",
+            classification: PresenceClass.PROJECTED,
+            visitId: visit.id,
         });
         await tx.auditLog.create({
             data: {

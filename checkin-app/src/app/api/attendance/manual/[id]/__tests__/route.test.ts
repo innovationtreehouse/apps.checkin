@@ -140,6 +140,21 @@ describe("PATCH /api/attendance/manual/[id]", () => {
         expect(tx.visit.update).not.toHaveBeenCalled();
     });
 
+    it("scores and audits from the row read under the lock when it changed after the pre-check", async () => {
+        visitFindUnique.mockResolvedValue(baseVisit);
+        // A concurrent kiosk correction restamped the arrival as a SCANNER read after the pre-check.
+        const live = { ...baseVisit, arrivedAt: new Date("2026-07-20T14:30:00Z"), arrivedVia: "SCANNER" };
+        tx.visit.findFirst.mockResolvedValue(live);
+        // 60 min off the measured live arrival flags (180); 30 min off the pre-lock WEB one would not (30).
+        const res = await PATCH(req("PATCH", { arrivedAt: "2026-07-20T13:30:00Z" }), ctx as never);
+
+        expect(res.status).toBe(200);
+        const audit = auditCreate.mock.calls[0][0].data;
+        expect(audit.oldData).toEqual({ id: 42, arrivedAt: live.arrivedAt, departedAt: live.departedAt, arrivedVia: "SCANNER", departedVia: "WEB" });
+        expect(audit.newData.significance.flagged).toBe(true);
+        expect(emailBoardMembers).toHaveBeenCalledTimes(1);
+    });
+
     it("refuses an open visit: only the kiosk or the 11 PM close ends one", async () => {
         visitFindUnique.mockResolvedValue({ ...baseVisit, departedAt: null, departedVia: null });
         const res = await PATCH(req("PATCH", { departedAt: "2026-07-20T17:00:00Z" }), ctx as never);
@@ -296,6 +311,28 @@ describe("DELETE /api/attendance/manual/[id]", () => {
         expect(audit).toMatchObject({ action: "DELETE", tableName: "Visit", affectedEntityId: 42 });
         expect(audit.newData.significance.flagged).toBe(true);
         expect(emailBoardMembers).toHaveBeenCalledTimes(1);
+    });
+
+    it("scores and audits from the row read under the lock when it changed after the pre-check", async () => {
+        visitFindUnique.mockResolvedValue(baseVisit);
+        const live = { ...baseVisit, departedAt: new Date("2026-07-20T17:00:00Z"), departedVia: "SCANNER" };
+        tx.visit.findFirst.mockResolvedValue(live);
+        const res = await DELETE(req("DELETE"), ctx as never);
+
+        expect(res.status).toBe(200);
+        const audit = auditCreate.mock.calls[0][0].data;
+        expect(audit.oldData).toEqual({ arrivedAt: live.arrivedAt, departedAt: live.departedAt, arrivedVia: "WEB", departedVia: "SCANNER" });
+        // 180 live minutes × SCANNER weight 3, not the pre-lock 120 × WEB weight 1.
+        expect(audit.newData.significance).toEqual({ score: 540, flagged: true });
+    });
+
+    it("404s when the visit is tombstoned between the pre-check and the lock", async () => {
+        visitFindUnique.mockResolvedValue(baseVisit);
+        tx.visit.findFirst.mockResolvedValue(null);
+        const res = await DELETE(req("DELETE"), ctx as never);
+        expect(res.status).toBe(404);
+        expect(tx.visit.updateMany).not.toHaveBeenCalled();
+        expect(auditCreate).not.toHaveBeenCalled();
     });
 
     it("refuses an open visit: only the kiosk or the 11 PM close ends one", async () => {
