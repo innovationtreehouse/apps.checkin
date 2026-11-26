@@ -386,6 +386,17 @@ describe('Membership payment-plan routes', () => {
             expect(proc?.isPaymentPlanRequested).toBe(true);
         });
 
+        it('a fresh request records the stated kind', async () => {
+            const fresh = await makeProc('LeadKindReq', { requested: false, withLead: true });
+            mockSession.mockResolvedValue({ user: { id: fresh.personId } });
+            const res = await RequestPost(requestReq({ processId: fresh.processId, kind: 'PAYMENT_PLAN' }));
+            expect(res.status).toBe(200);
+
+            const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: fresh.processId } });
+            expect(proc?.isPaymentPlanRequested).toBe(true);
+            expect(proc?.scholarshipRequestKind).toBe('PAYMENT_PLAN');
+        });
+
         it('200 when a board member requests on any household', async () => {
             const fresh = await makeProc('BoardReq', { requested: false, withLead: true });
             mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });

@@ -50,12 +50,14 @@ describe("membership-audit/compliance page", () => {
     expect(await screen.findByText(/Everyone is in compliance/)).toBeInTheDocument();
   });
 
-  it("shows the failure and a retry when the load is refused", async () => {
+  it("shows the failure and a retry in place of the page when the load is refused", async () => {
     global.fetch = jest.fn(async () => ({ ok: false, status: 403, ...jsonBody({ error: "Forbidden" }) }) as Response) as unknown as typeof fetch;
     renderPage();
 
     expect(await screen.findByText("Couldn't load compliance data")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.queryByText(/Households out of compliance/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Everyone is in compliance/)).not.toBeInTheDocument();
   });
 
   it("labels the likely subject of a blanket-stamped household and never pre-selects one", async () => {

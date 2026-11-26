@@ -12,7 +12,7 @@
  *     reads the household's check started from its people's reviews; a paid row
  *     goes to PENDING_BG_CLEARANCE and is handed to the household settle.
  */
-import { setZohoEnvelope, findProcessByEnvelope, getOrCreateContractSigningUrl, advanceExternalIfComplete, markContractSigned, resetSigning, ExternalError } from '@/lib/membership/external';
+import { setZohoEnvelope, findProcessByEnvelope, getOrCreateContractSigningUrl, advanceExternalIfComplete, markContractSigned, pickUpMissedSignature, resetSigning, ExternalError } from '@/lib/membership/external';
 import { SIGN_FIELDS } from '@/lib/membership/contract/signFields';
 
 jest.mock('@/lib/prisma', () => ({
@@ -836,5 +836,25 @@ describe('resetSigning', () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...open, zohoEnvelopeId: null, zohoSignerPersonId: null });
         await expect(resetSigning(20, 9, 'x')).rejects.toMatchObject({ code: 'wrong_phase' });
         expect(zohoSign.recallRequest).not.toHaveBeenCalled();
+    });
+});
+
+describe('pickUpMissedSignature', () => {
+    const closedWhileSigned = { id: 7, contractSignedAt: null, zohoEnvelopeId: 'req-7' };
+
+    it('asks Zoho nothing and writes nothing while the signing mock is active', async () => {
+        await pickUpMissedSignature(closedWhileSigned);
+        expect(zohoSign.getAccessToken).not.toHaveBeenCalled();
+        expect(zohoSign.getRequestStatus).not.toHaveBeenCalled();
+        expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('asks Zoho when the mock is off', async () => {
+        config.zohoMockActive.mockReturnValue(false);
+        zohoSign.getAccessToken.mockResolvedValue('token');
+        zohoSign.getRequestStatus.mockResolvedValue('inprogress');
+        await pickUpMissedSignature(closedWhileSigned);
+        expect(zohoSign.getRequestStatus).toHaveBeenCalledWith('token', 'req-7');
+        expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
 });

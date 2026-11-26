@@ -1170,12 +1170,16 @@ describe('Program Participants API Integration Tests', () => {
              await prisma.programParticipant.delete({ where: { programId_personId: { programId: freeProgramId, personId: otherId } } });
         });
 
-        it('refuses self-withdrawal of a paid place even when the program is free now', async () => {
-             // Paid while priced (order on the place), then the Board zeroed the price.
+        // Paid while priced, then the Board zeroed the price.
+        it.each([
+            ['a store order', { shopifyOrderId: '9900123' }],
+            ['an approved scholarship', { wasOrgMemberAtApproval: false }],
+            ['an outside payment', { enrollmentBasis: 'OUTSIDE_PAYMENT' as const }],
+        ])('refuses self-withdrawal of a place paid by %s even when the program is free now', async (_label, paid) => {
              await prisma.programParticipant.upsert({
                  where: { programId_personId: { programId: freeProgramId, personId: commonId } },
-                 create: { programId: freeProgramId, personId: commonId, status: 'ACTIVE', shopifyOrderId: '9900123' },
-                 update: { status: 'ACTIVE', shopifyOrderId: '9900123', endedAt: null },
+                 create: { programId: freeProgramId, personId: commonId, status: 'ACTIVE', ...paid },
+                 update: { status: 'ACTIVE', shopifyOrderId: null, wasOrgMemberAtApproval: null, enrollmentBasis: null, endedAt: null, ...paid },
              });
              try {
                  (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } });
@@ -1187,9 +1191,9 @@ describe('Program Participants API Integration Tests', () => {
                      createParams(freeProgramId) as unknown as never,
                  );
                  expect(res.status).toBe(403);
-                 expect(await prisma.programParticipant.findUnique({
+                 expect((await prisma.programParticipant.findUnique({
                      where: { programId_personId: { programId: freeProgramId, personId: commonId } },
-                 })).not.toBeNull();
+                 }))?.status).toBe('ACTIVE');
              } finally {
                  await prisma.programParticipant.deleteMany({ where: { programId: freeProgramId, personId: commonId } });
              }
