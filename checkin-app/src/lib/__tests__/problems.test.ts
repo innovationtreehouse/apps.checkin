@@ -29,6 +29,7 @@ jest.mock("@checkin/local-inventory", () => ({ stuckItems: jest.fn(), retryStuck
 jest.mock("@/lib/finance/postingRuns", () => ({ currentPostingWarnings: jest.fn() }));
 jest.mock("@/lib/membership/positionCheck", () => ({ checkEmailStuckItems: jest.fn(), retryCheckEmail: jest.fn() }));
 jest.mock("@/lib/shopifyRead/client", () => ({ scheduledReadState: jest.fn(), unpaidPayoutsPastRereadWindow: jest.fn(), PAYOUT_REREAD_WINDOW_DAYS: 30 }));
+jest.mock("@/lib/appSettings", () => ({ resolveDisplayTimezone: jest.fn() }));
 
 const receipt = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/receipt");
 const expense = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/expense");
@@ -38,6 +39,7 @@ const inventory = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest
 const { currentPostingWarnings } = jest.requireMock<{ currentPostingWarnings: jest.Mock }>("@/lib/finance/postingRuns");
 const positionCheck = jest.requireMock<{ checkEmailStuckItems: jest.Mock; retryCheckEmail: jest.Mock }>("@/lib/membership/positionCheck");
 const { scheduledReadState, unpaidPayoutsPastRereadWindow } = jest.requireMock<{ scheduledReadState: jest.Mock; unpaidPayoutsPastRereadWindow: jest.Mock }>("@/lib/shopifyRead/client");
+const { resolveDisplayTimezone } = jest.requireMock<{ resolveDisplayTimezone: jest.Mock }>("@/lib/appSettings");
 
 const NOW = new Date("2026-11-08T08:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3600_000);
@@ -80,6 +82,7 @@ beforeEach(() => {
     positionCheck.checkEmailStuckItems.mockResolvedValue([]);
     scheduledReadState.mockResolvedValue(null);
     unpaidPayoutsPastRereadWindow.mockResolvedValue([]);
+    resolveDisplayTimezone.mockResolvedValue("America/Chicago");
 });
 
 afterAll(() => {
@@ -385,6 +388,12 @@ describe("the unpaid Shopify payouts line", () => {
         ]);
     });
 
+    it("dates each payout in the org's configured zone", async () => {
+        resolveDisplayTimezone.mockResolvedValue("Asia/Tokyo");
+        unpaidPayoutsPastRereadWindow.mockResolvedValue([payout("p1", "2026-10-01T18:00:00Z", "IN_TRANSIT")]);
+        expect(await payoutLines()).toEqual([{ text: "Shopify payout of Oct 2, 2026 still in transit after 30 days", href: PAYOUTS }]);
+    });
+
     it("says so when a payout has no status", async () => {
         unpaidPayoutsPastRereadWindow.mockResolvedValue([payout("p1", "2026-10-01T18:00:00Z", "")]);
         expect(await payoutLines()).toEqual([{ text: "Shopify payout of Oct 1, 2026 still with no status after 30 days", href: PAYOUTS }]);
@@ -523,6 +532,15 @@ describe("sendProblemsDigest", () => {
         await sendProblemsDigest(NOW);
 
         expect(digestCtx().items).toMatch(/^Scheduled job new-job: last run reported failures, /);
+    });
+
+    it("gives a late job's last run in the org's configured zone", async () => {
+        resolveDisplayTimezone.mockResolvedValue("Asia/Tokyo");
+        jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "nightly", lastSuccessAt: hoursAgo(72), stale: true }]);
+
+        await sendProblemsDigest(NOW);
+
+        expect(digestCtx().items).toMatch(/^Scheduled job nightly: last ran Nov 5, 2026, 5:00\sPM$/);
     });
 
     it("sends nothing for a job once a later run is clean", async () => {

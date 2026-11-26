@@ -1,7 +1,7 @@
 "use client";
 
 import { Box, Button, Card, Group, Stack, Text, ThemeIcon, Title } from "@mantine/core";
-import { APP_TIMEZONE, formatDate } from "@/lib/time";
+import { useOrgTime } from "@/components/TimezoneProvider";
 import type { ExternalStatus } from "./useMembershipPage";
 
 function ExternalTask({ done, title, doneText, doneExtra, children }: { done: boolean; title: string; doneText: string; doneExtra?: React.ReactNode; children: React.ReactNode }) {
@@ -33,6 +33,7 @@ export default function ExternalActionPanel({ external, isRenewal, saving, onSig
   onSign: () => void;
   onRefresh: () => void;
 }) {
+  const { formatDate } = useOrgTime();
   return (
     <Card withBorder radius="md" padding="lg">
       <Stack gap="md">
@@ -49,7 +50,7 @@ export default function ExternalActionPanel({ external, isRenewal, saving, onSig
           done={!!external?.contractSigned}
           title="Sign your membership agreement"
           doneText={external?.contractSignedAt
-            ? `${external.signerName ? `Signed by ${external.signerName}` : "Signed"}, ${formatDate(external.contractSignedAt, { year: "numeric", month: "short", day: "numeric", timeZone: APP_TIMEZONE })}.`
+            ? `${external.signerName ? `Signed by ${external.signerName}` : "Signed"}, ${formatDate(external.contractSignedAt, { year: "numeric", month: "short", day: "numeric" })}.`
             : "Agreement signed — thank you!"}
         >
           <Stack gap="xs" align="flex-start">

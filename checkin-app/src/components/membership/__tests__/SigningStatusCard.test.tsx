@@ -1,5 +1,6 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { notifications, notificationsStore } from "@mantine/notifications";
+import { TimezoneProvider } from "@/components/TimezoneProvider";
 import { renderWithProviders, resetRtl } from "@/test-helpers/rtl";
 import { SigningStatusCard } from "../SigningStatusCard";
 
@@ -25,5 +26,13 @@ describe("SigningStatusCard", () => {
     );
     expect(onChange).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Reason")).toHaveValue("Stuck request");
+  });
+
+  it("dates the signature in the org's configured zone", () => {
+    renderWithProviders(
+      <SigningStatusCard signing={{ processId: 7, contractStarted: true, signerName: "Pat", contractSignedAt: "2026-10-01T18:00:00Z" }} onChange={jest.fn()} />,
+      { wrapper: ({ children }) => <TimezoneProvider value="Asia/Tokyo">{children}</TimezoneProvider> },
+    );
+    expect(screen.getByText("Signed by Pat, Oct 2, 2026")).toBeInTheDocument();
   });
 });
