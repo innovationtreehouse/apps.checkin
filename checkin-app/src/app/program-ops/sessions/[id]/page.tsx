@@ -3,7 +3,7 @@
 import { useState, use, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useRequireRole } from '@/hooks/useRequireRole';
-import { Alert, Badge, Button, Card, Checkbox, Container, Group, Modal, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Button, Card, Container, Group, Text, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { errorMessage, HttpError, LoadError, showError, showSuccess } from '@checkin/component-ui';
 import { useSeedForm } from '@/hooks/useSeedForm';
@@ -11,49 +11,14 @@ import { api, useLoad } from '@/lib/api';
 import { toDatetimeLocal, fromDatetimeLocal } from '@/lib/time';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { MAX_VISIT_MS } from '@/lib/visitTimes';
-import type { RSVPStatus } from '@/types/rsvp';
 
 import { PageLoader } from "@/components/ui/PageLoader";
-type ParticipantDetail = {
-  personId: number;
-  person: {
-    id: number;
-    name: string | null;
-    email: string;
-  };
-  isCore?: boolean;
-};
-
-type EventData = {
-  id: number;
-  name: string;
-  startAt: string;
-  endAt: string;
-  attendanceConfirmedAt: string | null;
-  attendanceConfirmedBy?: { name: string | null } | null;
-  recurringGroupId: string | null;
-  program?: {
-    id: number;
-    name: string;
-    leadMentorId: number | null;
-    volunteers: ParticipantDetail[];
-    participants: ParticipantDetail[];
-  };
-  visits: {
-    id: number;
-    personId: number;
-    arrivedAt: string;
-    departedAt: string | null;
-  }[];
-  rsvps: { personId: number; status: RSVPStatus }[];
-};
-
-const RSVP_BADGE: Record<RSVPStatus, { label: string; color: string }> = {
-  ATTENDING: { label: 'Attending', color: 'treehouseGreen' },
-  MAYBE: { label: 'Maybe', color: 'yellow' },
-  NOT_ATTENDING: { label: 'Not attending', color: 'red' },
-  NO_RESPONSE: { label: 'No response', color: 'gray' },
-};
+import { AttendanceCard } from './AttendanceCard';
+import { CancelEventModal } from './CancelEventModal';
+import { ManageEventCard } from './ManageEventCard';
+import { ManualAttendanceModal } from './ManualAttendanceModal';
+import { RsvpList } from './RsvpList';
+import type { EventData, RosterMember, Visit } from './eventDetail';
 
 export default function EventAdminPage({ params }: { params: Promise<{ id: string }> }) {
   const { formatDateTime } = useOrgTime();
@@ -79,7 +44,7 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
   const [confirmCancelOpened, { open: openConfirmCancel, close: closeConfirmCancel }] = useDisclosure(false);
 
   // Manual Edit States
-  const [editingAttendance, setEditingAttendance] = useState<(ParticipantDetail & { role: string }) | null>(null);
+  const [editingAttendance, setEditingAttendance] = useState<RosterMember | null>(null);
   const [manualStatus, setManualStatus] = useState<"Present" | "Absent">("Present");
   const [manualArrived, setManualArrived] = useState("");
   const [manualDeparted, setManualDeparted] = useState("");
@@ -205,140 +170,21 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
 
   const isPastEvent = new Date(eventData.endAt) < new Date();
 
-  const renderRosterGrid = () => {
-    if (!eventData.program) return null;
-
-    const allRoster = [
-      ...eventData.program.volunteers.map(v => ({ ...v, role: v.isCore ? 'Core Volunteer' : 'Volunteer' })),
-      ...eventData.program.participants.map(p => ({ ...p, role: 'Participant' }))
-    ];
-
-    const ROLE_RANK: Record<string, number> = { 'Core Volunteer': 1, 'Volunteer': 2, 'Participant': 3 };
-
-    allRoster.sort((a, b) => {
-      if (ROLE_RANK[a.role] !== ROLE_RANK[b.role]) return ROLE_RANK[a.role] - ROLE_RANK[b.role];
-      return (a.person.name || "").localeCompare(b.person.name || "");
-    });
-
-    return (
-      <Table.ScrollContainer minWidth={600} mt="md">
-        <Table verticalSpacing="sm">
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>Name</Table.Th>
-              <Table.Th>Role</Table.Th>
-              <Table.Th>Status / Time</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {allRoster.map((member) => {
-              const visit = eventData.visits.find(v => v.personId === member.personId);
-              let statusEl;
-              if (visit) {
-                const arriveTime = new Date(visit.arrivedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                const leaveTime = visit.departedAt ? new Date(visit.departedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Still Here';
-                statusEl = <Text component="span" c="green">Arrived: {arriveTime} {visit.departedAt ? `| Left: ${leaveTime}` : ''}</Text>;
-              } else {
-                statusEl = <Text component="span" c="red">Absent</Text>;
-              }
-
-              return (
-                <Table.Tr key={`${member.role}-${member.personId}`}>
-                  <Table.Td>
-                    <Text fw={500}>{member.person.name || 'Unnamed'}</Text>
-                    <Text size="xs" c="dimmed">{member.person.email}</Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Badge color={member.role === 'Participant' ? 'cyan' : 'yellow'} variant="light">{member.role}</Badge>
-                  </Table.Td>
-                  <Table.Td>
-                    <Group justify="space-between" wrap="nowrap">
-                      {statusEl}
-                      {canManageAttendance && (
-                        <Button size="compact-xs" variant="light" onClick={() => {
-                          setManualDepartedError(undefined);
-                          setEditingAttendance(member);
-                          if (visit) {
-                            setManualStatus("Present");
-                            setManualArrived(toDatetimeLocal(visit.arrivedAt));
-                            setManualDeparted(visit.departedAt ? toDatetimeLocal(visit.departedAt) : "");
-                          } else {
-                            setManualStatus("Absent");
-                            setManualArrived(toDatetimeLocal(eventData.startAt));
-                            setManualDeparted(toDatetimeLocal(new Date(Math.min(Date.parse(eventData.endAt), Date.now())).toISOString()));
-                          }
-                        }}>
-                          Manual Edit
-                        </Button>
-                      )}
-                    </Group>
-                  </Table.Td>
-                </Table.Tr>
-              );
-            })}
-            {allRoster.length === 0 && (
-              <Table.Tr><Table.Td colSpan={3} ta="center"><Text c="dimmed" py="md">No roster found for this program.</Text></Table.Td></Table.Tr>
-            )}
-          </Table.Tbody>
-        </Table>
-      </Table.ScrollContainer>
-    );
+  const openManualEdit = (member: RosterMember, visit: Visit | undefined) => {
+    setManualDepartedError(undefined);
+    setEditingAttendance(member);
+    if (visit) {
+      setManualStatus("Present");
+      setManualArrived(toDatetimeLocal(visit.arrivedAt));
+      setManualDeparted(visit.departedAt ? toDatetimeLocal(visit.departedAt) : "");
+    } else {
+      setManualStatus("Absent");
+      setManualArrived(toDatetimeLocal(eventData.startAt));
+      setManualDeparted(toDatetimeLocal(new Date(Math.min(Date.parse(eventData.endAt), Date.now())).toISOString()));
+    }
   };
 
-  const renderRsvpList = () => {
-    if (!eventData.program) return null;
-
-    const statusByParticipant = new Map(eventData.rsvps.map(r => [r.personId, r.status]));
-    const roster = [
-      ...eventData.program.volunteers.map(v => ({ ...v, role: v.isCore ? 'Core Volunteer' : 'Volunteer' })),
-      ...eventData.program.participants.map(p => ({ ...p, role: 'Participant' })),
-    ];
-    const ROLE_RANK: Record<string, number> = { 'Core Volunteer': 1, 'Volunteer': 2, 'Participant': 3 };
-    roster.sort((a, b) =>
-      ROLE_RANK[a.role] !== ROLE_RANK[b.role]
-        ? ROLE_RANK[a.role] - ROLE_RANK[b.role]
-        : (a.person.name || "").localeCompare(b.person.name || "")
-    );
-
-    return (
-      <Card withBorder radius="md" padding="lg" mb="lg">
-        <Title order={4} mb="md">RSVPs</Title>
-        <Table.ScrollContainer minWidth={400}>
-          <Table verticalSpacing="sm">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Name</Table.Th>
-                <Table.Th>Role</Table.Th>
-                <Table.Th>RSVP</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {roster.map((member) => {
-                const badge = RSVP_BADGE[statusByParticipant.get(member.personId) ?? 'NO_RESPONSE'];
-                return (
-                  <Table.Tr key={`${member.role}-${member.personId}`}>
-                    <Table.Td>
-                      <Text fw={500}>{member.person.name || 'Unnamed'}</Text>
-                      <Text size="xs" c="dimmed">{member.person.email}</Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Badge color={member.role === 'Participant' ? 'cyan' : 'yellow'} variant="light">{member.role}</Badge>
-                    </Table.Td>
-                    <Table.Td>
-                      <Badge color={badge.color} variant="light">{badge.label}</Badge>
-                    </Table.Td>
-                  </Table.Tr>
-                );
-              })}
-              {roster.length === 0 && (
-                <Table.Tr><Table.Td colSpan={3} ta="center"><Text c="dimmed" py="md">No roster found for this program.</Text></Table.Td></Table.Tr>
-              )}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
-      </Card>
-    );
-  };
+  const closeManualEdit = () => !actionLoading && (setEditingAttendance(null), setManualDepartedError(undefined));
 
   return (
     <Container size="lg" pb="md">
@@ -368,66 +214,34 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
 
         {/* PAST EVENT: ATTENDANCE CONFIRMATION */}
         {isPastEvent && canManageAttendance && (
-          <Card withBorder radius="md" padding="lg" mb="lg">
-            <Group justify="space-between" align="center" wrap="wrap">
-              <div>
-                <Title order={4}>Attendance Tracking</Title>
-                <Text c="dimmed">Review program badge scans below and confirm final attendance.</Text>
-              </div>
-              {eventData.attendanceConfirmedAt ? (
-                <Group align="center" gap="md">
-                  <Text size="sm" c="dimmed" ta="right">
-                    Confirmed on {new Date(eventData.attendanceConfirmedAt).toLocaleDateString()}
-                    <br />by {eventData.attendanceConfirmedBy?.name || 'Unknown'}
-                  </Text>
-                  <Button variant="default" onClick={handleConfirmAttendance} disabled={actionLoading}>Re-confirm</Button>
-                </Group>
-              ) : (
-                <Button onClick={handleConfirmAttendance} disabled={actionLoading} loading={actionLoading}>Confirm Attendance</Button>
-              )}
-            </Group>
-            {renderRosterGrid()}
-          </Card>
+          <AttendanceCard
+            eventData={eventData}
+            actionLoading={actionLoading}
+            onConfirm={handleConfirmAttendance}
+            canManageAttendance={canManageAttendance}
+            onManualEdit={openManualEdit}
+          />
         )}
 
         {/* ENROLLED INDIVIDUALS + RSVP STATUS */}
-        {renderRsvpList()}
+        <RsvpList eventData={eventData} />
 
         {/* FUTURE EVENT: EDIT / CANCEL */}
         {!isPastEvent && canManageEventInfo && (
-          <Card withBorder radius="md" padding="lg" mb="lg">
-            <Title order={4} mb="lg">Manage Event</Title>
-
-            {!editMode ? (
-              <Group>
-                <Button variant="light" onClick={() => setEditMode(true)}>Edit Date / Time</Button>
-                <Button variant="light" color="red" onClick={() => setEditMode(true)}>Cancel Event</Button>
-              </Group>
-            ) : (
-              <Stack>
-                <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                  <TextInput type="datetime-local" label="Start Time" value={newStart} onChange={e => setNewStart(e.currentTarget.value)} />
-                  <TextInput type="datetime-local" label="End Time" value={newEnd} onChange={e => setNewEnd(e.currentTarget.value)} />
-                </SimpleGrid>
-
-                {eventData.recurringGroupId && (
-                  <Alert color="yellow" variant="light">
-                    <Checkbox
-                      checked={applyToFuture}
-                      onChange={e => setApplyToFuture(e.currentTarget.checked)}
-                      label={<span><strong>Apply to Series:</strong> Apply these changes (time shift or cancellation) to this event and all FUTURE events in this recurring set.</span>}
-                    />
-                  </Alert>
-                )}
-
-                <Group>
-                  <Button onClick={handleEditTime} disabled={actionLoading} loading={actionLoading}>Save Time Changes</Button>
-                  <Button color="red" variant="light" onClick={openConfirmCancel} disabled={actionLoading} loading={actionLoading}>Cancel Event(s)</Button>
-                  <Button variant="default" onClick={() => setEditMode(false)} disabled={actionLoading} ml="auto">Nevermind</Button>
-                </Group>
-              </Stack>
-            )}
-          </Card>
+          <ManageEventCard
+            editMode={editMode}
+            setEditMode={setEditMode}
+            newStart={newStart}
+            setNewStart={setNewStart}
+            newEnd={newEnd}
+            setNewEnd={setNewEnd}
+            applyToFuture={applyToFuture}
+            setApplyToFuture={setApplyToFuture}
+            recurringGroupId={eventData.recurringGroupId}
+            actionLoading={actionLoading}
+            onSave={handleEditTime}
+            onCancelClick={openConfirmCancel}
+          />
         )}
 
         {/* Fallback for Core Volunteers on future events */}
@@ -446,59 +260,30 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
         )}
       </Card>
 
-      <Modal
-        opened={!!editingAttendance}
-        onClose={() => !actionLoading && (setEditingAttendance(null), setManualDepartedError(undefined))}
-        title={<Text span fw={700} fz="lg">Manual Edit: {editingAttendance?.person.name}</Text>}
-        centered
-      >
-        <Stack>
-          {(() => {
-            const editingVisit = editingAttendance ? eventData.visits.find(v => v.personId === editingAttendance.personId) : undefined;
-            const isCheckedIn = !!(editingVisit && !editingVisit.departedAt);
-            return (
-              <Select
-                label="Status"
-                value={manualStatus}
-                onChange={(v) => setManualStatus((v as "Present" | "Absent") ?? "Present")}
-                allowDeselect={false}
-                data={[{ value: "Present", label: "Present" }, { value: "Absent", label: "Absent", disabled: isCheckedIn }]}
-                description={isCheckedIn ? "Still checked in: they badge out at the kiosk, or the 11 PM close ends the visit." : undefined}
-              />
-            );
-          })()}
-          {manualStatus === "Present" && (
-            <>
-              <TextInput type="datetime-local" label="Arrived Time" value={manualArrived} onChange={(e) => { setManualArrived(e.currentTarget.value); setManualDepartedError(undefined); }} />
-              <TextInput
-                ref={manualDepartedRef}
-                type="datetime-local"
-                label="Departed Time"
-                value={manualDeparted}
-                error={manualDepartedError}
-                onChange={(e) => { setManualDeparted(e.currentTarget.value); setManualDepartedError(undefined); }}
-              />
-            </>
-          )}
-          <Group justify="flex-end">
-            <Button variant="default" onClick={() => setEditingAttendance(null)} disabled={actionLoading}>Cancel</Button>
-            <Button onClick={handleSaveManualAttendance} disabled={actionLoading} loading={actionLoading}>Save</Button>
-          </Group>
-        </Stack>
-      </Modal>
+      <ManualAttendanceModal
+        editingAttendance={editingAttendance}
+        visits={eventData.visits}
+        manualStatus={manualStatus}
+        setManualStatus={setManualStatus}
+        manualArrived={manualArrived}
+        setManualArrived={setManualArrived}
+        manualDeparted={manualDeparted}
+        setManualDeparted={setManualDeparted}
+        manualDepartedError={manualDepartedError}
+        setManualDepartedError={setManualDepartedError}
+        departedRef={manualDepartedRef}
+        actionLoading={actionLoading}
+        onClose={closeManualEdit}
+        onCancel={() => setEditingAttendance(null)}
+        onSave={handleSaveManualAttendance}
+      />
 
-      <Modal
+      <CancelEventModal
         opened={confirmCancelOpened}
         onClose={closeConfirmCancel}
-        title={<Text span fw={700} fz="lg">Cancel Event</Text>}
-        centered
-      >
-        <Text mb="lg">Are you sure you want to cancel this event? This action cannot be undone.</Text>
-        <Group justify="flex-end">
-          <Button variant="default" onClick={closeConfirmCancel}>Nevermind</Button>
-          <Button color="red" onClick={handleCancelEvent} disabled={actionLoading} loading={actionLoading}>Cancel Event(s)</Button>
-        </Group>
-      </Modal>
+        onConfirm={handleCancelEvent}
+        actionLoading={actionLoading}
+      />
     </Container>
   );
 }
