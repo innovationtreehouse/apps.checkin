@@ -119,6 +119,44 @@ describe("HouseholdPage add member submit", () => {
     fireEvent.click(save);
     await waitFor(() => expect(writeCount()).toBe(2));
   });
+
+  describe("asking the only lead to make a new adult a second lead", () => {
+    const added = { member: { id: 12, name: "Robin Smith", isDeclaredAdult: true, isHouseholdLead: false } };
+
+    it("asks, and Yes makes them a lead through the lead route", async () => {
+      const fetchMock = routedFetch([
+        ...readRules,
+        { url: "/api/household", method: "PATCH", result: { body: added } },
+        { url: "/api/household/lead", method: "POST", result: { body: {} } },
+      ]);
+      fireEvent.click(await openAddForm());
+
+      fireEvent.click(await screen.findByRole("button", { name: "Yes, make them a second lead" }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/household/lead", expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ participantId: 12 }),
+      })));
+    });
+
+    it("No leaves them an adult who isn't a lead, recording nothing", async () => {
+      const fetchMock = routedFetch([...readRules, { url: "/api/household", method: "PATCH", result: { body: added } }]);
+      fireEvent.click(await openAddForm());
+
+      fireEvent.click(await screen.findByRole("button", { name: "No" }));
+
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Yes, make them a second lead" })).not.toBeInTheDocument());
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/household/lead"))).toBe(false);
+    });
+
+    it("doesn't ask about a child", async () => {
+      routedFetch([...readRules, { url: "/api/household", method: "PATCH", result: { body: { member: { id: 12, name: "Kit", dateOfBirth: "2018-01-01", isHouseholdLead: false } } } }]);
+      fireEvent.click(await openAddForm());
+
+      await waitFor(() => expect(screen.queryByLabelText("Full Name")).not.toBeInTheDocument());
+      expect(screen.queryByRole("button", { name: "Yes, make them a second lead" })).not.toBeInTheDocument();
+    });
+  });
 });
 
 describe("HouseholdPage", () => {

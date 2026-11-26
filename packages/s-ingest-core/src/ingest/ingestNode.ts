@@ -22,6 +22,7 @@ export interface IngestNodeResult {
   shopifyGid: string;
   occurredAt: Date | null;
   inserted: boolean;
+  payloadChanged: boolean;
 }
 
 export async function ingestNode(prisma: PrismaClient, args: IngestNodeArgs): Promise<IngestNodeResult> {

@@ -24,6 +24,7 @@ import { isLiveHousehold } from "@/lib/household/archived";
 import { ARCHIVED_HOUSEHOLD_REFUSAL, lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
 import { personActor, recordAudit } from "@/lib/auditActor";
+import { openPersonAgreementOnEngage } from "@/lib/membership/personAgreementTriggers";
 
 
 // Public catalog projection: every Program column whose `/// @sensitivity:` tier
@@ -310,6 +311,7 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
             });
             return created;
         });
+        await openPersonAgreementOnEngage(mentorId);
 
         // Stable handles, so a Sync to Shopify run after a failure here finds these products instead of minting twice.
         let newProgram = createdProgram;

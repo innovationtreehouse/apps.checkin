@@ -58,7 +58,7 @@ describe("flow: Board oversight", () => {
         const restoreRecheck = await setBgRecheckMonths(board, 29);
         const compliance = await api<Record<string, unknown>>(board, "/api/membership-audit/compliance").finally(restoreRecheck);
         expect(compliance.status).toBe(200);
-        for (const list of ["households", "peopleNeedingBgCheck", "peopleMissingDob", "peopleWithDisputedCheck", "positionHolders", "peopleAwaitingAgreement", "peopleNeedingAgreement"]) {
+        for (const list of ["households", "peopleNeedingBgCheck", "peopleMissingDob", "peopleWithDisputedCheck", "positionHolders", "peopleAwaitingAgreement", "peopleFreeTimeWithoutAgreement"]) {
             expect(Array.isArray(compliance.json[list])).toBe(true);
         }
         expect(compliance.json.households).toContainEqual(expect.objectContaining({

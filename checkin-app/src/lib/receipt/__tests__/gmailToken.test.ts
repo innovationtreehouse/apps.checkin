@@ -4,7 +4,8 @@
 import { kindOf } from "@checkin/component-kit";
 import { gmailTokenSource } from "../gmailToken";
 
-jest.mock("@aws-sdk/client-lambda", () => ({ LambdaClient: jest.fn(), InvokeCommand: jest.fn() }));
+const send = jest.fn();
+jest.mock("@aws-sdk/client-lambda", () => ({ LambdaClient: jest.fn(() => ({ send })), InvokeCommand: jest.fn() }));
 
 const MAILBOX = "receipts@example.com";
 const answer = (over: Record<string, unknown> = {}) => ({ accessToken: "tok-1", expiresAt: Date.now() + 3600_000, mailbox: MAILBOX, ...over });
@@ -25,6 +26,13 @@ describe("gmailTokenSource", () => {
 
     it("refuses a malformed answer as settings, naming the setting and who checks it", async () => {
         const err = await failure(jest.fn().mockResolvedValue({ accessToken: "" }));
+        expect(kindOf(err)).toBe("settings");
+        expect((err as Error).message).toMatch(/GMAIL_REFRESHER_FN.*Ops/);
+    });
+
+    it("refuses a refresher Lambda's non-JSON answer as settings through the default invoke", async () => {
+        send.mockResolvedValueOnce({ Payload: new TextEncoder().encode("<html>not a refresher</html>") });
+        const err = await gmailTokenSource("gmail-refresher", MAILBOX)().catch((e: unknown) => e);
         expect(kindOf(err)).toBe("settings");
         expect((err as Error).message).toMatch(/GMAIL_REFRESHER_FN.*Ops/);
     });

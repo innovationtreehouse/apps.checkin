@@ -107,15 +107,6 @@ const capital: InKindCapital = {
   async register(orgId, line) {
     return (await import("@checkin/expense")).registerGiftLineAssets(orgId, line);
   },
-  async submit(orgId, lines) {
-    await (await import("@checkin/expense")).submitDonatedLines(orgId, lines);
-  },
-  async awaitingReview(orgId) {
-    return (await import("@checkin/expense")).giftsAwaitingCapitalReview(orgId);
-  },
-  async assetLineIds(orgId, gift) {
-    return (await import("@checkin/expense")).donatedAssetLineIds(orgId, gift);
-  },
 };
 
 const partAccounts: InKindAccounts = {

@@ -254,7 +254,6 @@ export const classifications = {
         sourceReceiptId: 'internal',
         sourceQbTxnId: 'internal',
         sourceQbTxnEntity: 'internal',
-        sourceDonatedLineId: 'internal',
         sourceKind: 'internal',
         sourceGiftSource: 'internal',
         sourceGiftId: 'internal',
@@ -266,23 +265,6 @@ export const classifications = {
     CapitalAssetSequence: {
         orgId: 'internal',
         highestIssued: 'internal',
-    },
-    DonatedCapitalLine: {
-        id: 'internal',
-        orgId: 'internal',
-        giftSource: 'internal',
-        giftId: 'internal',
-        giftLineId: 'internal',
-        description: 'internal',
-        quantity: 'internal',
-        costCents: 'internal',
-        acquisitionDate: 'internal',
-        budgetOwnerId: 'internal',
-        isCapital: 'internal',
-        depreciationYears: 'internal',
-        reviewedByUserId: 'pii',
-        reviewedAt: 'internal',
-        createdAt: 'internal',
     },
     ExpenseQbMatchExclusion: {
         id: 'internal',
@@ -396,8 +378,6 @@ export const relations = {
     },
     CapitalAssetSequence: {
     },
-    DonatedCapitalLine: {
-    },
     ExpenseQbMatchExclusion: {
     },
     ExpenseQbClaim: {
@@ -420,7 +400,6 @@ export const marks = {
     ExpenseAuditLog: ['valueBefore', 'valueAfter'],
     ReceivedExpensePayload: ['payloadJson'],
     CapitalAsset: ['costCents'],
-    DonatedCapitalLine: ['costCents'],
     ExpenseReimburseeVendor: ['reimburseePersonId'],
 } as const;
 

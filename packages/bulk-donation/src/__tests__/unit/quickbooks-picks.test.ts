@@ -18,6 +18,7 @@ const ACCOUNTS = [
   { id: "400", name: "Donations", accountType: "Income", active: true },
   { id: "600", name: "Supplies", accountType: "Expense", active: true },
   { id: "150", name: "Equipment", accountType: "Fixed Asset", active: true },
+  { id: "410", name: "Old Donations", accountType: "Income", active: false },
 ];
 const LATHE = 7;
 
@@ -46,6 +47,13 @@ describe("bulk-donation misTypedQuickBooksPicks", () => {
       "Donation account map, Acme / Match, donation account: QuickBooks' list in the app doesn't have an account with id 999",
       "Donation account map, Acme / Match, match account: A rule's match account takes an Income or Other Income account; QuickBooks' list in the app shows Supplies as Expense",
       "Gifts of goods, manual gift 4, line 2: A donated item takes an Expense, Other Expense, or Cost of Goods Sold account; QuickBooks' list in the app shows Donations as Income",
+    ]);
+  });
+
+  it("flags a pick QuickBooks' list shows as inactive", async () => {
+    vi.mocked(db.accountMap.findMany).mockResolvedValueOnce([map("410", null)] as never);
+    expect(await misTypedQuickBooksPicks(ACCOUNTS)).toEqual([
+      "Donation account map, Acme / Match, donation account: QuickBooks' list in the app shows Old Donations as inactive",
     ]);
   });
 

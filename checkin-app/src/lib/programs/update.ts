@@ -20,6 +20,7 @@ import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
 import { isProgramNameTaken, PROGRAM_NAME_TAKEN, programNameFields } from "@/lib/programs/nameKey";
 import { personActor, recordAudit } from "@/lib/auditActor";
+import { openPersonAgreementOnEngage } from "@/lib/membership/personAgreementTriggers";
 
 export interface ProgramEditor {
     id: number;
@@ -513,6 +514,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     const notice = rearmSale && before.productHiddenAt
         ? "Sale reopened. The public store product stays hidden: re-list it in Shopify by hand if it should sell again."
         : undefined;
+    if (newLeader !== null) await openPersonAgreementOnEngage(newLeader);
     return { ok: true, program: updatedProgram, warning, notice };
 }
 

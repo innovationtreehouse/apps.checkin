@@ -37,6 +37,8 @@ export interface AppendRawEventResult {
   occurredAt: Date | null;
   /** false when skipped as an identical re-read of the latest event for this gid. */
   inserted: boolean;
+  /** false when the payload is byte-identical to the latest event for this gid, whatever its source. */
+  payloadChanged: boolean;
 }
 
 const HAND_MADE: ReadonlySet<EventSource> = new Set([EventSource.HAND_LOADED, EventSource.TEST_LOADED]);
@@ -98,8 +100,9 @@ export async function appendRawEvent(
       select: { id: true, payloadHash: true, source: true },
     });
 
-    if (latest && latest.payloadHash === payloadHash && !confirmsHandMade(latest.source, args.source)) {
-      return { rawEventId: latest.id, shopifyGid: meta.shopifyGid, occurredAt: meta.occurredAt, inserted: false };
+    const payloadChanged = latest?.payloadHash !== payloadHash;
+    if (latest && !payloadChanged && !confirmsHandMade(latest.source, args.source)) {
+      return { rawEventId: latest.id, shopifyGid: meta.shopifyGid, occurredAt: meta.occurredAt, inserted: false, payloadChanged };
     }
 
     const row = await tx.shopifyRawEvent.create({
@@ -117,6 +120,6 @@ export async function appendRawEvent(
       select: { id: true },
     });
 
-    return { rawEventId: row.id, shopifyGid: meta.shopifyGid, occurredAt: meta.occurredAt, inserted: true };
+    return { rawEventId: row.id, shopifyGid: meta.shopifyGid, occurredAt: meta.occurredAt, inserted: true, payloadChanged };
   });
 }

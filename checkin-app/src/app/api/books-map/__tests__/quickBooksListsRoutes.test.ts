@@ -92,6 +92,12 @@ describe('POST /api/books-map/quickbooks-lists/refresh', () => {
         expect(refresh).not.toHaveBeenCalled();
     });
 
+    test('a press calls QuickBooks when one list is fresh and the other is 30 s or older', async () => {
+        status.mockResolvedValue([{ ...STATUS[0], refreshedAt: new Date(Date.now() - 10_000) }, { ...STATUS[1], refreshedAt: new Date(Date.now() - 40_000) }]);
+        expect((await press(FINANCE)).status).toBe(200);
+        expect(refresh).toHaveBeenCalledTimes(1);
+    });
+
     test('a press 30 s or more after the last refresh calls QuickBooks', async () => {
         status.mockResolvedValue(STATUS.map((s) => ({ ...s, refreshedAt: new Date(Date.now() - 31_000) })));
         expect((await press(FINANCE)).status).toBe(200);

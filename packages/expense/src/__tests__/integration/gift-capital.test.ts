@@ -29,9 +29,9 @@ describeDb("gift capital", () => {
     expect(numbers).toHaveLength(2);
     expect(await registerGiftLineAssets(ORG, line)).toEqual(numbers);
     const assets = await db.capitalAsset.findMany({ where: { orgId: ORG }, orderBy: { unitIndex: "asc" } });
-    expect(assets.map((a) => [a.assetNumber, a.sourceKind, a.sourceGiftSource, a.sourceGiftId, a.sourceGiftLineId, a.sourceDonatedLineId, a.unitIndex, a.costCents])).toEqual([
-      [numbers[0], "gift_line", "manual", 9, 31, null, 0, 45_001],
-      [numbers[1], "gift_line", "manual", 9, 31, null, 1, 45_000],
+    expect(assets.map((a) => [a.assetNumber, a.sourceKind, a.sourceGiftSource, a.sourceGiftId, a.sourceGiftLineId, a.unitIndex, a.costCents])).toEqual([
+      [numbers[0], "gift_line", "manual", 9, 31, 0, 45_001],
+      [numbers[1], "gift_line", "manual", 9, 31, 1, 45_000],
     ]);
     expect(await db.expenseOrgAuditLog.count({ where: { orgId: ORG, action: "capital_asset_registered" } })).toBe(2);
   });

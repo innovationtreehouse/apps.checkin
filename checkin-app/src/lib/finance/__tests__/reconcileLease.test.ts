@@ -73,6 +73,24 @@ describe("runReconcile lease", () => {
         expect(released().data).toEqual({ shopifyReconcileLeaseUntil: null, shopifyReconcileLeaseToken: null });
     });
 
+    it("returns the finished pass when freeing the lease fails", async () => {
+        const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+        updateMany.mockResolvedValueOnce({ count: 1 }).mockRejectedValueOnce(new Error("db blip"));
+
+        expect(await runReconcile()).toEqual({ configured: true, ordersScanned: 1, reversalsRaised: 0, failed: 0 });
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("failed to free the lease"), expect.any(Error));
+        consoleError.mockRestore();
+    });
+
+    it("reports the pass's own error when freeing the lease also fails", async () => {
+        const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+        updateMany.mockResolvedValueOnce({ count: 1 }).mockRejectedValueOnce(new Error("db blip"));
+        reconcileReversals.mockRejectedValue(new Error("mirror down"));
+
+        await expect(runReconcile()).rejects.toThrow("mirror down");
+        consoleError.mockRestore();
+    });
+
     it("writes the caller's start record only when it takes the lease", async () => {
         const recordStart = jest.fn();
         updateMany.mockResolvedValueOnce({ count: 0 });

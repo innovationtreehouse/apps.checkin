@@ -16,7 +16,7 @@ export type HouseholdData = {
 export type HouseholdAnswer = { household: HouseholdData; boardReplyTo?: string | null; validUntil?: string | null };
 
 export type ContactWarning = { message: string } | null | undefined;
-export type MemberAnswer = { message?: string; warning?: { message: string } | null; leadRejection?: string } | null;
+export type MemberAnswer = { message?: string; warning?: { message: string } | null; leadRejection?: string; member?: HouseholdMember } | null;
 
 export type MemberFieldErrors = { name?: string; email?: string; dob?: string; phone?: string };
 

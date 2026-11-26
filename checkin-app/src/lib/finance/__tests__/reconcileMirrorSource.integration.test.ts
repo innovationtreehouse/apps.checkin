@@ -131,6 +131,10 @@ beforeAll(async () => {
     await prisma.membershipYearVariant.create({ data: { membershipYear: MEMBERSHIP_YEAR, shopifyVariantId: MEMBERSHIP_VARIANT } });
 }, 60_000);
 
+afterEach(async () => {
+    await prisma.boardSettings.update({ where: { id: 1 }, data: { shopifyReconcileLeaseUntil: null, shopifyReconcileLeaseToken: null } });
+});
+
 afterAll(async () => {
     const hhs = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });
     const ids = hhs.map((h) => h.id);

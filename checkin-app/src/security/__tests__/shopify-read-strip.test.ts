@@ -219,11 +219,20 @@ describe('mirror registry — stripping', () => {
         expect(await res.json()).toEqual({ scheduled, laterRepair });
     });
 
+    it('the sync status ships a running daily read to the board', async () => {
+        signIn(['isBoardMember']);
+        const running = { id: 11, kind: 'INCREMENTAL', status: 'RUNNING', startedAt: '2026-11-24T09:00:00.000Z', finishedAt: null };
+        const impl = async () => ({ SReadSyncStatus: { scheduled: null, running: { ...running, rawPayload: 'x' }, laterRepair: null } });
+        const res = await handler(SYNC_STATUS, impl)(new NextRequest('http://localhost/api/finance-ops/s-read/sync/status'));
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ scheduled: null, running, laterRepair: null });
+    });
+
     it('the sync status keeps a missing run as null', async () => {
         signIn(['isBoardMember']);
-        const impl = async () => ({ SReadSyncStatus: { scheduled: null, laterRepair: null } });
+        const impl = async () => ({ SReadSyncStatus: { scheduled: null, running: null, laterRepair: null } });
         const res = await handler(SYNC_STATUS, impl)(new NextRequest('http://localhost/api/finance-ops/s-read/sync/status'));
-        expect(await res.json()).toEqual({ scheduled: null, laterRepair: null });
+        expect(await res.json()).toEqual({ scheduled: null, running: null, laterRepair: null });
     });
 
     it('the match-audit report keeps its nested rows for the board', () => {

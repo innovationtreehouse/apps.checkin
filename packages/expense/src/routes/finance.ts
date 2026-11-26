@@ -1,6 +1,6 @@
 /**
  * FINANCE and Board surfaces: holds, account mapping, QuickBooks accounts, bucket ownership,
- * ledgers, settings, flags, the capital seed, donated-capital review and QuickBooks matching. The registry gates each
+ * ledgers, settings, flags, the capital seed and QuickBooks matching. The registry gates each
  * route; every service that changes data checks FINANCE again.
  */
 import { catalogSettingsMessage, httpError, isNotWired, kindOf, mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
@@ -19,7 +19,6 @@ import { logError } from "../lib/logger";
 import { withLiveParties, withLiveParty } from "../lib/livePeople";
 import { requireFinance } from "../services/approvalService";
 import { CapitalSeedSchema, seedCapitalAssets } from "../services/capitalService";
-import { DonatedCapitalReviewSchema, listDonatedCapital, reviewDonatedLine } from "../services/donatedCapitalService";
 import { checkOffFlag, listOpenFlags } from "../services/flagService";
 import { financeQueueCounts as queueCounts, financeQueueRows } from "../services/financeQueueService";
 import { financeQueueTab } from "../financeQueue";
@@ -367,16 +366,6 @@ export const financeQueueCounts: ExpenseRouteHandler = async ({ principal }) => 
 export const capitalSeed: ExpenseRouteHandler = async ({ req, principal }) => {
   const rows = await parseBody(req, CapitalSeedSchema);
   return { ExpenseCapitalSeedResult: await mapServiceErrors(() => seedCapitalAssets(principal, rows)) };
-};
-
-export const donatedCapital: ExpenseRouteHandler = async ({ principal }) => {
-  return { DonatedCapitalLineView: await mapServiceErrors(() => listDonatedCapital(principal)) };
-};
-
-export const reviewDonatedCapital: ExpenseRouteHandler = async ({ req, params, principal }) => {
-  const id = parseId(params.id);
-  const body = await parseBody(req, DonatedCapitalReviewSchema);
-  return { DonatedCapitalLineView: await mapServiceErrors(() => reviewDonatedLine(principal, id, body)) };
 };
 
 export const candidates: ExpenseRouteHandler = async ({ params, principal }) => {

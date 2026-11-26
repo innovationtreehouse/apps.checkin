@@ -254,6 +254,114 @@ describeDb("projection into live tables (real Postgres)", () => {
       expect(await orderRow()).toMatchObject({ source: null, customerEmail: "buyer@example.com" });
     });
 
+    const lineNode = (id: string, sku: string, quantity: number, amount: string) => ({
+      id,
+      sku,
+      quantity,
+      originalUnitPriceSet: { shopMoney: { amount, currencyCode: "USD" } },
+    });
+    const refundNode = (id: string, amount: string) => ({
+      id,
+      createdAt: "2026-02-01T09:00:00Z",
+      totalRefundedSet: { shopMoney: { amount, currencyCode: "USD" } },
+    });
+    const injectHandMade = (node: unknown) =>
+      injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node }], { storeId: STORE });
+
+    it("a store version replacing a hand-made one reconciles its lines to the store's", async () => {
+      await injectHandMade(
+        orderNode({
+          updatedAt: "2026-02-01T11:00:00Z",
+          lineItems: {
+            nodes: [
+              lineNode("gid://shopify/LineItem/2001", "HAND-A", 9, "1.00"),
+              lineNode("gid://shopify/LineItem/2002", "HAND-B", 1, "5.00"),
+            ],
+          },
+        }),
+      );
+      await storeRead(
+        orderNode({
+          lineItems: {
+            nodes: [
+              lineNode("gid://shopify/LineItem/2001", "WIDGET-1", 2, "50.00"),
+              lineNode("gid://shopify/LineItem/2003", "WIDGET-3", 1, "7.00"),
+            ],
+          },
+        }),
+      );
+
+      const lines = await prisma.shopOrderLine.findMany({ where: { storeId: STORE }, orderBy: { lineGid: "asc" } });
+      expect(lines.map(({ lineGid, sku, quantity, priceCents, removed }) => ({ lineGid, sku, quantity, priceCents, removed }))).toEqual([
+        { lineGid: "gid://shopify/LineItem/2001", sku: "WIDGET-1", quantity: 2, priceCents: 5000, removed: false },
+        { lineGid: "gid://shopify/LineItem/2002", sku: "HAND-B", quantity: 1, priceCents: 500, removed: true },
+        { lineGid: "gid://shopify/LineItem/2003", sku: "WIDGET-3", quantity: 1, priceCents: 700, removed: false },
+      ]);
+    });
+
+    it("a truncated store version replacing a hand-made one keeps the lines it did not list", async () => {
+      await injectHandMade(
+        orderNode({
+          updatedAt: "2026-02-01T11:00:00Z",
+          lineItems: {
+            nodes: [
+              lineNode("gid://shopify/LineItem/2001", "HAND-A", 9, "1.00"),
+              lineNode("gid://shopify/LineItem/2002", "HAND-B", 1, "5.00"),
+            ],
+          },
+        }),
+      );
+      await storeRead(
+        orderNode({
+          lineItems: {
+            nodes: [lineNode("gid://shopify/LineItem/2001", "WIDGET-1", 2, "50.00")],
+            pageInfo: { hasNextPage: true },
+          },
+        }),
+      );
+
+      const lines = await prisma.shopOrderLine.findMany({ where: { storeId: STORE }, orderBy: { lineGid: "asc" } });
+      expect(lines.map(({ lineGid, sku, removed }) => ({ lineGid, sku, removed }))).toEqual([
+        { lineGid: "gid://shopify/LineItem/2001", sku: "WIDGET-1", removed: false },
+        { lineGid: "gid://shopify/LineItem/2002", sku: "HAND-B", removed: false },
+      ]);
+    });
+
+    it("a store version replacing a hand-made one rewrites a refund they share and the order's refund total", async () => {
+      await injectHandMade(
+        orderNode({
+          updatedAt: "2026-02-01T11:00:00Z",
+          totalRefundedSet: { shopMoney: { amount: "99.00", currencyCode: "USD" } },
+          refunds: [refundNode("gid://shopify/Refund/3001", "99.00")],
+        }),
+      );
+      await storeRead(
+        orderNode({
+          totalRefundedSet: { shopMoney: { amount: "20.00", currencyCode: "USD" } },
+          refunds: [refundNode("gid://shopify/Refund/3001", "20.00")],
+        }),
+      );
+
+      const refunds = await prisma.shopRefund.findMany({ where: { storeId: STORE } });
+      expect(refunds.map(({ refundGid, totalRefundedCents }) => ({ refundGid, totalRefundedCents }))).toEqual([
+        { refundGid: "gid://shopify/Refund/3001", totalRefundedCents: 2000 },
+      ]);
+      expect((await orderRow())?.totalRefundedCents).toBe(2000);
+    });
+
+    it("accepted limit: a hand-made-only refund stays after a store version replaces the order", async () => {
+      await injectHandMade(
+        orderNode({ updatedAt: "2026-02-01T11:00:00Z", refunds: [refundNode("gid://shopify/Refund/3099", "99.00")] }),
+      );
+      await storeRead(orderNode({ refunds: [refundNode("gid://shopify/Refund/3001", "20.00")] }));
+
+      const refunds = await prisma.shopRefund.findMany({ where: { storeId: STORE }, orderBy: { refundGid: "asc" } });
+      expect(refunds.map(({ refundGid, totalRefundedCents }) => ({ refundGid, totalRefundedCents }))).toEqual([
+        { refundGid: "gid://shopify/Refund/3001", totalRefundedCents: 2000 },
+        { refundGid: "gid://shopify/Refund/3099", totalRefundedCents: 9900 },
+      ]);
+    });
+
     it("a hand-made order with no store version still projects as hand-loaded", async () => {
       await injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node: orderNode({ email: "fixture@example.com" }) }], {
         storeId: STORE,

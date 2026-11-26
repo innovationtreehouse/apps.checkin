@@ -601,9 +601,6 @@ describeDb("capital review", () => {
         registered.push(line);
         return register(line);
       },
-      submit: async () => { throw new Error("the copy is never sent"); },
-      awaitingReview: async () => { throw new Error("capital waits are read from the gift"); },
-      assetLineIds: async () => { throw new Error("assets are read from the gift"); },
     };
     configure();
     return { tested, registered };
@@ -631,7 +628,7 @@ describeDb("capital review", () => {
     const { id } = await twoLineGift();
     await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
     expect(tested).toEqual([{ totalCents: 1000, lines: [{ costCents: 333, quantity: 1 }, { costCents: 667, quantity: 2 }] }]);
-    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalReviewNeeded: true, capitalSubmittedAt: null });
+    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalReviewNeeded: true });
     expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "capital", waitingOn: ["capital", "booking"] });
 
     await inKindAcceptService.decide("receipt", id, { ...ACCEPT, bucketId: 2 }, by(FINANCE));

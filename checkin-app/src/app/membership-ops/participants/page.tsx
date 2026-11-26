@@ -107,6 +107,7 @@ export default function AdminParticipantsIndex() {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingParticipant, setEditingParticipant] = useState<PersonRow | null>(null);
   const [editForm, setEditForm] = useState({ name: "", email: "", phone: "", isDeclaredAdult: false, emailChangeReason: "" });
+  const [openingAgreement, setOpeningAgreement] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
 
   // Admin edit of household's own info (name, address, emergency contact)
@@ -180,6 +181,20 @@ export default function AdminParticipantsIndex() {
       showError(errorMessage(e), { key: "save-person" });
     } finally {
       setSavingDetails(false);
+    }
+  };
+
+  // The Board opens an individual agreement for any adult who isn't a household lead.
+  const openAgreement = async () => {
+    if (!editingParticipant) return;
+    setOpeningAgreement(true);
+    try {
+      await api("/api/membership-audit/person-agreement", { method: "POST", body: JSON.stringify({ personId: editingParticipant.id }) });
+      showSuccess("Individual agreement opened.");
+    } catch (e) {
+      showError(errorMessage(e));
+    } finally {
+      setOpeningAgreement(false);
     }
   };
 
@@ -432,6 +447,13 @@ export default function AdminParticipantsIndex() {
                 checked={editForm.isDeclaredAdult}
                 onChange={(e) => { const checked = e.currentTarget.checked; setEditForm(f => ({ ...f, isDeclaredAdult: checked })); }}
               />
+            )}
+            {isStaff && (
+              <Group>
+                <Button type="button" size="xs" variant="light" loading={openingAgreement} disabled={openingAgreement} onClick={openAgreement}>
+                  Open individual agreement
+                </Button>
+              </Group>
             )}
             {editingParticipant?.household && (
               <div>

@@ -361,9 +361,9 @@ model InKindDonation {
   bucketAssignedByUserId     Int?       @map("bucket_assigned_by_user_id")
   /// @sensitivity:internal
   bucketAssignedAt           DateTime?  @map("bucket_assigned_at")
-  // When the expense library took this accepted gift's lines for capital review.
+  // Not read or written; dropped in a later release, once no running code reads it.
   /// @sensitivity:internal
-  capitalSubmittedAt         DateTime?  @map("capital_submitted_at")
+  capitalSubmittedAt         DateTime?  @map("capital_submitted_at") @ignore
   // When registering the gift's capital lines first failed; set while null, cleared once a run registers them. Set means stuck.
   /// @sensitivity:internal
   capitalFirstFailedAt       DateTime?  @map("capital_first_failed_at")
@@ -437,9 +437,9 @@ model ManualInKindDonation {
   bucketAssignedByUserId     Int?       @map("bucket_assigned_by_user_id")
   /// @sensitivity:internal
   bucketAssignedAt           DateTime?  @map("bucket_assigned_at")
-  // When the expense library took this accepted gift's lines for capital review.
+  // Not read or written; dropped in a later release, once no running code reads it.
   /// @sensitivity:internal
-  capitalSubmittedAt         DateTime?  @map("capital_submitted_at")
+  capitalSubmittedAt         DateTime?  @map("capital_submitted_at") @ignore
   // When registering the gift's capital lines first failed; set while null, cleared once a run registers them. Set means stuck.
   /// @sensitivity:internal
   capitalFirstFailedAt       DateTime?  @map("capital_first_failed_at")

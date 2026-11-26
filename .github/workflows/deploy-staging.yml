@@ -270,6 +270,9 @@ jobs:
           # would incorrectly fall through to 'true'. Putting the always-truthy
           # branch first avoids that trap.
           RESEED: ${{ github.event_name != 'workflow_dispatch' && 'true' || inputs.reseed }}
+          # Pinned to the deployed commit: the copy's default (main) can drop a
+          # sentinel this branch's schema still has.
+          CLASSIFICATIONS_SOURCE: https://raw.githubusercontent.com/innovationtreehouse/apps.checkin/${{ needs.vars.outputs.sha }}/checkin-app/src/security/generated/classifications.ts
         run: |
           set -euo pipefail
           # Reuse the app service's own network config (subnets / SG / public
@@ -284,7 +287,8 @@ jobs:
               "name": "checkin-stg-copy",
               "environment": [
                 { "name": "STG_DB", "value": "$STG_DB" },
-                { "name": "RESEED", "value": "$RESEED" }
+                { "name": "RESEED", "value": "$RESEED" },
+                { "name": "CLASSIFICATIONS_SOURCE", "value": "$CLASSIFICATIONS_SOURCE" }
               ]
             }]
           }
