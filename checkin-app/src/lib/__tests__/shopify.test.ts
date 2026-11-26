@@ -249,6 +249,54 @@ describe('createShopifySingleVariantProgram', () => {
         );
     });
 
+    describe('with a handle', () => {
+        const handle = 'checkin-program-7-robotics';
+
+        it('returns the product already carrying the handle and creates nothing', async () => {
+            mockTokenResponse(fetchMock);
+            fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ products: [{ id: 701, title: 'Robotics Program Enrollment', status: 'active', variants: [{ id: 801 }] }] }) });
+
+            const result = await createShopifySingleVariantProgram('Robotics', 3500, 10, handle);
+
+            expect(result).toEqual({ shopifyProductId: '701', shopifyVariantId: '801' });
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            const lookupUrl = String(fetchMock.mock.calls[1][0]);
+            expect(lookupUrl).toContain('/products.json?handle=checkin-program-7-robotics');
+            expect((fetchMock.mock.calls[1][1] as RequestInit).method).toBe('GET');
+        });
+
+        it('creates the product under the handle when none carries it yet', async () => {
+            mockTokenResponse(fetchMock);
+            fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ products: [] }) });
+            fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ product: { id: 702, variants: [{ id: 802 }] } }) });
+
+            const result = await createShopifySingleVariantProgram('Robotics', 3500, 10, handle);
+
+            expect(result).toEqual({ shopifyProductId: '702', shopifyVariantId: '802' });
+            expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe('POST');
+            const body = JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string);
+            expect(body.product.handle).toBe(handle);
+        });
+
+        it('returns null and reports when the found product has no variant', async () => {
+            mockTokenResponse(fetchMock);
+            fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ products: [{ id: 703, variants: [] }] }) });
+            (prisma.person.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+            expect(await createShopifySingleVariantProgram('Robotics', 3500, 10, handle)).toBeNull();
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.any(Error), expect.objectContaining({ operation: 'createShopifySingleVariantProgram' }));
+        });
+
+        it('returns null and creates nothing when the handle lookup fails', async () => {
+            mockTokenResponse(fetchMock);
+            fetchMock.mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'boom' });
+            (prisma.person.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+            expect(await createShopifySingleVariantProgram('Robotics', 3500, 10, handle)).toBeNull();
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+        });
+    });
 });
 
 describe('mintMemberDiscountCode', () => {
@@ -423,6 +471,48 @@ describe('createClaimantProduct', () => {
 
         expect(await createClaimantProduct('Old API', 3500)).toBeNull();
         expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.any(Error), expect.objectContaining({ operation: 'createClaimantProduct', orphanedProductId: '711' }));
+    });
+    describe('with a handle', () => {
+        const handle = 'checkin-program-7-robotics-reserved-seat';
+
+        it('unlists and returns the product already carrying the handle instead of creating another', async () => {
+            mockTokenResponse(fetchMock);
+            fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ products: [{ id: 720, status: 'active', variants: [{ id: 820 }] }] }) });
+            fetchMock.mockResolvedValueOnce(unlistResponse('UNLISTED'));
+
+            const result = await createClaimantProduct('Robotics', 3500, handle);
+
+            expect(result).toEqual({ claimantShopifyProductId: '720', claimantShopifyVariantId: '820' });
+            expect(fetchMock).toHaveBeenCalledTimes(3);
+            expect(String(fetchMock.mock.calls[1][0])).toContain(`/products.json?handle=${handle}`);
+            expect(String(fetchMock.mock.calls[2][0])).toContain('/graphql.json');
+            const gql = JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string);
+            expect(gql.variables).toEqual({ product: { id: 'gid://shopify/Product/720', status: 'UNLISTED' } });
+        });
+
+        it('creates the draft under the handle when none carries it yet', async () => {
+            mockTokenResponse(fetchMock);
+            fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ products: [] }) });
+            fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ product: { id: 721, variants: [{ id: 821 }] } }) });
+            fetchMock.mockResolvedValueOnce(unlistResponse('UNLISTED'));
+
+            const result = await createClaimantProduct('Robotics', 3500, handle);
+
+            expect(result).toEqual({ claimantShopifyProductId: '721', claimantShopifyVariantId: '821' });
+            const body = JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string);
+            expect(body.product).toMatchObject({ handle, status: 'draft' });
+        });
+
+        it('returns null and names the found product when re-unlisting it fails', async () => {
+            mockTokenResponse(fetchMock);
+            fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ products: [{ id: 722, variants: [{ id: 822 }] }] }) });
+            fetchMock.mockResolvedValueOnce(unlistResponse('ACTIVE'));
+            (prisma.person.findMany as jest.Mock).mockResolvedValueOnce([]);
+
+            expect(await createClaimantProduct('Robotics', 3500, handle)).toBeNull();
+            expect(fetchMock).toHaveBeenCalledTimes(3);
+            expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.any(Error), expect.objectContaining({ operation: 'createClaimantProduct', orphanedProductId: '722' }));
+        });
     });
 });
 

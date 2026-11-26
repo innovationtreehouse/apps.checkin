@@ -21,6 +21,7 @@ import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { activateByProcessId } from '@/lib/membership/payment';
 import { DEV_MOCK_SHOPIFY_WEBHOOK_SECRET } from '@/lib/config';
 import { signCheckout } from '@/lib/programs/checkoutSignature';
+import { liveMembershipYear } from '@/lib/programYear';
 
 process.env.NEXTAUTH_SECRET ||= 'integration-test-nextauth-secret';
 
@@ -532,6 +533,44 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         }
     });
 
+    describe('under a real membership-year boundary', () => {
+        const BOUNDARY = new Date(Date.UTC(2000, 8, 1));
+        const liveYear = liveMembershipYear(BOUNDARY, new Date())!;
+
+        // The program sells the live year, so its member pricing must be covered
+        // through the boundary that closes that year.
+        async function payWithMemberCode(paidForYear: number) {
+            await setPending(p1);
+            await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: BOUNDARY } });
+            await prisma.program.update({ where: { id: programId }, data: { appliesToYear: liveYear } });
+            const membership = await prisma.orgMembership.create({ data: { householdId: h1, status: 'ACTIVE' } });
+            await prisma.orgMembershipProcess.create({
+                data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'ACTIVE', appliesToYear: paidForYear, paidAt: new Date(), contractSignedAt: new Date(), bgClearedAt: new Date() },
+            });
+            try {
+                const body = programPayload(String(p1), PROGRAM_VARIANT_ID, [`PRG${programId}-ABCD1234`]);
+                expect((await POST(webhookReq(body, sign(body)))).status).toBe(200);
+                return {
+                    status: (await prisma.programParticipant.findUnique({ where: { programId_personId: { programId, personId: p1 } } }))?.status,
+                    exceptions: (await prisma.paymentException.findMany({ where: { shopifyOrderId: '555' } })).map((e) => e.kind),
+                };
+            } finally {
+                await prisma.paymentException.deleteMany({ where: { shopifyOrderId: '555' } });
+                await prisma.orgMembershipProcess.deleteMany({ where: { orgMembershipId: membership.id } });
+                await prisma.orgMembership.delete({ where: { id: membership.id } });
+                await prisma.program.update({ where: { id: programId }, data: { appliesToYear: 2026 } });
+            }
+        }
+
+        it('activates a household that paid for the live year', async () => {
+            expect(await payWithMemberCode(liveYear)).toEqual({ status: 'ACTIVE', exceptions: [] });
+        });
+
+        it('flags DISCOUNT_UNAUTHORIZED for a household whose last payment bought the year before', async () => {
+            expect(await payWithMemberCode(liveYear - 1)).toEqual({ status: 'PENDING', exceptions: ['DISCOUNT_UNAUTHORIZED'] });
+        });
+    });
+
     it('activates with a member code minted for this household when it is fee-settled', async () => {
         await setPending(p1);
         const membership = await prisma.orgMembership.create({ data: { householdId: h1, status: 'ACTIVE' } });
@@ -688,6 +727,28 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
             where: { programId_personId: { programId, personId: p1 } },
         });
         expect(row?.status).toBe('ACTIVE');
+    });
+
+    it('activates both siblings\' seats AND the membership when one order carries a quantity-2 program line', async () => {
+        await setPending(p1);
+        await setPending(p2);
+        const accountIds = `${p1},${p2}`;
+        const body = JSON.stringify({
+            financial_status: 'paid',
+            id: 98767,
+            line_items: [{ variant_id: MEMBERSHIP_VARIANT_ID, quantity: 1 }, { variant_id: PROGRAM_VARIANT_ID, quantity: 2 }],
+            note_attributes: [
+                { name: 'Membership_Process_ID', value: '48' },
+                { name: 'CheckMeIn_Account_ID', value: accountIds },
+                { name: 'Program_ID', value: String(programId) },
+                { name: 'CheckMeIn_Checkout_Sig', value: checkoutSig(programId, accountIds) },
+            ],
+        });
+        expect((await POST(webhookReq(body, sign(body)))).status).toBe(200);
+        expect(activateByProcessId).toHaveBeenCalledWith(48, '98767', { appliesToYear: MEMBERSHIP_YEAR });
+        const rows = await prisma.programParticipant.findMany({ where: { programId, personId: { in: [p1, p2] } }, orderBy: { personId: 'asc' } });
+        expect(rows.map((r) => [r.personId, r.status, r.shopifyOrderId])).toEqual([[p1, 'ACTIVE', '98767'], [p2, 'ACTIVE', '98767']]);
+        expect(await prisma.paymentException.count({ where: { shopifyOrderId: '98767' } })).toBe(0);
     });
 
     it('returns 500 and writes one IntegrationErrorLog row when a handler throws', async () => {
