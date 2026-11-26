@@ -401,4 +401,59 @@ describe('Per-adult background-check subjects', () => {
         expect(row).toBeDefined();
         expect(row.fromName).toBe('Sam Archived');
     });
+
+    // A into B, then B into C: the second merge repoints A's archive row to C, so C
+    // carries two rows holding A's date. Only A's own check review cleared.
+    describe('a merge chain names the record that cleared', () => {
+        const checkedAt = new Date('2026-06-01T00:00:00.000Z');
+
+        async function chain(label: string, merged: { a: Date; b: Date }) {
+            const hh = await twoLeadHousehold(label);
+            const a = (await prisma.person.create({ data: { name: `A ${label}`, email: `a-${label}-${TAG}@example.com`, householdId: hh.householdId } })).id;
+            await prisma.person.update({ where: { id: hh.alex }, data: { lastBackgroundCheck: checkedAt } });
+            const snapshot = (name: string) => ({ name, email: null, lastBackgroundCheck: checkedAt.toISOString() });
+            // B's row goes in first, so insertion order alone would name B.
+            await prisma.personMerge.create({ data: { fromId: hh.sam, toId: hh.alex, mergedAt: merged.b, snapshot: snapshot('B Merged') } });
+            await prisma.personMerge.create({ data: { fromId: a, toId: hh.alex, mergedAt: merged.a, snapshot: snapshot('A Cleared') } });
+            await prisma.auditLog.create({
+                data: {
+                    actorId: rev2,
+                    action: 'EDIT',
+                    tableName: 'OrgMembershipProcess',
+                    affectedEntityId: hh.processId,
+                    oldData: { status: 'PENDING_BG_REVIEW' },
+                    newData: { status: 'ACTIVE', bgCleared: true, subjectPersonId: a },
+                },
+            });
+            await prisma.person.delete({ where: { id: hh.sam } });
+            await prisma.person.delete({ where: { id: a } });
+            return { survivor: hh.alex, processId: hh.processId };
+        }
+
+        async function fromName(survivor: number) {
+            as(board, { isBoardMember: true });
+            const data = await (await COMPLIANCE(get('http://localhost:4000/api/membership-audit/compliance') as never)).json();
+            return data.mergeInheritedBgChecks.find((r: { personId: number }) => r.personId === survivor)?.fromName;
+        }
+
+        const clearanceRows = (processId: number) => ({ tableName: 'OrgMembershipProcess', affectedEntityId: processId });
+
+        it('names A when A merged into B and B into C', async () => {
+            const c = await chain('ChainAB', { a: new Date('2026-07-01T00:00:00Z'), b: new Date('2026-08-01T00:00:00Z') });
+            try {
+                expect(await fromName(c.survivor)).toBe('A Cleared');
+            } finally {
+                await prisma.auditLog.deleteMany({ where: clearanceRows(c.processId) });
+            }
+        });
+
+        it('names the cleared record even when another matching merge is earlier', async () => {
+            const c = await chain('ChainBA', { a: new Date('2026-08-01T00:00:00Z'), b: new Date('2026-07-01T00:00:00Z') });
+            try {
+                expect(await fromName(c.survivor)).toBe('A Cleared');
+            } finally {
+                await prisma.auditLog.deleteMany({ where: clearanceRows(c.processId) });
+            }
+        });
+    });
 });

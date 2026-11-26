@@ -336,15 +336,32 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             email: true,
             householdId: true,
             lastBackgroundCheck: true,
-            mergedArchive: { select: { fromId: true, snapshot: true } },
+            mergedArchive: { select: { fromId: true, snapshot: true }, orderBy: [{ mergedAt: "asc" }, { id: "asc" }] },
         },
         orderBy: { name: "asc" },
     });
-    const mergeInheritedBgChecks = survivors
-        .map((s) => ({
-            survivor: s,
-            source: mergeSourceIdentities(s).find((m) => m.lastBackgroundCheck?.getTime() === s.lastBackgroundCheck!.getTime()),
-        }))
+    const dateMatches = survivors.map((s) => ({
+        survivor: s,
+        matches: mergeSourceIdentities(s).filter((m) => m.lastBackgroundCheck?.getTime() === s.lastBackgroundCheck!.getTime()),
+    }));
+    // A merge chain (A into B, then B into C) leaves several rows on C holding A's
+    // date; the one to name is the record whose own check review cleared.
+    const chainIds = dateMatches.filter((r) => r.matches.length > 1).flatMap((r) => r.matches.map((m) => m.id));
+    const clearedIds = new Set<number>();
+    if (chainIds.length) {
+        const clearances = await prisma.auditLog.findMany({
+            where: {
+                tableName: "OrgMembershipProcess",
+                newData: { path: ["bgCleared"], equals: true },
+                OR: chainIds.map((id) => ({ newData: { path: ["subjectPersonId"], equals: id } })),
+            },
+            select: { newData: true },
+        });
+        for (const c of clearances) clearedIds.add((c.newData as { subjectPersonId: number }).subjectPersonId);
+    }
+    // Earliest merge first among cleared records; with none cleared, the earliest matching merge.
+    const mergeInheritedBgChecks = dateMatches
+        .map(({ survivor, matches }) => ({ survivor, source: matches.find((m) => clearedIds.has(m.id)) ?? matches[0] }))
         .filter((r) => r.source !== undefined)
         .map(({ survivor, source }) => ({
             personId: survivor.id,
