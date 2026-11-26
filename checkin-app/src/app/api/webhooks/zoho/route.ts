@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { verifyZohoToken, parseZohoWebhook, ZOHO_WEBHOOK_HEADER } from "@/lib/membership/contract/zoho";
-import { findProcessByEnvelope, markContractSigned } from "@/lib/membership/external";
+import { findProcessByEnvelope, markContractSigned, raiseDeniedClosedSignature } from "@/lib/membership/external";
 import { withWebhook } from "@/lib/webhookAuth";
 import { apiError } from "@/lib/api-response";
 
@@ -29,7 +29,8 @@ function verifyZoho(req: Request): { ok: true } | { ok: false; status: number; e
  *
  * Verifies the shared-secret header, finds the membership process by its stored
  * Zoho request id, and (on a completed signing) records the contract as signed —
- * which may advance the application to PENDING_BG_REVIEW. We never read contract content.
+ * which may advance the application to payment. A signature for a DENIED household
+ * records nothing and goes to the board. We never read contract content.
  */
 export const POST = withWebhook({ provider: "zoho", verify: verifyZoho }, async (_req, body) => {
     const { requestId, completed } = parseZohoWebhook(body);
@@ -42,6 +43,7 @@ export const POST = withWebhook({ provider: "zoho", verify: verifyZoho }, async 
     if (!completed) return NextResponse.json({ ok: true, ignored: "not completed" });
 
     const mp = await findProcessByEnvelope(requestId);
+    if (!mp && await raiseDeniedClosedSignature(requestId)) return NextResponse.json({ ok: true, ignored: "denied household" });
     if (!mp) {
         logger.error(`Zoho webhook: no membership process for request ${requestId}.`);
         // Acknowledge to avoid endless retries for an unknown request.

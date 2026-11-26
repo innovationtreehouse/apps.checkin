@@ -3,7 +3,7 @@ import prisma from "@/lib/prisma";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { ReviewError, applicantHousehold, reviewHouseholds, wrongPersonClosedAt } from "@/lib/membership/review";
 import { reviewHoldsRejection } from "@/lib/membership/checkStanding";
-import { CLOSABLE_STATUSES, RESTORABLE_STATUSES, RESTORE_CLOSABLE_STATUSES, fromWhere, openProcess } from "@/lib/membership/lifecycle";
+import { CLOSABLE_STATUSES, DENY_CLOSE_REASON, HOUSEHOLD_CLOSABLE_STATUSES, RESTORABLE_STATUSES, fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete, pickUpMissedSignature } from "@/lib/membership/external";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { personActor, type AuditActor } from "@/lib/auditActor";
@@ -84,12 +84,17 @@ export async function archiveApplication(processId: number, actorId: number) {
 
 const HOUSEHOLD_KINDS = ["INITIAL", "RENEWAL"] as const;
 
-const RESTORE_CLOSE_REASON = "household restored";
+/** What a close's audit row carries when the household was denied at the close: a denial's close, a refund's, or a restore's. */
+const DENIAL_CLOSE_MARKS: readonly (readonly ["reason" | "closeReason", string])[] = [
+    ["reason", DENY_CLOSE_REASON],
+    ["closeReason", DENY_CLOSE_REASON],
+    ["reason", "household restored"],
+];
 
 /**
  * Locks a household's membership, household and applications FOR UPDATE, in the
- * order lib/lockOrder.ts states, and returns the open applications, for a restore
- * or an archive to close.
+ * order lib/lockOrder.ts states, and returns the open applications, for a deny, a
+ * restore or an archive to act on.
  */
 export async function lockOpenApplications(tx: TxClient, orgMembershipId: number) {
     const [membership] = await tx.$queryRaw<{ householdId: number }[]>`SELECT "householdId" FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
@@ -107,24 +112,27 @@ export function countOpenApplications(tx: TxClient, orgMembershipId: number) {
 }
 
 /**
- * Closes the open applications of a household the board is restoring from DENIED or
- * archiving, so nothing decided before carries across. Refuses, rolling back the
- * caller's transaction, while one still has a payment recorded or sits at a step
- * this cannot close.
+ * Closes the open applications of a household the board is denying or archiving, so
+ * nothing decided before carries across. A deny never refuses: it closes every unpaid
+ * application and leaves a paid one open, to carry the refund owed; that one closes
+ * once its refund is recorded. An archive refuses, rolling back the caller's
+ * transaction, while one still has a payment recorded or sits at a step
+ * `HOUSEHOLD_CLOSABLE_STATUSES` leaves out.
  */
-export async function closeForRestore(
+export async function closeHouseholdApplications(
     tx: TxClient,
     open: Awaited<ReturnType<typeof lockOpenApplications>>,
     actor: AuditActor,
-    action: "restore" | "archive" = "restore",
+    action: "deny" | "archive",
 ) {
-    if (open.some((p) => p.paidAt)) {
-        throw new ReviewError("wrong_phase", `This household has an application with a payment recorded. Refund it in Shopify and record the refund first, then ${action} the household.`);
+    if (action === "archive" && open.some((p) => p.paidAt)) {
+        throw new ReviewError("wrong_phase", "This household has an application with a payment recorded. Refund it in Shopify and record the refund first, then archive the household.");
     }
-    if (open.some((p) => !(RESTORE_CLOSABLE_STATUSES as readonly string[]).includes(p.status))) {
-        throw new ReviewError("wrong_phase", `This household has an application at a step a ${action} cannot close. Resolve that application first, then ${action} the household.`);
+    const closing = open.filter((p) => !p.paidAt);
+    if (action === "archive" && closing.some((p) => !(HOUSEHOLD_CLOSABLE_STATUSES as readonly string[]).includes(p.status))) {
+        throw new ReviewError("wrong_phase", "This household has an application at a step an archive cannot close. Resolve that application first, then archive the household.");
     }
-    for (const p of open) {
+    for (const p of closing) {
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: p.id, ...fromWhere(p.status), paidAt: null },
             data: { status: "ARCHIVED", archivedFromStatus: p.status, stageEnteredAt: new Date(), isPaymentPlanRequested: false },
@@ -137,7 +145,7 @@ export async function closeForRestore(
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: p.id,
                 oldData: { status: p.status },
-                newData: { status: "ARCHIVED", reason: action === "restore" ? RESTORE_CLOSE_REASON : "household archived" },
+                newData: { status: "ARCHIVED", reason: action === "deny" ? DENY_CLOSE_REASON : "household archived" },
             },
         });
     }
@@ -175,9 +183,9 @@ async function reopenRefusal(tx: Prisma.TransactionClient, process: OrgMembershi
 }
 
 /**
- * Whether the household was denied at any point after this application closed, or the
- * close was the restore's own. Zoho gives no signing time, so a signature found at
- * Reopen may have been made during that denial.
+ * Whether the household was denied when this application closed or at any point
+ * since. Zoho gives no signing time, so a signature found at Reopen may have been
+ * made during that denial.
  */
 async function deniedSinceClose(tx: Prisma.TransactionClient, processId: number, householdId: number): Promise<boolean> {
     const close = await tx.auditLog.findFirst({
@@ -189,7 +197,7 @@ async function deniedSinceClose(tx: Prisma.TransactionClient, processId: number,
     const evidence = await tx.auditLog.findFirst({
         where: {
             OR: [
-                { id: close.id, newData: { path: ["reason"], equals: RESTORE_CLOSE_REASON } },
+                { id: close.id, OR: DENIAL_CLOSE_MARKS.map(([path, equals]) => ({ newData: { path: [path], equals } })) },
                 {
                     tableName: "OrgMembership",
                     secondaryAffectedEntity: householdId,

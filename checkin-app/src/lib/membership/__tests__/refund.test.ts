@@ -9,7 +9,11 @@ import type { OrgMembershipProcess } from '@/generated/prisma/client';
 const tx = {
     orgMembershipProcess: { updateMany: jest.fn() },
     auditLog: { create: jest.fn() },
+    $queryRaw: jest.fn(),
 };
+
+/** The household status the refund reads under the membership lock. */
+const householdAt = (status: string) => tx.$queryRaw.mockResolvedValue([{ status }]);
 
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
@@ -41,18 +45,19 @@ describe('recordDeniedStoreRefund', () => {
         tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
     });
 
-    it('clears the payment of a denied household as Record refund does, under the store-refund system actor', async () => {
+    it('clears the payment of a denied household and closes the application, under the store-refund system actor', async () => {
         findUnique.mockResolvedValue(row());
+        householdAt('DENIED');
         expect(await recordDeniedStoreRefund(1, 'o1')).toBe(true);
         expect(tx.orgMembershipProcess.updateMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({ id: 1, paidAt: { not: null } }),
-            data: expect.objectContaining({ paidAt: null, status: 'PENDING_PAYMENT' }),
+            data: expect.objectContaining({ paidAt: null, status: 'ARCHIVED', archivedFromStatus: 'PENDING_PAYMENT' }),
         }));
         expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({
             actorId: 0,
             actorSystem: 'webhook:shopify-refund',
             oldData: expect.objectContaining({ shopifyOrderId: 'o1' }),
-            newData: expect.objectContaining({ refundRecorded: true, paidAt: null }),
+            newData: expect.objectContaining({ status: 'ARCHIVED', refundRecorded: true, paidAt: null, closeReason: 'household denied' }),
         }) });
         expect(hasHouseholdConflict).not.toHaveBeenCalled();
     });
@@ -70,6 +75,7 @@ describe('recordDeniedStoreRefund', () => {
 
     it('returns false when another writer cleared the payment first', async () => {
         findUnique.mockResolvedValue(row());
+        householdAt('DENIED');
         tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
         expect(await recordDeniedStoreRefund(1, 'o1')).toBe(false);
         expect(tx.auditLog.create).not.toHaveBeenCalled();
@@ -83,9 +89,27 @@ describe('recordRefund (Board)', () => {
     });
 
     it('records the refund under the board member', async () => {
-        findUnique.mockResolvedValue(row());
+        findUnique.mockResolvedValue(row({ household: 'NONE' }));
+        householdAt('NONE');
         expect(await recordRefund(1, 7, 'Refunded')).toEqual({ status: 'PENDING_PAYMENT' });
+        expect(tx.orgMembershipProcess.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.not.objectContaining({ archivedFromStatus: expect.anything() }),
+        }));
         expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ actorId: 7, actorSystem: null }) });
+    });
+
+    it.each([
+        ['a clearance wait', 'PENDING_BG_CLEARANCE', 'PENDING_PAYMENT'],
+        ['a held application', 'BLOCKED', 'BLOCKED'],
+        ['an unsigned application', 'PENDING_EXTERNAL_ACTION', 'PENDING_EXTERNAL_ACTION'],
+    ])('closes %s on a denied household, to reopen at the step the refund leaves it in', async (_label, status, from) => {
+        findUnique.mockResolvedValue(row({ status: status as OrgMembershipProcess['status'] }));
+        householdAt('DENIED');
+        expect(await recordRefund(1, 7, 'Refunded')).toEqual({ status: 'ARCHIVED' });
+        expect(tx.$queryRaw).toHaveBeenCalled();
+        expect(tx.orgMembershipProcess.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ paidAt: null, status: 'ARCHIVED', archivedFromStatus: from }),
+        }));
     });
 
     it('refuses an applicant in the same household', async () => {

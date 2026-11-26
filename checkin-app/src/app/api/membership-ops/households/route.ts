@@ -13,7 +13,7 @@ import { grantMembership, grantMessage } from "@/lib/membership/grant";
 import { ensureHouseholdMembership, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { notifyBoardOfDenial } from "@/lib/membership/denial";
 import { personActor } from "@/lib/auditActor";
-import { closeForRestore, lockOpenApplications } from "@/lib/membership/archive";
+import { closeHouseholdApplications, lockOpenApplications } from "@/lib/membership/archive";
 import { ReviewError } from "@/lib/membership/review";
 import { lockBoardRoles } from "@/lib/roles";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
@@ -295,8 +295,8 @@ export const POST = withAuth(
             const trimmedReason = typeof reason === "string" ? reason.trim() : "";
 
             // Deny / restore — a separate legal act from grant/revoke. Denying blocks login for
-            // every member of the household (enforced in the auth layer). Restore is "undeny":
-            // DENIED → NONE only, closing the household's open applications.
+            // every member of the household (enforced in the auth layer) and closes its unpaid
+            // applications. Restore is "undeny": DENIED → NONE only, refused while a refund is owed.
             if (typeof deny === "boolean") {
                 const outcome = await prisma.$transaction(async (tx) => {
                     if (deny) {
@@ -312,19 +312,23 @@ export const POST = withAuth(
                         });
                         if (boardMemberInHousehold) return "boardMember" as const;
                     }
+                    // Membership, household, then applications: the order lib/lockOrder.ts states.
                     if (deny) {
                         const membership = await ensureHouseholdMembership(tx, householdId);
+                        const openApplications = await lockOpenApplications(tx, membership.id);
                         const applied = await setHouseholdStatus(tx, membership.id, { from: ["NONE", "ACTIVE", "REVOKED"], to: "DENIED", actor, reason: trimmedReason || "board deny" });
-                        return applied ? membership.id : "notApplied" as const;
+                        if (!applied) return "notApplied" as const;
+                        await closeHouseholdApplications(tx, openApplications, actor, "deny");
+                        return membership.id;
                     }
-                    // Membership, household, then applications: the order lib/lockOrder.ts states.
-                    const membership = await tx.orgMembership.findUnique({ where: { householdId }, select: { id: true } });
-                    if (!membership) return "notApplied" as const;
-                    const openApplications = await lockOpenApplications(tx, membership.id);
+                    const found = await tx.orgMembership.findUnique({ where: { householdId }, select: { id: true } });
+                    if (!found) return "notApplied" as const;
+                    const openApplications = await lockOpenApplications(tx, found.id);
+                    const membership = await tx.orgMembership.findUniqueOrThrow({ where: { id: found.id }, select: { id: true, status: true } });
+                    if (membership.status !== "DENIED") return "notApplied" as const;
+                    if (openApplications.some((p) => p.paidAt)) return "refundOwed" as const;
                     const applied = await setHouseholdStatus(tx, membership.id, { from: ["DENIED"], to: "NONE", actor, reason: trimmedReason || "board restore" });
-                    if (!applied) return "notApplied" as const;
-                    await closeForRestore(tx, openApplications, actor);
-                    return membership.id;
+                    return applied ? membership.id : "notApplied" as const;
                 }).catch((e: unknown) => {
                     if (e instanceof ReviewError) return e;
                     throw e;
@@ -332,6 +336,9 @@ export const POST = withAuth(
                 if (outcome instanceof ReviewError) return apiError(outcome.message, 409);
                 if (outcome === "boardMember") {
                     return apiError("This household includes a board member. Remove the board role before denying membership.", 409);
+                }
+                if (outcome === "refundOwed") {
+                    return apiError("This household has an application with a payment recorded. Refund it in Shopify and record the refund first, then restore the household.", 409);
                 }
                 if (outcome === "notApplied") {
                     return apiError(deny ? "This household is already denied." : "Only a denied household can be restored.", 409);

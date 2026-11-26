@@ -12,7 +12,7 @@ import { activateByProcessId } from '@/lib/membership/payment';
 import { grantMembership } from '@/lib/membership/grant';
 import { recordRefund } from '@/lib/membership/refund';
 import { attest, boardResetReview } from '@/lib/membership/review';
-import { archiveApplication, closeForRestore, lockOpenApplications, unarchiveApplication } from '@/lib/membership/archive';
+import { archiveApplication, closeHouseholdApplications, lockOpenApplications, unarchiveApplication } from '@/lib/membership/archive';
 import { personActor } from '@/lib/auditActor';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
@@ -131,9 +131,9 @@ describe('payment-plan request ends when the application moves on', () => {
         await expectNoOpenRequest(processId);
     });
 
-    it('a restore closing the application ends the request', async () => {
+    it('a denial closing the application ends the request', async () => {
         const { processId, orgMembershipId } = await requestedProcess();
-        await prisma.$transaction(async (tx) => closeForRestore(tx, await lockOpenApplications(tx, orgMembershipId), personActor(boardId)));
+        await prisma.$transaction(async (tx) => closeHouseholdApplications(tx, await lockOpenApplications(tx, orgMembershipId), personActor(boardId), 'deny'));
         await unarchiveApplication(processId, boardId);
         await expectNoOpenRequest(processId);
     });

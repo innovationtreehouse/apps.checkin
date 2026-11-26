@@ -14,7 +14,7 @@ import prisma from '@/lib/prisma';
 import { advanceExternalIfComplete } from '@/lib/membership/external';
 import { attest, boardReopenWrongPersonClose, boardResetReview, eligibleReviewProcessIds, undoOwnApproval } from '@/lib/membership/review';
 import { activate } from '@/lib/membership/payment';
-import { archiveApplication, closeForRestore, lockOpenApplications, unarchiveApplication } from '@/lib/membership/archive';
+import { archiveApplication, closeHouseholdApplications, lockOpenApplications, unarchiveApplication } from '@/lib/membership/archive';
 import { releaseDepartedRejection, settleApplicationsAwaitingCheck, settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
 import { householdCheckStandings } from '@/lib/membership/checkStanding';
 import { notifyBoardCheckRejected, notifyBoardPaidReject } from '@/lib/membership/boardAlerts';
@@ -576,7 +576,7 @@ describe('B27: the Board closes a review opened for the wrong person, and may re
 
     it('#3509: an application closed and reopened while blocked still resumes when its review is closed as the wrong person', async () => {
         const { f, own } = await blockedFamily();
-        await prisma.$transaction(async (tx) => closeForRestore(tx, await lockOpenApplications(tx, f.orgMembershipId), personActor(board)));
+        await prisma.$transaction(async (tx) => closeHouseholdApplications(tx, await lockOpenApplications(tx, f.orgMembershipId), personActor(board), 'deny'));
         await unarchiveApplication(f.appId, board);
         expect((await row(f.appId)).status).toBe('BLOCKED');
         await close(own);

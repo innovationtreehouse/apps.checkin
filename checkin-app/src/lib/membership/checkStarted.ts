@@ -37,8 +37,8 @@ function isKnownMinor(person: AgeFacts, today: Date): boolean {
 /**
  * Marks `subjectPersonId`'s check started. The subject themself, a household lead
  * of the subject's household, a sysadmin or a Board member may mark it; no
- * own-household bar applies, since marking decides nothing. A known minor is
- * refused.
+ * own-household bar applies, since marking decides nothing. A known minor, and a
+ * person in a DENIED household, are refused.
  *
  * Under the Person row lock: a BLOCKED review is left as it is and nothing else
  * runs; an open PENDING_BG_REVIEW review is reused, its requested household filled
@@ -62,6 +62,11 @@ export async function markCheckStarted(subjectPersonId: number, actorId: number)
     if (isKnownMinor(subject, await orgToday(now))) throw new ExternalError("wrong_phase", "A person under 18 is never background-checked.");
 
     const outcome = await prisma.$transaction(async (tx) => {
+        // The membership row before the person: the order lib/lockOrder.ts states.
+        if (subject.householdId !== null) {
+            const [membership] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE "householdId" = ${subject.householdId} FOR UPDATE`;
+            if (membership?.status === "DENIED") throw new ExternalError("wrong_phase", "This household has been denied membership. Restore the household before marking a check started.");
+        }
         await tx.$queryRaw`SELECT id FROM "Person" WHERE id = ${subjectPersonId} FOR UPDATE`;
         const open = await tx.orgMembershipProcess.findMany({
             where: { kind: "PERSON_BG", subjectPersonId, ...personBgOpen.where },

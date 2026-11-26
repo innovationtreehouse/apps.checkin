@@ -70,6 +70,9 @@ const GUARDS: GuardSite[] = [
     { file: 'lib/membership/archive.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'ARCHIVED'], mode: 'read' },
     // refund: CAS on the status it read; its one status edge (every other step stays put)
     { file: 'lib/membership/refund.ts', machine: 'membership', from: 'PENDING_BG_CLEARANCE', edge: ['PENDING_BG_CLEARANCE', 'PENDING_PAYMENT'], mode: 'read' },
+    // a household denial or archive closes a BLOCKED application; a refund on a denied household closes a paid one
+    { file: 'lib/membership/archive.ts', machine: 'membership', from: 'BLOCKED', edge: ['BLOCKED', 'ARCHIVED'], mode: 'read' },
+    { file: 'lib/membership/refund.ts', machine: 'membership', from: 'PENDING_BG_CLEARANCE', edge: ['PENDING_BG_CLEARANCE', 'ARCHIVED'], mode: 'read' },
     { file: 'app/api/finance-ops/membership-payment-plans/route.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'ACTIVE'], mode: 'spread' },
     { file: 'lib/membership/payment.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'ACTIVE'], mode: 'spread' }, // activate, check cleared
     { file: 'lib/membership/payment.ts', machine: 'membership', from: 'PENDING_PAYMENT', edge: ['PENDING_PAYMENT', 'PENDING_BG_CLEARANCE'], mode: 'spread' }, // activate, check pending

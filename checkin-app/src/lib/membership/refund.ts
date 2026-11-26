@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import type { OrgMembershipProcess } from "@/generated/prisma/client";
 import { ReviewError, applicantHousehold } from "@/lib/membership/review";
-import { fromWhere, refundLandsIn } from "@/lib/membership/lifecycle";
+import { DENY_CLOSE_REASON, fromWhere, refundLandsIn } from "@/lib/membership/lifecycle";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { personActor, systemActor, type AuditActor } from "@/lib/auditActor";
 
@@ -9,7 +9,8 @@ import { personActor, systemActor, type AuditActor } from "@/lib/auditActor";
  * Board "Record refund": records a refund already made in Shopify by clearing
  * `paidAt`, on any paid application that never became a membership. It lands in the
  * step `REFUND_LANDS_IN` names; the background check is untouched and a BLOCKED row
- * stays BLOCKED. Any payment-plan request stays ended.
+ * stays BLOCKED. On a DENIED household the application closes instead, from that
+ * step, as the denial closed its unpaid ones. Any payment-plan request stays ended.
  * `shopifyOrderId` is kept, and the audit row records it: the reconciler reads that
  * row to know the refunded order is accounted for, so it neither re-activates nor
  * re-flags it after a re-payment overwrites the column.
@@ -49,13 +50,21 @@ async function applyRefund(process: OrgMembershipProcess, actor: AuditActor, rea
     const to = refundLandsIn(process.status);
     if (!to) throw new ReviewError("wrong_phase", "A refund can only be recorded on a paid application that has not become a membership.");
 
-    await prisma.$transaction(async (tx) => {
+    return prisma.$transaction(async (tx) => {
+        // The membership row before the application: the order lib/lockOrder.ts states.
+        const [membership] = process.orgMembershipId === null
+            ? []
+            : await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE id = ${process.orgMembershipId} FOR UPDATE`;
+        const closes = membership?.status === "DENIED";
+        const landsIn = closes ? "ARCHIVED" as const : to;
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: process.id, ...fromWhere(process.status), paidAt: { not: null } },
             data: {
                 paidAt: null,
                 isPaymentPlanRequested: false,
-                ...(to !== process.status && { status: to, stageEnteredAt: new Date() }),
+                ...(closes
+                    ? { status: "ARCHIVED", archivedFromStatus: to, stageEnteredAt: new Date() }
+                    : to !== process.status && { status: to, stageEnteredAt: new Date() }),
             },
         });
         if (count !== 1) throw new ReviewError("wrong_phase", "This application changed while you were looking at it. Reload and try again.");
@@ -66,9 +75,9 @@ async function applyRefund(process: OrgMembershipProcess, actor: AuditActor, rea
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: process.id,
                 oldData: { status: process.status, paidAt: process.paidAt!.toISOString(), shopifyOrderId: process.shopifyOrderId },
-                newData: { status: to, paidAt: null, refundRecorded: true, reason },
+                newData: { status: landsIn, paidAt: null, refundRecorded: true, reason, ...(closes ? { closeReason: DENY_CLOSE_REASON } : {}) },
             },
         });
+        return { status: landsIn };
     });
-    return { status: to };
 }

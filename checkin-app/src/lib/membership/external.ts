@@ -15,6 +15,8 @@ import { latestPendingExternal } from "@/lib/membership/phases";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
 import { asHouseholdProcess, fromWhere, openProcess, zohoWebhookMatchable } from "@/lib/membership/lifecycle";
 import { systemActor, personActor, personOrSystemActor, recordAudit } from "@/lib/auditActor";
+import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
+import type { TxClient } from "@/lib/db-client";
 
 /**
  * EXTERNAL-phase service — the actions an applicant completes after intake:
@@ -108,7 +110,8 @@ async function applicationCheckStarted(process: { orgMembershipId: number | null
  *
  * An application already paid (an order recorded while BLOCKED or unsigned) owes no
  * payment, so it goes to PENDING_BG_CLEARANCE instead, and `settleHouseholdBg`
- * converges it: activates it, or holds it and raises a refunded order.
+ * converges it: activates it, or holds it and raises a refunded order. A DENIED
+ * household's application never advances.
  *
  * The conditional updateMany (status guard) is the atomic gate: two concurrent
  * callers (Zoho webhook + a check marked started) both reach here, but only the
@@ -131,10 +134,8 @@ async function advanceExternal(processId: number, retryOnLoss: boolean): Promise
 
     const { orgMembershipId } = asHouseholdProcess(process);
     const advanced = await prisma.$transaction(async (tx) => {
-        const membership = await tx.orgMembership.findUnique({
-            where: { id: orgMembershipId },
-            select: { householdId: true },
-        });
+        const membership = await lockMembership(tx, orgMembershipId);
+        if (membership?.status === "DENIED") return "denied" as const;
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: {
                 id: processId,
@@ -165,6 +166,7 @@ async function advanceExternal(processId: number, retryOnLoss: boolean): Promise
         });
         return { householdId: membership?.householdId ?? null };
     });
+    if (advanced === "denied") return process;
     // A refund between the read and the CAS clears paidAt and fails the CAS; read again once.
     if (!advanced && retryOnLoss) return advanceExternal(processId, false);
     const householdId = advanced?.householdId ?? null;
@@ -187,24 +189,31 @@ async function advanceExternal(processId: number, retryOnLoss: boolean): Promise
  *
  * A board-recorded signature clears the signer: the request's addressee may never
  * have signed, and the record must not name someone who didn't.
+ *
+ * On a DENIED household's application nothing is recorded: the board is refused,
+ * and a signature from Zoho is raised for the board instead.
  */
 export async function markContractSigned(processId: number, actorId?: number, recordedByBoard = false) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ExternalError("not_found", "Application not found.");
     const isPersonAgreement = process.kind === "PERSON_AGREEMENT" || process.kind === "KEY_VOLUNTEER_AGREEMENT";
+    const orgMembershipId = isPersonAgreement ? null : process.orgMembershipId;
     // Conditional on contractSignedAt: null — two concurrent Zoho webhook retries
     // both see null, but only the winner's updateMany flips it (count === 1), so the
     // audit row is written once. A per-person agreement also requires its from-state, so
     // an archived agreement can never flip to ACTIVE. Household processes may be
     // pre-marked signed before EXTERNAL (intake), so theirs has no status clause.
-    await prisma.$transaction(async (tx) => {
+    const deniedHouseholdId = await prisma.$transaction(async (tx) => {
+        // The membership row before the application: the order lib/lockOrder.ts states.
+        const membership = orgMembershipId === null ? null : await lockMembership(tx, orgMembershipId);
+        if (membership?.status === "DENIED") return membership.householdId;
         const signedAt = new Date();
         const signed = { contractSignedAt: signedAt, ...(recordedByBoard ? { zohoSignerPersonId: null } : {}) };
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: processId, contractSignedAt: null, ...(isPersonAgreement ? fromWhere("PENDING_EXTERNAL_ACTION") : {}) },
             data: isPersonAgreement ? { ...signed, status: "ACTIVE", stageEnteredAt: signedAt } : signed,
         });
-        if (count !== 1) return;
+        if (count !== 1) return null;
         await tx.auditLog.create({
             data: {
                 ...personOrSystemActor(actorId, "webhook:zoho-contract"),
@@ -218,9 +227,35 @@ export async function markContractSigned(processId: number, actorId?: number, re
                 },
             },
         });
+        return null;
     });
+    if (deniedHouseholdId !== null) {
+        if (recordedByBoard) throw new ExternalError("wrong_phase", "This household has been denied membership. Restore the household before recording its agreement.");
+        await raiseDeniedHouseholdActivity({ householdId: deniedHouseholdId, processId, what: "an agreement signature arrived" });
+        return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+    }
     if (isPersonAgreement) return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     return advanceExternalIfComplete(processId);
+}
+
+/**
+ * A completed signature for a DENIED household's closed application: nothing is
+ * recorded and the board is told. Returns whether the request was one.
+ */
+export async function raiseDeniedClosedSignature(requestId: string): Promise<boolean> {
+    const closed = await prisma.orgMembershipProcess.findFirst({
+        where: { zohoEnvelopeId: requestId, ...fromWhere("ARCHIVED"), orgMembership: { status: "DENIED" } },
+        select: { id: true, orgMembership: { select: { householdId: true } } },
+    });
+    if (!closed?.orgMembership) return false;
+    await raiseDeniedHouseholdActivity({ householdId: closed.orgMembership.householdId, processId: closed.id, what: "an agreement signature arrived" });
+    return true;
+}
+
+/** Locks a household's membership row FOR UPDATE and returns its household and status. */
+async function lockMembership(tx: TxClient, orgMembershipId: number) {
+    const [row] = await tx.$queryRaw<{ householdId: number; status: string }[]>`SELECT "householdId", status FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
+    return row ?? null;
 }
 
 /**
