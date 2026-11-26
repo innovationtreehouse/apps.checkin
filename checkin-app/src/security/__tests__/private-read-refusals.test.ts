@@ -211,6 +211,9 @@ describe('caller-scoped reads ignore a request naming someone else', () => {
         expect(res.status).toBe(200);
         expect(JSON.stringify(await res.json())).not.toContain('Other Household');
         for (const [args] of (prisma.person.findUnique as jest.Mock).mock.calls) expect(args.where).toEqual({ id: CALLER });
+        for (const method of ['findUnique', 'findUniqueOrThrow', 'findFirst', 'findFirstOrThrow', 'findMany'] as const) {
+            expect(prisma.household[method]).not.toHaveBeenCalled();
+        }
     });
 
     it("GET /api/trusted-adults/mine returns only the caller's household", async () => {
