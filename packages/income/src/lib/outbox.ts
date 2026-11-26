@@ -1,4 +1,4 @@
-import { MAX_CREATES_PER_RUN_CEILING, SWEEP_DAYS, appKeyOf, findOrCreate, isThrottled, runDrain, postFailure, postFailureError, type BooksMapRole, type PostFailure, type PostingTurn, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
+import { MAX_CREATES_PER_RUN_CEILING, SWEEP_DAYS, appKeyOf, faultTextColumn, findOrCreate, isThrottled, runDrain, postFailure, postFailureError, type BooksMapRole, type PostFailure, type PostingTurn, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror, QbDeposit } from "../contract";
@@ -486,7 +486,7 @@ export async function postPayout(
     // An outcome that sets a note keeps any warning about another stray app entry on the row.
     const settle = async (outcome: PostOutcome, action: string, data: RowData, reason?: string) => {
       const note = data.qbNote === undefined ? {} : { qbNote: nextNote(current.qbNote, data.depositId ?? null, data.qbNote) };
-      const saved = await tx.payoutReconciliation.update({ where: { id }, data: { ...data, ...note, postClaimedAt: null } });
+      const saved = await tx.payoutReconciliation.update({ where: { id }, data: { qbFaultText: null, ...data, ...note, postClaimedAt: null } });
       await audit(tx, orgId, action, current, saved, { ...actor, reason });
       return { outcome, row: saved };
     };
@@ -526,7 +526,7 @@ export async function postPayout(
       case "failed":
         // The post failed whether or not this update commits, so the report stands either way.
         reportFailed(result);
-        return settle("failed", "reconciliation.post_failed", { status: RECON_STATUS.OPEN, kind: RECON_KIND.POST_FAILED, reason: failureNote(result) }, result.error);
+        return settle("failed", "reconciliation.post_failed", { status: RECON_STATUS.OPEN, kind: RECON_KIND.POST_FAILED, reason: failureNote(result), qbFaultText: faultTextColumn(result) }, result.error);
     }
   });
 

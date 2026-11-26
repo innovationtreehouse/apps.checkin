@@ -57,6 +57,9 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   Writes re-check the realm guard, so production needs `CHECKIN_ENV=prod` at write time.
 - Every request goes through one pacer per process (`pacer.ts`): 5 a second, 4 in flight. Two processes on one realm share no budget or pause; the host's posting slot keeps their drains apart. A 429 pauses every request for `Retry-After` (at most 120 s) or 60 s, the request is tried once more after the pause, and a second 429 throws `QboThrottledError`. The pacer logs the previous day's request count at the first request of each UTC day. Every request has a 30 s timeout. Errors name
   the status, `intuit_tid` and QBO fault codes only, never the fault text (it can echo names and memos).
+  `QboRequestError.faultText` and `PostFailure.faultText` hold the text as a `FaultText`, which prints
+  redacted in messages, logs, JSON and `util.inspect`; `faultTextColumn(failure)` reveals it for a
+  lane's finance-only `qbFaultText` column, and nothing else should.
 - `findOrCreateInKindJournal(client, request)` creates one in-kind gift as one balanced JournalEntry;
   no other path creates a JournalEntry. Each line names its account: credits go only to in-kind
   income, debits to no books-map role's account, and an unbalanced entry or a non-positive amount answers

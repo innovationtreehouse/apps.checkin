@@ -251,6 +251,8 @@ ends the run, and the rest wait for the next run. A throttled
 Any other failed post, whatever its cause, leaves the expense at `NEEDS_FINANCE`, stuck.
 `qbFirstFailedAt` keeps the first failure's time and `qbLastError` the latest error;
 a refusal's error is "QuickBooks refused: code N (request R)", never the fault text.
+The fault text goes to `qbFaultText` alone, a `finance`-tier column that only finance's
+view of the expense page receives; it is never logged or put in a note or audit row.
 The drain never retries a stuck expense and never stops on a failure: an outage
 leaves every expense it reached stuck. Finance's retry, or Retry on the Problems list
 (`retryStuckItem`), runs the post once; the claim and the key lookup make it safe to

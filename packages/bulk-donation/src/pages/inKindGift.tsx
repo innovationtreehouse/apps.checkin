@@ -58,6 +58,8 @@ interface Gift {
   expenseBooking: string | null;
   qbFirstFailedAt?: string | null;
   qbLastError?: string | null;
+  /** Sent to finance alone; the registry strips it for every other role. */
+  qbFaultText?: string | null;
   inventorySourceKey: string | null;
   inventoryLoadedAt: string | null;
   inventoryLoadFailureReason: string | null;
@@ -256,6 +258,7 @@ function InKindGiftPage({ source }: { source: InKindSource }) {
           <Text>Bucket: {g.budgetOwnerName ?? "—"}{g.bucketHeld ? " (archived or has no Class)" : ""}</Text>
           <Text>Bookings: revenue {g.revenueBooking ?? "—"}, expense {g.expenseBooking ?? "—"}</Text>
           {g.qbFirstFailedAt && <Text size="sm" c="red">Last error: {g.qbLastError ?? "no error recorded"}</Text>}
+          {g.qbFirstFailedAt && g.qbFaultText && <Text size="sm" c="red">QuickBooks said: {g.qbFaultText}</Text>}
         </Stack>
       </Group>
 

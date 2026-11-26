@@ -212,7 +212,7 @@ async function linkOwnFirst(expense: Awaited<ReturnType<typeof loadExpense>>, en
       if (await storedTaxWaits(tx, expense.id)) throw new ServiceError(409, TAX_WAITS);
       const linked = await tx.expense.updateMany({
         where: { id: expense.id, qbTxnId: null, qbMatchState: { in: MATCHABLE_STATES } },
-        data: { qbMatchState: "CREATED", qbFirstFailedAt: null, qbLastError: null, qbTxnId, qbTxnEntity: entity, qbVendorId: entity === "Bill" ? own.entry.VendorRef?.value ?? null : null },
+        data: { qbMatchState: "CREATED", qbFirstFailedAt: null, qbLastError: null, qbFaultText: null, qbTxnId, qbTxnEntity: entity, qbVendorId: entity === "Bill" ? own.entry.VendorRef?.value ?? null : null },
       });
       if (linked.count === 0) throw new ServiceError(409, "Expense is already linked to QuickBooks");
       if (!(await claimQbTxn(tx, expense.orgId, entity, qbTxnId))) throw new ServiceError(409, "That QuickBooks entry is already claimed");
@@ -264,7 +264,7 @@ export async function matchExpenseToQb(principal: ExpensePrincipal, expenseId: s
       if (await storedTaxWaits(tx, expenseId)) throw new ServiceError(409, TAX_WAITS);
       const linked = await tx.expense.updateMany({
         where: { id: expenseId, qbTxnId: null, qbMatchState: { in: MATCHABLE_STATES } },
-        data: { qbMatchState: "MATCHED", qbFirstFailedAt: null, qbLastError: null, qbTxnId, qbTxnEntity: entity, qbMatchBaseline },
+        data: { qbMatchState: "MATCHED", qbFirstFailedAt: null, qbLastError: null, qbFaultText: null, qbTxnId, qbTxnEntity: entity, qbMatchBaseline },
       });
       if (linked.count === 0) throw new ServiceError(409, "Expense is already linked to QuickBooks");
       if (!(await claimQbTxn(tx, current.orgId, entity, qbTxnId))) throw new ServiceError(409, "That QuickBooks entry is already claimed");
@@ -330,7 +330,7 @@ export async function skipExpenseQb(principal: ExpensePrincipal, expenseId: stri
     ) {
       throw new ServiceError(409, "The app may have tried to book this expense meanwhile; reload and try again");
     }
-    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "SKIPPED", qbFirstFailedAt: null, qbLastError: null } });
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "SKIPPED", qbFirstFailedAt: null, qbLastError: null, qbFaultText: null } });
     await checkOffHeldOnPost(tx, expenseId, SKIPPED_CHECK_OFF);
     await writeAudit(tx, actorOf(principal), {
       expenseId,

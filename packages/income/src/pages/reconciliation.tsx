@@ -15,6 +15,8 @@ interface ReconRow {
   kind: string | null;
   reason: string | null;
   qbNote: string | null;
+  /** Sent to finance alone; the registry strips it for every other role. */
+  qbFaultText?: string | null;
 }
 
 const SOURCE_LABEL: Record<string, string> = { shopify: "Shopify payout", benevity: "Benevity disbursement" };
@@ -194,6 +196,7 @@ export default function ReconciliationPage() {
                       <Badge size="sm" color="orange">{row.kind ?? row.status}</Badge>{" "}
                       <Text span size="sm" c="dimmed">{row.kind ? KIND_HELP[row.kind] : ""}</Text>
                       {row.reason && <Text size="sm">{row.reason}</Text>}
+                      {row.qbFaultText && <Text size="sm" c="red">QuickBooks said: {row.qbFaultText}</Text>}
                       {row.qbNote && <Text size="sm" c="orange">{row.qbNote}</Text>}
                     </Table.Td>
                     <Table.Td>

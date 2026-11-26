@@ -18,6 +18,7 @@ import {
   shiftDate,
   type BooksMapRole,
   type CloseRead,
+  type FaultText,
   type FindOrCreateResult,
   type InKindJournalLine,
   type PostingTurn,
@@ -97,6 +98,8 @@ export interface Settlement {
   failure?: FailureKind;
   /** QuickBooks' fault codes on a refused create. */
   codes?: readonly string[];
+  /** The refusal's own words, for the posting's finance-only column. */
+  faultText?: FaultText;
   /** Held for finance without calling QuickBooks, so it says nothing about whether QuickBooks is up. */
   noCall?: boolean;
   /** QuickBooks throttled the post: settle only releases the claim, back to the state before it. */
@@ -288,8 +291,8 @@ async function journalLines(run: Run, gift: GiftToBook): Promise<InKindJournalLi
 }
 
 /** A failed post: the gift is stuck for finance with the error; a refusal says QuickBooks refused it. */
-function failedPost(failure: FailureKind, error: string, codes?: readonly string[]): Settlement {
-  return { ...needsFinance((failure === "data" ? `QuickBooks refused this gift: ${error}` : error).slice(0, 500)), failure, codes };
+function failedPost(failure: FailureKind, error: string, codes?: readonly string[], faultText?: FaultText): Settlement {
+  return { ...needsFinance((failure === "data" ? `QuickBooks refused this gift: ${error}` : error).slice(0, 500)), failure, codes, ...(faultText && { faultText }) };
 }
 
 function fromJournal(r: FindOrCreateResult, gift: GiftToBook, txnDate: string): Settlement {
@@ -307,7 +310,7 @@ function fromJournal(r: FindOrCreateResult, gift: GiftToBook, txnDate: string): 
       return { state: QB_MATCH_STATE.UNBOOKED, note: null, entries: [] };
     case "failed":
       if (r.throttled) return THROTTLED;
-      return failedPost(r.onCreate ? r.failure : readKind(r.failure), r.error, r.codes);
+      return failedPost(r.onCreate ? r.failure : readKind(r.failure), r.error, r.codes, r.faultText);
   }
 }
 
@@ -344,7 +347,7 @@ async function call(run: Run, gift: GiftToBook, txnDate: string, gate: { closedT
     return fromJournal(result, gift, txnDate);
   } catch (err) {
     if (isThrottled(err)) return THROTTLED;
-    return failedPost(readKind(kindOf(err)), message(err));
+    return failedPost(readKind(kindOf(err)), message(err), undefined, postFailure(err).faultText);
   }
 }
 
@@ -391,8 +394,8 @@ export async function writeSettlement(
     await tx.inKindBooking.create({ data: { orgId, source: gift.source, giftId: gift.id, side: e.side, matchState: s.state, qbEntity: e.entity, qbTxnId: e.id, bookedTxnDate: e.txnDate } });
   }
   const stuck = s.failure
-    ? { qbFirstFailedAt: posting.qbFirstFailedAt ?? new Date(), qbLastError: s.note }
-    : s.state === QB_MATCH_STATE.POST_FAILED ? {} : { qbFirstFailedAt: null, qbLastError: null };
+    ? { qbFirstFailedAt: posting.qbFirstFailedAt ?? new Date(), qbLastError: s.note, qbFaultText: s.faultText?.reveal() ?? null }
+    : s.state === QB_MATCH_STATE.POST_FAILED ? {} : { qbFirstFailedAt: null, qbLastError: null, qbFaultText: null };
   await tx.inKindPosting.update({
     where: { id: posting.id },
     data: { matchState: s.state, claimedAt: null, qbNote: s.note, bookedTotalCents: s.booked?.totalCents ?? null, bookedTxnDate: s.booked?.txnDate ?? null, ...stuck },
@@ -421,7 +424,7 @@ export async function postGift(run: Run, source: GiftToBook["source"], id: numbe
     // The failing transaction rolled back, so the failure is recorded in a fresh one. The attempt stamp stays, so a retry looks for the entry by key first.
     console.warn(`[bulk-donation] in-kind post threw for ${giftDetail(source, id)}`, err);
     const f = postFailure(err);
-    saved = await settle(run, claimed.gift, now, f.throttled ? THROTTLED : failedPost(f.failure, f.error, f.codes), claimed.prior);
+    saved = await settle(run, claimed.gift, now, f.throttled ? THROTTLED : failedPost(f.failure, f.error, f.codes, f.faultText), claimed.prior);
   }
   if (!saved) return "waiting";
   if (saved.failure) {

@@ -307,7 +307,7 @@ async function commitQbProcessing(orgId: string, expenseId: string, resubmittedB
     await tx.expenseEvent.create({
       data: { orgId, expenseId },
     });
-    await tx.expense.update({ where: { id: expenseId }, data: { qbFirstFailedAt: null, qbLastError: null } });
+    await tx.expense.update({ where: { id: expenseId }, data: { qbFirstFailedAt: null, qbLastError: null, qbFaultText: null } });
 
     await advanceWorkflowInTx(tx, {
       expenseId,
@@ -386,7 +386,7 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string, r
       auditNotes: error,
     }).catch(unlessRaceLost);
     // Stuck in qb_error until a person retries it; the first failure's time is kept.
-    await db.expense.updateMany({ where: { id: expenseId, state: "qb_error" }, data: { qbLastError: error } });
+    await db.expense.updateMany({ where: { id: expenseId, state: "qb_error" }, data: { qbLastError: error, qbFaultText: null } });
     await db.expense.updateMany({ where: { id: expenseId, state: "qb_error", qbFirstFailedAt: null }, data: { qbFirstFailedAt: new Date() } });
   }
 }
@@ -425,7 +425,7 @@ async function processExpenseForQb(orgId: string, expenseId: string, expense: Ex
         action: "qb_holds_created",
       });
     }
-    await db.expense.update({ where: { id: expenseId }, data: { qbFirstFailedAt: null, qbLastError: null } });
+    await db.expense.update({ where: { id: expenseId }, data: { qbFirstFailedAt: null, qbLastError: null, qbFaultText: null } });
     return;
   }
 

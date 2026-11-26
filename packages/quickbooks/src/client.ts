@@ -4,6 +4,7 @@ import { centsToDollars } from "@checkin/money";
 import { CREATE, CREATE_JOURNAL } from "./internal";
 import { TEST_NOTE_MARKER, assertPayloadMarked } from "./guard";
 import { qbPacer, type Pacer } from "./pacer";
+import { faultTextOf, type FaultText } from "./faultText";
 import type {
   AccessTokenSource,
   QboAccount,
@@ -31,13 +32,15 @@ const CREATED_SINCE_MARGIN_MS = 3_600_000;
 const CREATED_SINCE_MAX_PAGES = 10;
 const REQUEST_TIMEOUT_MS = 30_000;
 
-/** The numeric fault codes of a QBO Fault body, or none; never the fault's free text. */
-async function faultCodes(res: Response): Promise<string[]> {
+/** A QBO Fault body's numeric codes, and its free text held as a FaultText, which never prints. */
+async function faultOf(res: Response): Promise<{ codes: string[]; text: FaultText | null }> {
   try {
-    const body = (await res.json()) as { Fault?: { Error?: { code?: unknown }[] } };
-    return (body.Fault?.Error ?? []).map((e) => e.code).filter((c): c is string => typeof c === "string" && /^\d+$/.test(c));
+    const body = (await res.json()) as { Fault?: { Error?: { code?: unknown; Message?: unknown; Detail?: unknown }[] } };
+    const errors = body.Fault?.Error ?? [];
+    const codes = errors.map((e) => e.code).filter((c): c is string => typeof c === "string" && /^\d+$/.test(c));
+    return { codes, text: faultTextOf(errors) };
   } catch {
-    return [];
+    return { codes: [], text: null };
   }
 }
 
@@ -48,13 +51,14 @@ function statusKind(status: number): FailureKind {
   return "data";
 }
 
-/** A failed QBO request. The message names the status, intuit_tid and fault codes only. */
+/** A failed QBO request. The message names the status, intuit_tid and fault codes only; `faultText` is finance's alone. */
 export class QboRequestError extends KindedError {
   constructor(
     message: string,
     readonly status: number,
     readonly requestId: string | null,
     readonly codes: readonly string[],
+    readonly faultText: FaultText | null = null,
   ) {
     super(statusKind(status), codes.length ? `${message}: codes ${codes.join(",")}` : message);
     this.name = "QboRequestError";
@@ -523,7 +527,8 @@ export class QuickBooksClient {
   /**
    * One QBO request through the shared pacer, with a timeout. A 429 starts the pacer's pause and
    * the request is tried once more after it; a second 429 throws QboThrottledError. An error names
-   * the status, intuit_tid and QBO fault codes only; the fault text can echo names and memos.
+   * the status, intuit_tid and QBO fault codes only; the fault text, which can echo names and
+   * memos, rides as a FaultText that never prints.
    */
   private async send(what: string, url: string, init: { method?: "POST"; body?: string }): Promise<unknown> {
     const token = await this.tokens.current();
@@ -547,10 +552,10 @@ export class QuickBooksClient {
           throw new QboThrottledError(`QBO ${what} failed 429 (intuit_tid=${this.lastTid})`, this.lastTid, resumeAt);
         }
         if (!res.ok) {
-          const codes = await faultCodes(res);
+          const { codes, text } = await faultOf(res);
           const lane = new URL(url).searchParams.get("requestid")?.split(":")[0] ?? null;
           console.warn("[quickbooks] request failed", { lane, operation: what, status: res.status, codes, requestId: this.lastTid });
-          throw new QboRequestError(`QBO ${what} failed ${res.status} (intuit_tid=${this.lastTid})`, res.status, this.lastTid, codes);
+          throw new QboRequestError(`QBO ${what} failed ${res.status} (intuit_tid=${this.lastTid})`, res.status, this.lastTid, codes, text);
         }
         return await res.json();
       } finally {

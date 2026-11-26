@@ -88,11 +88,15 @@ describe('income tiering', () => {
         });
     });
 
-    it.each(PRISMA_MODELS)('%s: id is public, every other field internal', (model) => {
+    // A failed post's QuickBooks fault text is finance's alone.
+    const FINANCE_FIELDS: Record<string, readonly string[]> = { PayoutReconciliation: ['qbFaultText'] };
+
+    it.each(PRISMA_MODELS)('%s: id is public, a fault text finance, every other field internal', (model) => {
         const tiers = tiersOf(model);
         expect(tiers).toBeDefined();
         for (const [field, tier] of Object.entries(tiers)) {
-            expect([field, tier]).toEqual([field, field === 'id' ? 'public' : 'internal']);
+            const expected = field === 'id' ? 'public' : FINANCE_FIELDS[model]?.includes(field) ? 'finance' : 'internal';
+            expect([field, tier]).toEqual([field, expected]);
         }
     });
 

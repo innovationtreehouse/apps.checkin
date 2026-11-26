@@ -295,11 +295,12 @@ interface Posting {
   qbNote: string | null;
   qbFirstFailedAt: Date | null;
   qbLastError: string | null;
+  qbFaultText: string | null;
 }
 
 /** Each gift's way to QuickBooks: its match state, finance's note, and when its post first failed and why it last failed. */
 async function readPostings(handle: DbOrTx, orgId: string, where: { source?: InKindSource; giftId?: number } = {}): Promise<Map<string, Posting>> {
-  const rows = await handle.inKindPosting.findMany({ where: { orgId, ...where }, select: { source: true, giftId: true, matchState: true, qbNote: true, qbFirstFailedAt: true, qbLastError: true } });
+  const rows = await handle.inKindPosting.findMany({ where: { orgId, ...where }, select: { source: true, giftId: true, matchState: true, qbNote: true, qbFirstFailedAt: true, qbLastError: true, qbFaultText: true } });
   return new Map(rows.map(({ source, giftId, ...posting }) => [bookingKey(source, giftId), posting]));
 }
 
@@ -708,6 +709,7 @@ async function getGift(orgId: string, source: InKindSource, id: number) {
     expenseBooking: bookedSide(sides, "expense"),
     qbFirstFailedAt: posting?.qbFirstFailedAt ?? null,
     qbLastError: posting?.qbLastError ?? null,
+    qbFaultText: posting?.qbFaultText ?? null,
     inventorySourceKey: source === "manual" ? inventorySourceKey(id) : null,
     inventoryLoadedAt: extras.inventoryLoadedAt,
     inventoryLoadFailureReason: extras.inventoryLoadFailureReason,

@@ -1,5 +1,6 @@
 export * from "./types";
 export * from "./client";
+export * from "./faultText";
 export * from "./match";
 export * from "./write";
 export * from "./guard";
