@@ -334,6 +334,45 @@ describe("membership-ops/households page", () => {
     });
   });
 
+  describe("disables the control where the server would refuse it", () => {
+    const grantYears = [{ year: 2026, label: "2026-2027" }];
+    const lapsed = { ...households.households[0], validUntil: "2026-08-01T00:00:00.000Z" };
+    const control = (name: string) => within(screen.getByText(name).closest("tr") as HTMLElement).getByRole("button", { name: /^(Grant|Open) / });
+
+    it("at an application step before payment, naming the step", async () => {
+      setSession({ id: 1, isBoardMember: true, householdId: 500 });
+      mockFetchJson({ "/api/membership-ops/households": { grantYears, households: [
+        { ...households.households[1], id: 6, name: "The Intakes", applicationStep: "INTAKE" },
+        { ...lapsed, id: 7, name: "The Unconfirmed", applicationStep: "PENDING_RENEWAL" },
+      ] } });
+      renderWithProviders(<AdminHouseholdsPage />);
+      await screen.findByText("The Intakes");
+
+      expect(control("The Intakes")).toBeDisabled();
+      expect(control("The Intakes")).toHaveAttribute("title", "The household's application is at INTAKE; it can be granted once it reaches payment.");
+      expect(control("The Unconfirmed")).toBeDisabled();
+      expect(control("The Unconfirmed")).toHaveAttribute("title", "The household's application is at PENDING_RENEWAL; it can be granted once it reaches payment.");
+    });
+
+    it("on Open renewal while the live year has no store product, and only there", async () => {
+      setSession({ id: 1, isBoardMember: true, householdId: 500 });
+      mockFetchJson({ "/api/membership-ops/households": { grantYears, renewalProductMissing: "2026-2027", households: [
+        { ...lapsed, id: 5, name: "The Renewers" },
+        { ...lapsed, id: 4, name: "The Payables", awaitingPayment: true },
+        { ...households.households[1], id: 6, name: "The Joiners" },
+      ] } });
+      renderWithProviders(<AdminHouseholdsPage />);
+      await screen.findByText("The Renewers");
+
+      expect(control("The Renewers")).toHaveTextContent("Open renewal 2026-2027");
+      expect(control("The Renewers")).toBeDisabled();
+      expect(control("The Renewers")).toHaveAttribute("title", "No membership product is set for 2026-2027, so the family couldn't pay. Set it in membership settings before opening a renewal.");
+      expect(control("The Payables")).toHaveTextContent("Grant 2026-2027");
+      expect(control("The Payables")).toBeEnabled();
+      expect(control("The Joiners")).toBeEnabled();
+    });
+  });
+
   describe("the coming year's Grant", () => {
     const YEAR = "Grant 2026-2027";
     const COMING = "Grant 2027-2028";

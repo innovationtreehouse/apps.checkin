@@ -15,6 +15,7 @@ import { PUT as participantPUT } from "@/app/api/membership-ops/participants/[id
 import { POST as reassignPOST } from "@/app/api/membership-ops/participants/[id]/household/route";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { householdCheckStandings } from "@/lib/membership/checkStanding";
+import { liveYearVariantId } from "@/lib/membership/payment";
 
 // The archived-household guard has its own tests; here every household is live.
 jest.mock("@/lib/household/archiveGuard", () => ({
@@ -41,6 +42,10 @@ jest.mock("@/lib/membership/checkStanding", () => ({
     ...jest.requireActual("@/lib/membership/checkStanding"),
     householdCheckStandings: jest.fn().mockResolvedValue({ members: [], awaitingNaming: false }),
 }));
+jest.mock("@/lib/membership/payment", () => ({
+    ...jest.requireActual("@/lib/membership/payment"),
+    liveYearVariantId: jest.fn(),
+}));
 jest.mock("@/lib/prisma", () => {
     const household = { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() };
     const tx = {
@@ -56,6 +61,7 @@ jest.mock("@/lib/prisma", () => {
         default: {
             household,
             boardSettings: { findUnique: jest.fn().mockResolvedValue(null) },
+            orgMembershipProcess: { findMany: jest.fn().mockResolvedValue([]) },
             person: { findUnique: jest.fn() },
             auditLog: { create: jest.fn(), findMany: jest.fn() },
             $transaction: jest.fn((fn: (t: typeof tx) => unknown) => fn(tx)),
@@ -71,6 +77,7 @@ const db = prisma as unknown as {
     household: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
     person: { findUnique: jest.Mock };
     boardSettings: { findUnique: jest.Mock };
+    orgMembershipProcess: { findMany: jest.Mock };
     auditLog: { findMany: jest.Mock };
     tx: { person: { update: jest.Mock; updateMany: jest.Mock; findUnique: jest.Mock; findUniqueOrThrow: jest.Mock; count: jest.Mock } };
 };
@@ -124,9 +131,45 @@ describe("GET /api/membership-ops/households", () => {
         expect(Object.keys(args.select).sort()).toEqual(["householdMembers", "id", "name", "orgMembership"]);
         expect(Object.keys(args.select.orgMembership.select).sort()).toEqual(["id", "memberSince", "notRenewingYear", "processes", "status"]);
         const [row] = (await res.json()).households;
-        expect(Object.keys(row).sort()).toEqual(["awaitingPayment", "bgValidUntil", "householdMembers", "id", "name", "notRenewing", "orgMembership", "settledForComingYear", "validUntil"]);
+        expect(Object.keys(row).sort()).toEqual(["applicationStep", "awaitingPayment", "bgValidUntil", "householdMembers", "id", "name", "notRenewing", "orgMembership", "settledForComingYear", "validUntil"]);
         expect(row.orgMembership).toEqual({ status: "ACTIVE", memberSince: null });
         expect(row.notRenewing).toBeNull();
+    });
+
+    it("names the step of a household's newest application when it is before payment", async () => {
+        signIn({ isBoardMember: true });
+        db.household.findMany.mockResolvedValue([
+            { id: 10, name: "Intake", householdMembers: [], orgMembership: { id: 1, status: "NONE", memberSince: null, notRenewingYear: null, processes: [] } },
+            { id: 11, name: "Payable", householdMembers: [], orgMembership: { id: 2, status: "ACTIVE", memberSince: null, notRenewingYear: null, processes: [{ id: 21, status: "PENDING_PAYMENT" }] } },
+            { id: 12, name: "Nothing open", householdMembers: [], orgMembership: { id: 3, status: "ACTIVE", memberSince: null, notRenewingYear: null, processes: [] } },
+        ]);
+        db.orgMembershipProcess.findMany.mockResolvedValue([
+            { orgMembershipId: 2, status: "PENDING_PAYMENT" },
+            { orgMembershipId: 1, status: "INTAKE" },
+            { orgMembershipId: 2, status: "PENDING_EXTERNAL_ACTION" },
+        ]);
+        const body = await (await GET(request("http://localhost/api/membership-ops/households"))).json();
+        expect(body.households.map((h: { name: string; applicationStep: string | null }) => [h.name, h.applicationStep])).toEqual([
+            ["Intake", "INTAKE"], ["Payable", null], ["Nothing open", null],
+        ]);
+        expect(db.orgMembershipProcess.findMany.mock.calls[0][0]).toMatchObject({ where: { orgMembershipId: { in: [1, 2, 3] } }, orderBy: { id: "desc" } });
+    });
+
+    it.each([
+        ["no store product", null, "2026-2027"],
+        ["a store product", "gid://variant/2026", null],
+    ])("with %s for the live year, says which year can't be renewed into", async (_case, variant, missing) => {
+        signIn({ isBoardMember: true });
+        jest.useFakeTimers({ now: new Date(Date.UTC(2026, 9, 1)), doNotFake: ["nextTick", "setImmediate"] });
+        try {
+            db.boardSettings.findUnique.mockResolvedValueOnce({ orgMembershipYearBoundary: new Date(Date.UTC(2020, 8, 1)), bgRecheckMonths: 0 });
+            (liveYearVariantId as jest.Mock).mockResolvedValueOnce(variant);
+            db.household.findMany.mockResolvedValue([]);
+            const body = await (await GET(request("http://localhost/api/membership-ops/households"))).json();
+            expect(body.renewalProductMissing).toBe(missing);
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it("labels a household that said it won't renew into the noted year, with the date it said so", async () => {

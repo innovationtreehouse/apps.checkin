@@ -3,7 +3,7 @@ import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import { certifyPaymentPlan, liveYearVariantId, PaymentError } from "@/lib/membership/payment";
 import { membershipYearLabel } from "@/lib/programYear";
-import { applicationNotAtPaymentMessage, renewalProductMissingMessage } from "@/lib/membership/grantRefusals";
+import { applicationStepRefusal, renewalProductMissingMessage } from "@/lib/membership/grantRefusals";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import type { DbClient } from "@/lib/db-client";
 import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
@@ -43,7 +43,8 @@ export function grantMessage(result: GrantResult): string {
     return `${what} ${result.opened ? "opened" : "already open"}: the family completes it, then grant once it reaches payment.`;
 }
 
-const IN_FLIGHT_WHERE: Prisma.OrgMembershipProcessWhereInput = {
+/** The application a grant acts on: the household's newest one matching this. */
+export const grantInFlightWhere: Prisma.OrgMembershipProcessWhereInput = {
     OR: [
         { kind: "INITIAL", status: { in: [...IN_FLIGHT_INITIAL] } },
         { kind: "RENEWAL", status: { in: [...IN_FLIGHT_RENEWAL] } },
@@ -69,17 +70,14 @@ export async function grantMembership(
     const membership = await ensureHouseholdMembership(prisma, householdId);
 
     const existing = await prisma.orgMembershipProcess.findFirst({
-        where: { orgMembershipId: membership.id, ...IN_FLIGHT_WHERE },
+        where: { orgMembershipId: membership.id, ...grantInFlightWhere },
         orderBy: { id: "desc" },
     });
 
     if (existing) {
-        if (existing.status === "PENDING_BG_CLEARANCE") {
-            throw new PaymentError("wrong_phase", "This application is already paid and is waiting for its background check.");
-        }
         // COI is enforced inside certifyPaymentPlan, which also refuses any status but PENDING_PAYMENT.
         if (existing.status !== "PENDING_PAYMENT") {
-            throw new PaymentError("wrong_phase", applicationNotAtPaymentMessage(existing.status));
+            throw new PaymentError("wrong_phase", applicationStepRefusal(existing.status));
         }
         // The certify row records the reason and the granted year in its own transaction.
         await certifyPaymentPlan(existing.id, actor.actorId, { reason: actor.reason, year });

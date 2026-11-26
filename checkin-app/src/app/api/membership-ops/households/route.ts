@@ -8,8 +8,9 @@ import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { membershipYearCycle, coveredThrough, bgValidUntilBoundary, grantableYears } from "@/lib/membership/renewal";
 import { grantableApplicationWhere, settledThisCycleWhere } from "@/lib/membership/lifecycle";
-import { PaymentError } from "@/lib/membership/payment";
-import { grantMembership, grantMessage } from "@/lib/membership/grant";
+import { liveYearVariantId, PaymentError } from "@/lib/membership/payment";
+import { grantInFlightWhere, grantMembership, grantMessage } from "@/lib/membership/grant";
+import { liveMembershipYear, membershipYearLabel } from "@/lib/programYear";
 import { ensureHouseholdMembership, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { notifyBoardOfDenial } from "@/lib/membership/denial";
 import { personActor } from "@/lib/auditActor";
@@ -215,6 +216,8 @@ export const GET = withAuth(
                 ...(q && { take: 20 })
             });
 
+            const applicationStep = await applicationStepsBeforePayment(households.flatMap((h) => (h.orgMembership ? [h.orgMembership.id] : [])));
+
             const recheckMonths = settings?.bgRecheckMonths ?? 0;
             const bgSettings = { orgMembershipYearBoundary: settings?.orgMembershipYearBoundary ?? null, bgRecheckMonths: recheckMonths };
 
@@ -240,6 +243,7 @@ export const GET = withAuth(
                     ...h,
                     orgMembership: h.orgMembership ? orgMembership : null,
                     awaitingPayment,
+                    applicationStep: (membershipId !== undefined && applicationStep.get(membershipId)) || null,
                     settledForComingYear,
                     bgValidUntil,
                     notRenewing: notRenewingYear != null && notRenewingAt ? { year: notRenewingYear, since: notRenewingAt } : null,
@@ -247,9 +251,15 @@ export const GET = withAuth(
                 };
             });
 
+            const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, now);
+            const renewalProductMissing = liveYear !== null && !(await liveYearVariantId(settings?.orgMembershipYearBoundary, now))
+                ? membershipYearLabel(liveYear)
+                : null;
+
             return NextResponse.json({
                 households: withGrantable,
                 grantYears: grantableYears(settings?.orgMembershipYearBoundary, now),
+                renewalProductMissing,
             });
         } catch (error) {
             logger.error("Failed to fetch households:", error);
@@ -257,6 +267,21 @@ export const GET = withAuth(
         }
     }
 );
+
+/** The step of each membership's grant-target application, where that step is before payment. */
+async function applicationStepsBeforePayment(membershipIds: number[]): Promise<Map<number, string>> {
+    if (membershipIds.length === 0) return new Map();
+    const rows = await prisma.orgMembershipProcess.findMany({
+        where: { orgMembershipId: { in: membershipIds }, ...grantInFlightWhere },
+        orderBy: { id: "desc" },
+        select: { orgMembershipId: true, status: true },
+    });
+    const newest = new Map<number, string>();
+    for (const row of rows) {
+        if (row.orgMembershipId !== null && !newest.has(row.orgMembershipId)) newest.set(row.orgMembershipId, row.status);
+    }
+    return new Map([...newest].filter(([, status]) => status !== "PENDING_PAYMENT"));
+}
 
 /** When each membership's current "won't renew" note was made, from its audit row. */
 async function notRenewingNotedAt(noted: { id: number; year: number }[]): Promise<Map<number, Date>> {
