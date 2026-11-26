@@ -18,6 +18,8 @@ import { findSelfGrantRefusal, recordSelfGrantRefusal, type SelfGrantRefusal } f
 import { lockBoardRoles } from "@/lib/roles";
 import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { TREEHOUSE_HOUSEHOLD_REFUSAL, TREEHOUSE_SIGN_IN_REFUSAL, TreehouseHouseholdError, isTreehouseHousehold, joinsWithTreehouseSignIn } from "@/lib/household/treehouseAccount";
+import { isOrgAccount } from "@/lib/orgAccount";
 
 /** The household the person would join is DENIED. */
 class DeniedHouseholdAddError extends Error {
@@ -81,6 +83,16 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             return NextResponse.json({ error: AGE_REQUIRED_REFUSAL, fields: ["dob"] }, { status: 400 });
         }
 
+        // A Treehouse sign-in stays in a household of its own.
+        if ((parentEmail || householdId) && joinsWithTreehouseSignIn(email)) {
+            return NextResponse.json({ error: TREEHOUSE_SIGN_IN_REFUSAL, fields: ["email"] }, { status: 409 });
+        }
+
+        // A Treehouse account parent would make the participant a member of its household.
+        if (parentEmail && isOrgAccount({ email: parentEmail })) {
+            return NextResponse.json({ error: TREEHOUSE_HOUSEHOLD_REFUSAL, fields: ["parentEmail"] }, { status: 409 });
+        }
+
         // Every participant must belong to a household, so resolve it before
         // creating: parent's household > explicitly provided household > a new
         // household of their own.
@@ -141,6 +153,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                     throw new DeniedHouseholdAddError(targetHouseholdId);
                 }
                 await lockLiveHouseholds(tx, [targetHouseholdId]);
+                if (await isTreehouseHousehold(tx, targetHouseholdId)) throw new TreehouseHouseholdError();
                 // Re-read under the Household lock, so an actor who joined the household since the check above is refused.
                 const lockedRefusal = await ownHouseholdRefusal(tx, targetHouseholdId);
                 if (lockedRefusal) throw new SelfGrantAddError(lockedRefusal);
@@ -175,7 +188,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         if (error instanceof HouseholdLeadLimitError) {
             return apiError(error.message, 400);
         }
-        if (error instanceof ArchivedHouseholdError) {
+        if (error instanceof ArchivedHouseholdError || error instanceof TreehouseHouseholdError) {
             return apiError(error.message, error.status);
         }
         if (error instanceof DeniedHouseholdAddError) {

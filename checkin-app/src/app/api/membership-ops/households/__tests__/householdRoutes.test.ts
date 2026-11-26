@@ -45,7 +45,7 @@ jest.mock("@/lib/prisma", () => {
     const household = { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() };
     const tx = {
         household,
-        person: { update: jest.fn(), updateMany: jest.fn(), findUnique: jest.fn(), findUniqueOrThrow: jest.fn(), count: jest.fn() },
+        person: { update: jest.fn(), updateMany: jest.fn(), findUnique: jest.fn(), findUniqueOrThrow: jest.fn(), findMany: jest.fn().mockResolvedValue([]), count: jest.fn() },
         auditLog: { create: jest.fn() },
         account: { deleteMany: jest.fn() },
         $executeRaw: jest.fn(),

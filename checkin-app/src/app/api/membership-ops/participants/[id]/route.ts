@@ -15,6 +15,7 @@ import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
 import { isYouth } from "@/lib/time";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { TREEHOUSE_SIGN_IN_REFUSAL, putsTreehouseSignInInFamily } from "@/lib/household/treehouseAccount";
 import { leaderEmailClearRefusal } from "@/lib/programs/leaderEligibility";
 
 export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
@@ -108,6 +109,9 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             emailChangeReason = typeof body.emailChangeReason === "string" ? body.emailChangeReason.trim() : "";
             if (!emailChangeReason) {
                 return apiError("Give a reason for changing this person's email.", 400);
+            }
+            if (await putsTreehouseSignInInFamily(prisma, householdId, updateData.email)) {
+                return apiError(TREEHOUSE_SIGN_IN_REFUSAL, 409);
             }
             if (await refuseSelfGrant(prisma, auth.user.id, { personId: id, householdId }, {
                 table: "Person",

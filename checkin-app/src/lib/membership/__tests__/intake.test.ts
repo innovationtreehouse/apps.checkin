@@ -23,7 +23,7 @@ const txQueryRaw = jest.fn();
 // saveIntake's two person.creates run on a tx client (they pair the create
 // with mintPersonId(tx)). Same delegate object as the root mock below,
 // so the assertions in this file stay pointed at one place.
-const mockPerson = { findUnique: jest.fn(), update: jest.fn(), create: jest.fn() };
+const mockPerson = { findUnique: jest.fn(), update: jest.fn(), create: jest.fn(), findMany: jest.fn().mockResolvedValue([]) };
 const mockHousehold = { update: jest.fn() };
 const tx = { $queryRaw: txQueryRaw, person: mockPerson, household: mockHousehold, orgMembershipProcess: txMembershipProcess, auditLog: txAuditLog };
 /** The id txQueryRaw hands back for mintPersonId. */
@@ -649,6 +649,24 @@ describe('saveIntake', () => {
             data: { id: MINTED_ID, householdId: 7, name: 'New Parent', email: 'new@x.com', allergies: null },
         });
         expect(addHouseholdLead).toHaveBeenCalledWith(tx, 7, 55);
+    });
+
+    it.each([
+        ['second parent', { secondaryParent: { name: 'New Parent', email: 'new@x.com' } }],
+        ['child', { children: [{ name: 'New Kid', dob: '2015-01-01' }] }],
+    ])("refuses adding a new %s to a Treehouse account's household, creating nobody", async (_who, input) => {
+        mockPerson.findMany.mockResolvedValueOnce([{ email: 'front-desk@innovationtreehouse.org' }]);
+        await expect(saveIntake(1, input)).rejects.toMatchObject({ code: 'treehouse_account' });
+        expect(mockPerson.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ householdId: 7 }) }));
+        expect(prisma.person.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['second parent', { secondaryParent: { name: 'New Parent', email: 'parent@innovationtreehouse.org' } }, 'secondaryParent'],
+        ['child', { children: [{ name: 'New Kid', dob: '2015-01-01', email: 'kid@innovationtreehouse.org' }] }, 'children'],
+    ])("refuses adding a new %s with a Treehouse address, creating nobody", async (_who, input, field) => {
+        await expect(saveIntake(1, input)).rejects.toMatchObject({ code: 'treehouse_account', fields: [field] });
+        expect(prisma.person.create).not.toHaveBeenCalled();
     });
 
     it('rejects blanking an existing secondary parent name on update', async () => {

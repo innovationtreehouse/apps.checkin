@@ -4,8 +4,9 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { anyMergedAway } from "@/lib/person/archivedPeople";
-import { bgSubjectKey, householdMembershipStatus, membershipMergeBlock } from "@/lib/person/merge/guard";
-import { carriedComplianceDate } from "@/lib/person/merge/plan";
+import { bgSubjectKey, householdMembershipStatus, bringsOthersIntoKeeperHousehold, membershipMergeBlock, TREEHOUSE_MERGE_REFUSAL, TREEHOUSE_SIGN_IN_MERGE_REFUSAL } from "@/lib/person/merge/guard";
+import { isTreehouseHousehold, putsTreehouseSignInInFamily } from "@/lib/household/treehouseAccount";
+import { carriedComplianceDate, hasIdentity } from "@/lib/person/merge/plan";
 
 export const dynamic = 'force-dynamic';
 
@@ -102,6 +103,17 @@ export const GET = withAuth(
             });
             const a = subject(pA);
             const b = subject(pB);
+            const sameHousehold = pA.household?.id === pB.household?.id;
+            const treehouseBlock = async (keep: typeof pA, merge: ReturnType<typeof subject>) =>
+                keep.household && bringsOthersIntoKeeperHousehold({ sameHousehold, liveOthers: merge.liveOthers })
+                    && await isTreehouseHousehold(prisma, keep.household.id) ? TREEHOUSE_MERGE_REFUSAL : null;
+            // A keeper with no sign-in of its own always takes the other side's; one with its own takes it only by choice, which the POST refuses.
+            const signInBlock = async (keep: typeof pA, merge: typeof pA) =>
+                keep.household && !hasIdentity(keep) && await putsTreehouseSignInInFamily(prisma, keep.household.id, merge.email)
+                    ? TREEHOUSE_SIGN_IN_MERGE_REFUSAL : null;
+            const [aTreehouse, bTreehouse, aSignIn, bSignIn] = await Promise.all([
+                treehouseBlock(pA, b), treehouseBlock(pB, a), signInBlock(pA, pB), signInBlock(pB, pA),
+            ]);
 
             // Collision detection — direction-independent (collisions block either way).
             // A background-check collision names its attestation ids so a sysadmin can find the rows.
@@ -206,8 +218,8 @@ export const GET = withAuth(
             return NextResponse.json({
                 participants: [pA, pB],
                 membershipBlock: {
-                    aAsKeeper: membershipMergeBlock(a, b),
-                    bAsKeeper: membershipMergeBlock(b, a),
+                    aAsKeeper: membershipMergeBlock(a, b) ?? aTreehouse ?? aSignIn,
+                    bAsKeeper: membershipMergeBlock(b, a) ?? bTreehouse ?? bSignIn,
                 },
                 bgNotice: { aAsKeeper: bgNotice(bgA, bgB), bAsKeeper: bgNotice(bgB, bgA) },
                 collisions,

@@ -15,7 +15,8 @@ import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { anyMergedAway } from "@/lib/person/archivedPeople";
 import { isBlankEmail, leadsUnfinishedProgram, LEADER_EMAIL_REQUIRED, LEADER_NEEDS_EMAIL } from "@/lib/programs/leaderEligibility";
-import { bgSubjectKey, disputedCheckBlock, type CheckSide } from "./guard";
+import { isTreehouseHousehold, putsTreehouseSignInInFamily } from "@/lib/household/treehouseAccount";
+import { bgSubjectKey, bringsOthersIntoKeeperHousehold, disputedCheckBlock, TREEHOUSE_MERGE_REFUSAL, TREEHOUSE_SIGN_IN_MERGE_REFUSAL, type CheckSide } from "./guard";
 import {
     KEEP_INCLUDE,
     MERGE_INCLUDE,
@@ -127,7 +128,7 @@ export async function prepareMerge(
         }
     }
 
-    const subjectBlock = subjectRefusal(keep, merge, actor);
+    const subjectBlock = subjectRefusal(keep, merge, actor) ?? await treehouseMergeRefusal(prisma, keep, merge);
     if (subjectBlock) return { refused: subjectBlock };
 
     const collisionBlock = await collisionRefusal(prisma, keep, merge);
@@ -138,6 +139,9 @@ export async function prepareMerge(
 
     const keeperUpdate = planKeeperUpdate(keep, merge, parsed.choices);
     if ('error' in keeperUpdate) return { refused: { status: 400, error: keeperUpdate.error } };
+
+    const signInBlock = await treehouseSignInMergeRefusal(prisma, keep, keeperUpdate.data);
+    if (signInBlock) return { refused: signInBlock };
 
     const disputedBlock = await disputedCheckRefusal(prisma, keep, merge, keeperUpdate.data);
     if (disputedBlock) return { refused: disputedBlock };
@@ -169,6 +173,19 @@ async function leaderEmailMergeRefusal(db: DbClient, keep: KeepSubject, merge: M
     if (!isBlankEmail(keep.email) && await leadsUnfinishedProgram(db, [keep.id])) return { status: 409, error: LEADER_EMAIL_REQUIRED };
     if (await leadsUnfinishedProgram(db, [merge.id])) return { status: 409, error: LEADER_NEEDS_EMAIL };
     return null;
+}
+
+/** A merge that brings someone into a Treehouse account's household, as a refusal, or null. */
+async function treehouseMergeRefusal(db: DbClient, keep: KeepSubject, merge: MergeSubject): Promise<MergeRefusal | null> {
+    const liveOthers = merge.household?.householdMembers.filter(p => p.id !== merge.id).length ?? 0;
+    if (!bringsOthersIntoKeeperHousehold({ sameHousehold: keep.householdId === merge.householdId, liveOthers })) return null;
+    return await isTreehouseHousehold(db, keep.householdId) ? { status: 409, error: TREEHOUSE_MERGE_REFUSAL } : null;
+}
+
+/** A merge that gives a keeper in a family's household a Treehouse sign-in, as a refusal, or null. */
+async function treehouseSignInMergeRefusal(db: DbClient, keep: KeepSubject, keeperUpdate: Record<string, unknown>): Promise<MergeRefusal | null> {
+    if (!("email" in keeperUpdate)) return null;
+    return await putsTreehouseSignInInFamily(db, keep.householdId, keeperUpdate.email) ? { status: 409, error: TREEHOUSE_SIGN_IN_MERGE_REFUSAL } : null;
 }
 
 /** A merge that would change a disputed person's check facts, as a refusal, or null. */
@@ -345,11 +362,13 @@ async function recheckSubjects(tx: TxClient, plan: MergePlan, actor: Authenticat
     // The actor's household is re-read under the Household locks, so an actor who joined either household since the plan is refused.
     const selfGrant = actor ? await ownHouseholdRefusal(tx, actor, keep, merge) : null;
     if (selfGrant) throw new SelfGrantMergeRefusedError(selfGrant);
-    const refusal = subjectRefusal(keep, merge, actor) ?? await collisionRefusal(tx, keep, merge);
+    const refusal = subjectRefusal(keep, merge, actor) ?? await treehouseMergeRefusal(tx, keep, merge) ?? await collisionRefusal(tx, keep, merge);
     if (refusal) throw new MergeRefusedError(refusal);
     const parsed = parseFieldChoices(keep, merge, plan.choices);
     const keeperUpdate = 'error' in parsed ? parsed : planKeeperUpdate(keep, merge, parsed.choices);
     if ('error' in keeperUpdate) throw new MergeRefusedError(CHANGED_WHILE_MERGING);
+    const signInBlock = await treehouseSignInMergeRefusal(tx, keep, keeperUpdate.data);
+    if (signInBlock) throw new MergeRefusedError(signInBlock);
     const disputedBlock = await disputedCheckRefusal(tx, keep, merge, keeperUpdate.data);
     if (disputedBlock) throw new MergeRefusedError(disputedBlock);
     const trustBlock = await trustedLoginRefusal(tx, { emailChangeReason: plan.emailChangeReason, keeperUpdate: keeperUpdate.data, keepId: keep.id, mergeId: merge.id }, actor);

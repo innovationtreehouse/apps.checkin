@@ -62,6 +62,21 @@ export function membershipMergeBlock(
     return null;
 }
 
+export const TREEHOUSE_MERGE_REFUSAL =
+    "Cannot merge: the kept record is in a Treehouse account's household, which holds only that account, and the merged-away record shares a household with other people.";
+
+export const TREEHOUSE_SIGN_IN_MERGE_REFUSAL =
+    "Cannot merge: the kept record is in a family's household and would take a Treehouse account's sign-in. A Treehouse sign-in stays on a record of its own; keep the Treehouse account's record instead.";
+
+/**
+ * Whether a merge into a Treehouse account's household would be refused: the keeper
+ * stays in its own household, so a merged-away record from another household lands in
+ * it. One alone in its household is the account's own duplicate and brings nobody new.
+ */
+export function bringsOthersIntoKeeperHousehold(merge: { sameHousehold: boolean; liveOthers: number }): boolean {
+    return !merge.sameHousehold && merge.liveOthers > 0;
+}
+
 /**
  * Why moving the merged-away record's roles onto the keeper must be refused, or
  * null. The merge moves each role with `setRoleFlag` (revoke from the merged-away

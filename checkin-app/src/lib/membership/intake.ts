@@ -28,6 +28,7 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
+import { TREEHOUSE_HOUSEHOLD_REFUSAL, TREEHOUSE_SIGN_IN_REFUSAL, isTreehouseHousehold, joinsWithTreehouseSignIn } from "@/lib/household/treehouseAccount";
 
 /**
  * Membership intake service — the write/read model behind the "Join the
@@ -48,7 +49,7 @@ export class IntakeError extends Error {
      *                "primaryName".
      */
     constructor(
-        public readonly code: "no_household" | "not_lead" | "already_member" | "denied" | "blocked" | "renewal_open" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated" | "email_in_use" | "under_18_declared" | "age_lead_only",
+        public readonly code: "no_household" | "not_lead" | "already_member" | "denied" | "blocked" | "renewal_open" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated" | "email_in_use" | "under_18_declared" | "age_lead_only" | "treehouse_account",
         message: string,
         public readonly fields?: string[],
     ) {
@@ -371,6 +372,9 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
             // writer takes them in; the household update below would invert it.
             await lockAndFindDeniedHousehold(tx, [householdId]);
             await lockLiveHouseholds(tx, [householdId]);
+            const refuseTreehouseAdd = async () => {
+                if (await isTreehouseHousehold(tx, householdId)) throw new IntakeError("treehouse_account", TREEHOUSE_HOUSEHOLD_REFUSAL);
+            };
 
             if (input.household) {
                 const householdData = normalizeAddressInput(input.household);
@@ -439,6 +443,8 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     await addLeadOrRecord(tx, sp.id, { personId: sp.id, householdId });
                 } else if ((spName = nameWrite(sp.name)) !== undefined) {
                     const newSpName: string = spName;
+                    await refuseTreehouseAdd();
+                    if (joinsWithTreehouseSignIn(sp.email)) throw new IntakeError("treehouse_account", TREEHOUSE_SIGN_IN_REFUSAL, ["secondaryParent"]);
                     if (sp.email) await removeAliasesForSignInEmail(tx, sp.email, personActor(userId), "intake_add_member");
                     const created = await tx.person.create({
                         data: {
@@ -482,6 +488,8 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     });
                 } else if ((childName = nameWrite(child.name)) !== undefined) {
                     const newChildName: string = childName;
+                    await refuseTreehouseAdd();
+                    if (joinsWithTreehouseSignIn(child.email)) throw new IntakeError("treehouse_account", TREEHOUSE_SIGN_IN_REFUSAL, ["children"]);
                     if (child.email) await removeAliasesForSignInEmail(tx, child.email, personActor(userId), "intake_add_member");
                     await tx.person.create({
                         data: {

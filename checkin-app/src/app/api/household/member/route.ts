@@ -27,6 +27,7 @@ import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
 import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { TREEHOUSE_SIGN_IN_REFUSAL, putsTreehouseSignInInFamily } from "@/lib/household/treehouseAccount";
 import { settleAfterEvent } from "@/lib/membership/settleHouseholdBg";
 
 class BecameTrustedError extends Error {}
@@ -133,6 +134,9 @@ export const PATCH = withAuth(
             const emailChanged = email && canonicalizeEmail(email) !== canonicalizeEmail(targetHouseholdMember.email ?? "");
             if (emailChanged && await isDesignatedEmail(prisma, email)) {
                 return apiError(await designatedEmailRefusalForBoard(), 400);
+            }
+            if (emailChanged && await putsTreehouseSignInInFamily(prisma, householdId, email)) {
+                return apiError(TREEHOUSE_SIGN_IN_REFUSAL, 409);
             }
 
             const { updatedHouseholdMember, leadRejection, deniedLead, warning, promoted } = await prisma.$transaction(async (tx) => {
