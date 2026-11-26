@@ -21,7 +21,8 @@ import { reconcileReversals } from "./reversals";
  *
  * Runs once daily from api/cron/reconcile-shopify (09:15 UTC, just behind s-read's
  * 09:00 sync — the cadence is a scale-to-zero constraint, see that route), and from
- * the payments page after its "Sync now" read completes. A lease on BoardSettings
+ * the payments page after its "Sync now" read completes, or when the board retries a
+ * check the daily pass blocked. A lease on BoardSettings
  * lets one pass run at a time; a pass that finds it held does nothing.
  * Idempotent: forward recovery is a no-op once activate() has recorded the order
  * (activate stores shopifyOrderId and short-circuits on paidAt), and every
@@ -128,7 +129,10 @@ export async function runReconcile(recordStart?: RecordStart): Promise<Reconcile
         advanceTo = pass.advanceTo;
         return pass.result;
     } finally {
-        await releaseReconcileLease(token, advanceTo);
+        // A failed release must not turn a finished pass into a failure; the lease frees itself when it expires.
+        await releaseReconcileLease(token, advanceTo).catch((e: unknown) => {
+            logger.error("[reconcile] failed to free the lease; it frees itself when it expires:", e);
+        });
     }
 }
 

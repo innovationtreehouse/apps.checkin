@@ -183,7 +183,7 @@ afterEach(async () => {
     incomeOrderLines.mockResolvedValue([]);
     adjustInventory.mockClear();
     // Reset cursor so each test scans its own fixtures from scratch.
-    await prisma.boardSettings.update({ where: { id: 1 }, data: { shopifyReconcileCursorAt: null } });
+    await prisma.boardSettings.update({ where: { id: 1 }, data: { shopifyReconcileCursorAt: null, shopifyReconcileLeaseUntil: null, shopifyReconcileLeaseToken: null } });
 });
 
 afterAll(async () => {
