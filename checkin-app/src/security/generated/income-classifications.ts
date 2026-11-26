@@ -24,6 +24,7 @@ export const classifications = {
         postClaimedAt: 'internal',
         qbCreateAttemptedAt: 'internal',
         qbNote: 'internal',
+        qbFaultText: 'finance',
         expected: 'internal',
     },
     IncomeItemCategory: {

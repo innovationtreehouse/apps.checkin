@@ -5,6 +5,7 @@ import { billCandidate, depositCandidate, findMatch, journalCandidate, purchaseC
 import { CREATE, CREATE_JOURNAL } from "./internal";
 import { BOOKS_MAP_ROLES, type BooksMapRole } from "./booksMap";
 import { TEST_PREFIX } from "./guard";
+import type { FaultText } from "./faultText";
 
 /** One lane record to find in QuickBooks, or create when the closed-books gate allows it. */
 export interface FindOrCreateRequest extends Pick<MatchRequest, "window" | "claimedIds" | "excludedIds"> {
@@ -28,13 +29,18 @@ export type PostFailure = {
   answered?: boolean;
   /** QuickBooks throttled the call (429): the record is left as it was and tried again later, never failed. */
   throttled?: true;
+  /** The fault's own words, for the record's finance-only column; never a note, log line or report. */
+  faultText?: FaultText;
 };
 
 export function postFailure(e: unknown): PostFailure {
   const base = { error: e instanceof Error ? e.message : String(e), failure: kindOf(e) };
   if (!(e instanceof QboRequestError)) return base;
-  return { ...base, codes: e.codes, requestId: e.requestId, ...(isThrottled(e) && { throttled: true as const }) };
+  return { ...base, codes: e.codes, requestId: e.requestId, ...(isThrottled(e) && { throttled: true as const }), ...(e.faultText && { faultText: e.faultText }) };
 }
+
+/** The finance-only column's value for a failure: the fault's words, or null. */
+export const faultTextColumn = (f: PostFailure): string | null => f.faultText?.reveal() ?? null;
 
 /** A returned failure as an error a library runtime's `failed` reads: its kind, fault codes and request id. */
 export function postFailureError(f: PostFailure): KindedError {

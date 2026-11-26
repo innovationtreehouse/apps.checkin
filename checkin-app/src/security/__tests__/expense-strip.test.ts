@@ -42,10 +42,11 @@ const strip = (model: string, row: object, tokens: readonly Token[]) =>
     stripValue(model, row, tokens, ctx) as Record<string, unknown>;
 
 describe('expense tiering', () => {
-    it('has no secret and no public field anywhere', () => {
+    it('has no secret and no public field anywhere, and only the fault text is finance', () => {
         for (const [model, fields] of Object.entries(expenseMaps)) {
             for (const [field, tier] of Object.entries(fields)) {
-                expect(`${model}.${field}:${tier}`).toMatch(/:(internal|personal|pii)$/);
+                const pattern = `${model}.${field}` === 'Expense.qbFaultText' ? /:finance$/ : /:(internal|personal|pii)$/;
+                expect(`${model}.${field}:${tier}`).toMatch(pattern);
             }
         }
     });

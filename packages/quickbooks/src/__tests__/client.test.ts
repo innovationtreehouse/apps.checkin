@@ -1,6 +1,8 @@
+import { inspect } from "node:util";
 import { kindOf } from "@checkin/component-kit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_WINDOW_DAYS, QboRequestError, QuickBooksClient, assertRealmAllowed, qboDate, qboRealmFromEnv, qboString } from "../client";
+import { FAULT_TEXT_REDACTED } from "../faultText";
 import type { AccessTokenSource } from "../types";
 
 const tokens: AccessTokenSource = { current: async () => "tok" };
@@ -102,6 +104,29 @@ describe("QuickBooksClient", () => {
     expect(err).toBeInstanceOf(QboRequestError);
     expect(err).toMatchObject({ status, requestId: "t9" });
     expect(kindOf(err)).toBe(kind);
+  });
+
+  it("holds a Fault body's text as a FaultText that no message, log line, JSON or inspect shows", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const words = "Duplicate Name Exists Error: The name supplied already exists. : Jane Donor";
+    const body = { Fault: { Error: [{ code: "6240", Message: "Duplicate Name Exists Error", Detail: "The name supplied already exists. : Jane Donor" }] } };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(body), { status: 400, headers: { intuit_tid: "t9" } }));
+    const err = await new QuickBooksClient(tokens, sandbox).billsBetween("2025-01-01", "2025-01-02").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(QboRequestError);
+    const failure = err as QboRequestError;
+    expect(failure.codes).toEqual(["6240"]);
+    expect(failure.faultText?.reveal()).toBe(words);
+    const printed = [failure.message, String(err), JSON.stringify(err), JSON.stringify({ ...failure }), inspect(err, { depth: 5 }), inspect(warn.mock.calls, { depth: 5 })];
+    for (const out of printed) expect(out).not.toContain("Jane Donor");
+    expect(inspect(err)).toContain(FAULT_TEXT_REDACTED);
+  });
+
+  it("carries no FaultText when the Fault body has no words", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ Fault: { Error: [{ code: "6000" }] } }), { status: 400 }));
+    const err = (await new QuickBooksClient(tokens, sandbox).billsBetween("2025-01-01", "2025-01-02").catch((e: unknown) => e)) as QboRequestError;
+    expect(err.codes).toEqual(["6000"]);
+    expect(err.faultText).toBeNull();
   });
 
   it.each([

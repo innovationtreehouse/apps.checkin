@@ -180,6 +180,9 @@ model Expense {
   // The latest error of that failed step; the expense's own page shows it to finance and the Board while it is stuck.
   /// @sensitivity:personal
   qbLastError        String?   @map("qb_last_error")
+  // The fault's own words from QuickBooks' refusal of the latest post, beside qbLastError's codes; finance's alone.
+  /// @sensitivity:finance
+  qbFaultText        String?   @map("qb_fault_text")
   // When a post claimed the expense (POSTING) before calling QuickBooks; cleared when it settles.
   /// @sensitivity:internal
   qbClaimedAt        DateTime? @map("qb_claimed_at")

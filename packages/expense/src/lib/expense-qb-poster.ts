@@ -3,7 +3,7 @@
 import { ServiceError } from "@checkin/component-kit";
 import { sumCents } from "@checkin/money";
 import {
-  STALE_CLAIM_MS, SWEEP_DAYS, TEST_PREFIX, THROTTLED_MESSAGE, findOrCreate, postFailure, postFailureError, qbGate, qbKey, readCloseDate, runDrain, shiftDate,
+  STALE_CLAIM_MS, SWEEP_DAYS, TEST_PREFIX, THROTTLED_MESSAGE, faultTextColumn, findOrCreate, postFailure, postFailureError, qbGate, qbKey, readCloseDate, runDrain, shiftDate,
   type CloseRead, type FindOrCreateResult, type PostFailure, type PostGate, type PostingTurn, type QboPurchase, type TxnWrite,
 } from "@checkin/quickbooks";
 import { db, type Db } from "../db";
@@ -118,7 +118,7 @@ async function recordFailure(tx: Db, current: Expense, f: PostFailure, note = fa
   reportFailure(f, current.id);
   await tx.expense.update({
     where: { id: current.id },
-    data: { qbMatchState: "NEEDS_FINANCE", qbLastError: note, qbFirstFailedAt: current.qbFirstFailedAt ?? new Date(), qbClaimedAt: null },
+    data: { qbMatchState: "NEEDS_FINANCE", qbLastError: note, qbFaultText: faultTextColumn(f), qbFirstFailedAt: current.qbFirstFailedAt ?? new Date(), qbClaimedAt: null },
   });
   await writeAudit(tx, SYSTEM_ACTOR, { expenseId: current.id, action: "qb_needs_finance", fieldChanged: "qbMatchState", valueBefore: current.qbMatchState, valueAfter: "NEEDS_FINANCE", notes: note });
   return "failed";
@@ -197,7 +197,7 @@ type SettleData = { qbMatchState: string; qbVendorId?: string; qbMatchBaseline?:
 
 /** Settles a post that did not fail. Any outcome but `waiting` leaves the posting step, so it clears a failure. */
 async function settle(tx: Db, before: Expense, outcome: PostOutcome, data: SettleData, notes?: string): Promise<PostOutcome> {
-  const cleared = outcome === "waiting" ? {} : { qbFirstFailedAt: null, qbLastError: null };
+  const cleared = outcome === "waiting" ? {} : { qbFirstFailedAt: null, qbLastError: null, qbFaultText: null };
   await tx.expense.update({ where: { id: before.id }, data: { ...cleared, ...data, qbClaimedAt: null } });
   if (data.qbTxnId) await checkOffOnLink(tx, before.id, data.qbTxnEntity, data.qbTxnId);
   if (before.qbMatchState === data.qbMatchState && !data.qbTxnId) return outcome;

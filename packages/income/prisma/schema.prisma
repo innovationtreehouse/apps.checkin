@@ -74,6 +74,9 @@ model PayoutReconciliation {
   /// The app's note to finance about its own QuickBooks entry; keeps the payout in the queue until finance acts or clears it.
   /// @sensitivity:internal
   qbNote              String?   @map("qb_note")
+  /// The fault's own words from QuickBooks' refusal of the latest failed post, beside `reason`'s codes; finance's alone.
+  /// @sensitivity:finance
+  qbFaultText         String?   @map("qb_fault_text")
   /// The deposit another lane expects (bank role, lines, memo); null on Shopify rows, built from the mirror.
   /// @sensitivity:internal
   expected            Json?     @map("expected")

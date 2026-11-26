@@ -477,6 +477,11 @@ function base(orgId: string, fact: PayoutFact, now: Date) {
   };
 }
 
+/** A row as the audit log keeps it: the fault text is finance's alone, and the log is not. */
+function withoutFaultText({ qbFaultText, ...row }: PayoutReconciliation): Omit<PayoutReconciliation, "qbFaultText"> {
+  return row;
+}
+
 export function audit(
   tx: TxClient,
   orgId: string,
@@ -497,8 +502,8 @@ export function audit(
     action,
     entityType: "payout_reconciliation",
     entityId: after.id,
-    before: before ?? undefined,
-    after: answered.length ? { ...after, answeredEntries: answered.map(answeredEntryRef) } : after,
+    before: before ? withoutFaultText(before) : undefined,
+    after: answered.length ? { ...withoutFaultText(after), answeredEntries: answered.map(answeredEntryRef) } : withoutFaultText(after),
     reason: actor.reason,
     correlationId: actor.correlationId,
   });

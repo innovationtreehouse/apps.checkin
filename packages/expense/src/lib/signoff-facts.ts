@@ -423,7 +423,7 @@ async function clearStepsAfterOwnerApproval(tx: Prisma.TransactionClient, actor:
     await writeAudit(tx, actor, { expenseId, action: "qb_outbox_cleared", fieldChanged: "qbMatchState", valueBefore: expense.qbMatchState, valueAfter: qbMatchState, notes: reason });
   }
   // Going back leaves any QuickBooks step it failed, with or without an outbox row.
-  await tx.expense.update({ where: { id: expenseId }, data: { qbFirstFailedAt: null, qbLastError: null } });
+  await tx.expense.update({ where: { id: expenseId }, data: { qbFirstFailedAt: null, qbLastError: null, qbFaultText: null } });
 }
 
 /**

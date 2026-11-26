@@ -3,7 +3,8 @@ import { kindOf } from "@checkin/component-kit";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QboRequestError, QboThrottledError, QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, isThrottled, qbKey, type TxnWrite, type WriteRequest } from "../client";
-import { createVendor, findOrCreate, findOrCreateInKindJournal, postFailure, postFailureError, type FindOrCreateRequest, type InKindJournalRequest } from "../write";
+import { FaultText } from "../faultText";
+import { createVendor, faultTextColumn, findOrCreate, findOrCreateInKindJournal, postFailure, postFailureError, type FindOrCreateRequest, type InKindJournalRequest } from "../write";
 import type { AccessTokenSource, QboDeposit } from "../types";
 import { CREATE } from "../internal";
 import * as pkg from "../index";
@@ -404,6 +405,16 @@ describe("findOrCreate", () => {
       error: "QBO create failed 400 (intuit_tid=t1): codes 2500", failure: "data", codes: ["2500"], requestId: "t1",
     });
     expect(postFailure(new Error("boom"))).toEqual({ error: "boom", failure: "bug" });
+  });
+
+  it("postFailure carries a refusal's fault text for the finance-only column, and postFailureError drops it", () => {
+    const text = new FaultText("Invalid Reference Id: Account 99");
+    const f = postFailure(new QboRequestError("QBO create failed 400 (intuit_tid=t1)", 400, "t1", ["2500"], text));
+    expect(faultTextColumn(f)).toBe("Invalid Reference Id: Account 99");
+    expect(f.error).not.toContain("Account 99");
+    expect(JSON.stringify(f)).not.toContain("Account 99");
+    expect(postFailureError(f)).not.toHaveProperty("faultText");
+    expect(faultTextColumn(postFailure(new Error("boom")))).toBeNull();
   });
 
   it("postFailureError keeps a failure's kind, fault codes and request id", () => {

@@ -77,6 +77,8 @@ interface Expense {
   qbMatchBaseline?: string | null;
   qbFirstFailedAt?: string | null;
   qbLastError?: string | null;
+  /** Sent to finance alone; the registry strips it for every other role. */
+  qbFaultText?: string | null;
   lineItems: Line[];
   approvals: Approval[];
   flags?: Flag[];
@@ -570,6 +572,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
       )}
       <ReasonsAlert reasons={reasons} currency={e.currency} />
       {(isFinance || isBoard) && e.qbFirstFailedAt && <Text size="sm" c="red">Last error: {e.qbLastError ?? "no error recorded"}</Text>}
+      {isFinance && e.qbFirstFailedAt && e.qbFaultText && <Text size="sm" c="red">QuickBooks said: {e.qbFaultText}</Text>}
       {e.qbMatchState && NOT_SENT[e.qbMatchState] && <Text size="sm" c="orange">{NOT_SENT[e.qbMatchState]}</Text>}
       {isFinance && (e.qbMatchState === "NEEDS_FINANCE" || open("QB_AWAITING_MATCH") || open("QB_VENDOR_MISSING") || open("QB_UNBOOKED")) && (
         <Paper withBorder p="sm">
