@@ -14,6 +14,7 @@ import { formatDateOnly } from '@/lib/time';
 import { membershipYearLabel } from '@/lib/programYear';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { isMembershipLapsed } from '@/lib/membership/lapsed';
+import { applicationStepRefusal, renewalProductMissingMessage } from '@/lib/membership/grantRefusals';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 import { householdQueryMatcher, personQueryMatcher } from "@/lib/searchId";
@@ -34,6 +35,12 @@ const EFFECT_VERB: Record<GrantEffect, string> = {
 const effectFor = (awaitingPayment: boolean, status?: string): GrantEffect =>
   awaitingPayment ? "grant" : status === "ACTIVE" ? "openRenewal" : "openApplication";
 
+// Why the server would refuse this click, so the control is shown disabled with it.
+const refusalFor = (effect: GrantEffect, applicationStep: string | null | undefined, renewalProductMissing: string | null | undefined): string | null =>
+  applicationStep ? applicationStepRefusal(applicationStep)
+    : effect === "openRenewal" && renewalProductMissing ? renewalProductMissingMessage(renewalProductMissing)
+      : null;
+
 const fallbackSuccess = ({ effect, year }: PendingGrant) =>
   effect === "grant" ? `Granted ${year.label}.` : effect === "openRenewal" ? "Renewal opened." : "Application opened.";
 
@@ -52,6 +59,8 @@ type Household = {
   householdMembers?: { id: number; name?: string | null; email?: string | null; isBoardMember?: boolean; emailUndeliverableAt?: string | null }[] | null;
   // An application (joining or renewing) is at PENDING_PAYMENT: granting certifies it.
   awaitingPayment?: boolean;
+  // The step of an application still before payment, which no grant can pay yet.
+  applicationStep?: string | null;
   bgValidUntil?: string | null;
   // The household has said it won't renew into `year`, on `since`.
   notRenewing?: { year: number; since: string } | null;
@@ -71,7 +80,7 @@ export default function AdminHouseholdsPage() {
   const today = orgToday();
   const router = useRouter();
 
-  const { data, error, reload } = useLoad<{ households: Household[]; grantYears?: GrantYear[] }>(ready ? '/api/membership-ops/households' : null);
+  const { data, error, reload } = useLoad<{ households: Household[]; grantYears?: GrantYear[]; renewalProductMissing?: string | null }>(ready ? '/api/membership-ops/households' : null);
   const households = data?.households ?? [];
   // The year in progress and, inside the renewal window, the coming year.
   const [yearInProgress, comingYear] = data?.grantYears ?? [];
@@ -232,6 +241,7 @@ export default function AdminHouseholdsPage() {
               const showGrantInProgress = !!yearInProgress && (isBoard || !awaitingPayment) &&
                 (!hasActiveMembership || (!isStaffHousehold && (awaitingPayment || isMembershipLapsed(household.validUntil, today))));
               const inProgressEffect = effectFor(awaitingPayment, status);
+              const inProgressRefusal = refusalFor(inProgressEffect, household.applicationStep, data?.renewalProductMissing);
 
               return (
                 <Table.Tr key={household.id}>
@@ -343,13 +353,13 @@ export default function AdminHouseholdsPage() {
                             size="xs" fz={15}
                             variant="light"
                             color="treehouseGreen"
-                            disabled={ownHouseholdConflict || isStaffHousehold}
+                            disabled={ownHouseholdConflict || isStaffHousehold || inProgressRefusal !== null}
                             title={
                               isStaffHousehold
                                 ? "Staff households can't be granted membership."
                                 : ownHouseholdConflict
                                   ? ownHouseholdTitle
-                                  : undefined
+                                  : inProgressRefusal ?? undefined
                             }
                             onClick={() => openGrant(household.id, { effect: inProgressEffect, year: yearInProgress })}
                           >
