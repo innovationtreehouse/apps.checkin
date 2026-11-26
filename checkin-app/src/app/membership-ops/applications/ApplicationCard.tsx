@@ -189,8 +189,8 @@ export function ApplicationCard({ r, rows, isBoardMember, busy, ownHousehold, ac
             {ownHousehold
               ? "You can't record a refund on your own household's application — someone outside your household must."
               : r.status === "BLOCKED"
-                ? "After refunding in Shopify. The application stays blocked."
-                : "After refunding in Shopify. The application goes back to awaiting payment; the background check is unchanged."}
+                ? "After refunding in Shopify. The application stays blocked, or closes if the household is denied."
+                : "After refunding in Shopify. The application goes back to awaiting payment, or closes if the household is denied; the background check is unchanged."}
           </Text>
         </Group>
       )}

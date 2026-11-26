@@ -11,6 +11,7 @@
 
 import { archiveApplication, closeHouseholdApplications, lockOpenApplications, unarchiveApplication } from '@/lib/membership/archive';
 import { setHouseholdStatus } from '@/lib/membership/householdStatus';
+import { recordRefund } from '@/lib/membership/refund';
 import { findProcessByEnvelope, getOrCreateContractSigningUrl, markContractSigned, raiseDeniedClosedSignature } from '@/lib/membership/external';
 import { SYSTEM_ACTOR, personActor } from '@/lib/auditActor';
 import { normalizeAuditData } from '@/lib/auditPayload';
@@ -279,6 +280,26 @@ describe('a signature that lands while the application is closed', () => {
             expect([row.status, row.contractSignedAt]).toEqual(['PENDING_EXTERNAL_ACTION', null]);
             expect(await signatureAudits(processId)).toHaveLength(0);
             expect(await deniedActivity(processId)).toBe(1);
+        });
+
+        it('paid through the denial and closed by its refund: reopen after the restore forgets the request without asking Zoho', async () => {
+            const { processId, requestId, membershipId, boardId } = await openApplication({ bgConsentAt: new Date(), paidAt: new Date() });
+            await deny(membershipId, boardId);
+            expect((await read(processId)).status).toBe('PENDING_EXTERNAL_ACTION');
+
+            await expect(recordRefund(processId, boardId, 'refunded in Shopify')).resolves.toEqual({ status: 'ARCHIVED' });
+            const refundClose = await prisma.auditLog.findFirst({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: processId }, orderBy: { id: 'desc' } });
+            expect(normalizeAuditData(refundClose?.newData)).toMatchObject({ status: 'ARCHIVED', refundRecorded: true, closeReason: 'household denied' });
+
+            await setHouseholdStatus(prisma, membershipId, { from: ['DENIED'], to: 'NONE', actor: personActor(boardId), reason: 'test restore' });
+            mockGetRequestStatus.mockResolvedValue('completed');
+            await expect(unarchiveApplication(processId, boardId)).resolves.toEqual({ status: 'PENDING_EXTERNAL_ACTION' });
+
+            expect(mockGetRequestStatus).not.toHaveBeenCalled();
+            const row = await read(processId);
+            expect(row).toMatchObject({ paidAt: null, contractSignedAt: null, zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null });
+            const forgot = await prisma.auditLog.findMany({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: processId, oldData: { path: ['zohoEnvelopeId'], equals: requestId } } });
+            expect(forgot.map((r) => normalizeAuditData(r.newData))).toEqual([expect.objectContaining({ unarchived: true, reason: 'household denied since close' })]);
         });
 
         it('a board-recorded signature on a denied household is refused', async () => {
