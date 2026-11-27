@@ -404,6 +404,20 @@ defineRoute({
     ],
 });
 
+// Board downloads current members' addresses as CSV text. Board-only: the list
+// is every current member's email and name. The bag is { MembersExport }, the
+// CSV text (pii) and its row count, sent unwrapped. The route ships in a
+// follow-up PR; until then the entry is inert.
+defineRoute({
+    endpoint: 'GET /api/membership-ops/members/export',
+    authorize: { anyRole: ['isBoardMember'] },
+    envelope: null,
+    returns: ['MembersExport'],
+    orderedView: [
+        ['isBoardMember', ['everyones:pii', 'everyones:internal', 'public']],
+    ],
+});
+
 // Board-only cleanup path for a BackgroundCheckAttestation the participant-
 // merge refuses to carry forward: its collision check ("Both attested the
 // same background check") means the same human reviewed

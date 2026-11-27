@@ -63,6 +63,7 @@ const ORACLES = [
     'kiosk-heartbeat-route.test.ts',
     'led-households-roster.test.ts',
     'mail-alias-routes.test.ts',
+    'members-export-route.test.ts',
     'member-tier.test.ts',
     'membership-application-strip.test.ts',
     'payment-plans-strip.test.ts',
