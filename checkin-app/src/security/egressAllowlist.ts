@@ -29,6 +29,7 @@ export const PACKAGE_EGRESS_FILES: ReadonlyMap<string, readonly string[]> = new 
     ['packages/s-ingest-core/src/config.ts', ['shopify.admin-read']],
     ['s-read-function/src/shopify/token.ts', ['shopify.oauth']],
     ['gmail-refresher-function/src/oauth.ts', ['gmail.oauth']],
+    ['packages/google-workspace/src/client.ts', ['google.directory.group-members', 'google.oauth']],
 ]);
 
 export const THIRD_PARTY_HOST_RE =
