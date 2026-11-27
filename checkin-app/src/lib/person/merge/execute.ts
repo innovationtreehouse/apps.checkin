@@ -15,7 +15,7 @@ import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { anyMergedAway } from "@/lib/person/archivedPeople";
 import { isBlankEmail, leadsUnfinishedProgram, LEADER_EMAIL_REQUIRED, LEADER_NEEDS_EMAIL } from "@/lib/programs/leaderEligibility";
-import { bgSubjectKey, disputedCheckBlock, type CheckSide } from "./guard";
+import { bgSubjectKey, disputedCheckBlock, listChoice, listChoiceBlock, type CheckSide } from "./guard";
 import {
     KEEP_INCLUDE,
     MERGE_INCLUDE,
@@ -133,6 +133,9 @@ export async function prepareMerge(
     const collisionBlock = await collisionRefusal(prisma, keep, merge);
     if (collisionBlock) return { refused: collisionBlock };
 
+    const listBlock = await listChoiceRefusal(prisma, keepId, mergeId);
+    if (listBlock) return { refused: listBlock };
+
     const parsed = parseFieldChoices(keep, merge, fieldChoices);
     if ('error' in parsed) return { refused: { status: 400, error: parsed.error } };
 
@@ -206,6 +209,16 @@ async function collisionRefusal(db: DbClient, keep: KeepSubject, merge: MergeSub
     return { status: 409, error: `Cannot merge: ${collisions.map(c => c.message).join('; ')}`, collisions };
 }
 
+/** The list-choice refusal for this pair, or null. */
+async function listChoiceRefusal(db: DbClient, keepId: number, mergeId: number): Promise<MergeRefusal | null> {
+    const rows = await db.listSyncState.findMany({
+        where: { personId: { in: [keepId, mergeId] } },
+        select: { personId: true, targetKind: true, targetRef: true, lastIntent: true, appliedAt: true },
+    });
+    const error = listChoiceBlock(keepId, rows);
+    return error ? { status: 409, error } : null;
+}
+
 /** Per-relation tallies recorded in the merge's audit row. */
 function emptyTallies() {
     return {
@@ -232,6 +245,7 @@ function emptyTallies() {
         corporationMembers: { migrated: 0, deduped: 0 },
         bucketTreasurers: { migrated: 0, deduped: 0 },
         mailAliases: { migrated: [] as number[], deduped: [] as number[] },
+        listSyncStates: { migrated: 0, deduped: 0 },
     };
 }
 type Tallies = ReturnType<typeof emptyTallies>;
@@ -265,6 +279,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
         await moveCorporations(tx, live.keep, live.merge, moved);
         await moveBucketTreasurers(tx, keepId, mergeId, moved);
         await moveMailAliases(tx, keepId, mergeId, moved);
+        await moveListSyncStates(tx, keepId, mergeId, moved);
         refuseLeftRows(moved);
 
         // 6. The household lead guard ran pre-tx. The merged-away record's
@@ -347,6 +362,8 @@ async function recheckSubjects(tx: TxClient, plan: MergePlan, actor: Authenticat
     if (selfGrant) throw new SelfGrantMergeRefusedError(selfGrant);
     const refusal = subjectRefusal(keep, merge, actor) ?? await collisionRefusal(tx, keep, merge);
     if (refusal) throw new MergeRefusedError(refusal);
+    const listBlock = await listChoiceRefusal(tx, keep.id, merge.id);
+    if (listBlock) throw new MergeRefusedError(listBlock);
     const parsed = parseFieldChoices(keep, merge, plan.choices);
     const keeperUpdate = 'error' in parsed ? parsed : planKeeperUpdate(keep, merge, parsed.choices);
     if ('error' in keeperUpdate) throw new MergeRefusedError(CHANGED_WHILE_MERGING);
@@ -681,6 +698,28 @@ async function moveMailAliases(tx: TxClient, keepId: number, mergeId: number, mo
             moved.mailAliases.migrated.push(alias.id);
         }
     }
+}
+
+/**
+ * List-sync rows follow the survivor. For a list both have a row for (the guard has
+ * already refused differing choices), the keeper's row stays unless it holds no choice.
+ */
+async function moveListSyncStates(tx: TxClient, keepId: number, mergeId: number, moved: Tallies): Promise<void> {
+    const kept = await tx.listSyncState.findMany({ where: { personId: keepId } });
+    const theirs = await tx.listSyncState.findMany({ where: { personId: mergeId } });
+    for (const row of theirs) {
+        const dup = kept.find((k) => k.targetKind === row.targetKind && k.targetRef === row.targetRef);
+        if (dup && (listChoice(dup) !== null || listChoice(row) === null)) {
+            await tx.listSyncState.delete({ where: { id: row.id } });
+            moved.listSyncStates.deduped++;
+            continue;
+        }
+        if (dup) await tx.listSyncState.delete({ where: { id: dup.id } });
+        await tx.listSyncState.update({ where: { id: row.id }, data: { personId: keepId } });
+        moved.listSyncStates.migrated++;
+    }
+    await tx.listSyncState.updateMany({ where: { lastIntentActorId: mergeId }, data: { lastIntentActorId: keepId } });
+    await tx.programExternalContact.updateMany({ where: { createdById: mergeId }, data: { createdById: keepId } });
 }
 
 /**

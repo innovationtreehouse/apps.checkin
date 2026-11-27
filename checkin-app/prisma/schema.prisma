@@ -61,6 +61,27 @@ enum VisitSource {
   AUTO_CLOSE
 }
 
+enum ListTargetKind {
+  MEMBERS
+  NEWSLETTER
+  PROGRAM_PARTICIPANTS
+  PROGRAM_PARENTS
+  PROGRAM_MENTORS
+  PROGRAM_EXTERNAL
+}
+
+enum ListIntent {
+  IN
+  OUT
+}
+
+enum ListIntentSource {
+  APP
+  EXTERNAL
+  BOARD
+  DEFAULT
+}
+
 enum ProgramPhase {
   PLANNING
   UPCOMING
@@ -219,6 +240,9 @@ model Person {
   budgetOwnersOwned   BudgetOwner[]        @relation("BudgetOwnerOwner")
   budgetOwnerTreasurerships BudgetOwnerTreasurer[]
   mailAliases         PersonMailAlias[]
+  listSyncStates      ListSyncState[]              @relation("ListSyncPerson")
+  listIntentsRecorded ListSyncState[]              @relation("ListSyncIntentActor")
+  externalContactsAdded ProgramExternalContact[]
   programParticipants ProgramParticipant[]
   programsLed         Program[]                    @relation("ProgramLeadMentor")
   instancesLed        ProgramInstance[]            @relation("InstanceLeadMentor")
@@ -787,6 +811,12 @@ model BoardSettings {
   /// address or "Name <addr@domain>" — same shape as emailReplyToAddress. NULL =
   /// fall back to emailing every board member (the board IS the review team until
   /// this is configured).
+  /// Google Group the sync keeps in step with current members. NULL = no list.
+  /// @sensitivity:internal
+  membersGoogleGroupEmail    String?
+  /// Google Group the sync keeps in step with everyone on file with an email. NULL = no list.
+  /// @sensitivity:internal
+  newsletterGoogleGroupEmail String?
   /// @sensitivity:internal
   scholarshipNotifyEmail     String?
   /// Group address for finance and QuickBooks alerts. NULL = unset; System Status
@@ -1195,10 +1225,22 @@ model Program {
   /// @sensitivity:internal
   shopifySyncToken          String?
 
+  /// Google Group addresses the sync fills for this program; each list is off while NULL.
+  /// The app never creates a group.
+  /// @sensitivity:internal
+  participantsGoogleGroupEmail String?
+  /// @sensitivity:internal
+  parentsGoogleGroupEmail      String?
+  /// @sensitivity:internal
+  mentorsGoogleGroupEmail      String?
+  /// @sensitivity:internal
+  externalGoogleGroupEmail     String?
+
   volunteers   ProgramVolunteer[]
   participants ProgramParticipant[]
   events       Event[]
   instances    ProgramInstance[]
+  externalContacts ProgramExternalContact[]
 
   @@unique([nameKey, appliesToYear])
 }
@@ -2256,4 +2298,83 @@ model ProblemDismissal {
   dismissedAt   DateTime @default(now())
 
   @@unique([library, step, itemId, failedAt])
+}
+
+/// What the Google Group sync applied for one person on one list, and the last
+/// choice the person made about it. A cache: desired state is always recomputed.
+/// See docs/in-design/MEMBERSHIP_SYNC.md section 2.2.
+model ListSyncState {
+  /// @sensitivity:internal
+  id               Int               @id @default(autoincrement())
+  /// @sensitivity:internal
+  personId         Int
+  person           Person            @relation("ListSyncPerson", fields: [personId], references: [id])
+  /// @sensitivity:internal
+  targetKind       ListTargetKind
+  /// The list's canonical group address (trimmed, lower-cased).
+  /// @sensitivity:internal
+  targetRef        String
+  /// The address the external add was applied under.
+  /// @sensitivity:pii
+  appliedEmail     String?
+  /// @sensitivity:internal
+  appliedAt        DateTime?
+  /// @sensitivity:internal
+  reasons          String[]
+  /// @sensitivity:internal
+  lastIntent       ListIntent?
+  /// @sensitivity:internal
+  lastIntentAt     DateTime?
+  /// @sensitivity:internal
+  lastIntentSource ListIntentSource?
+  /// The Board member for a BOARD intent; null otherwise.
+  /// @sensitivity:internal
+  lastIntentActorId Int?
+  lastIntentActor  Person?           @relation("ListSyncIntentActor", fields: [lastIntentActorId], references: [id])
+  /// @sensitivity:internal
+  lastNoticeYear   Int?
+  /// @sensitivity:internal
+  lastError        String?
+  /// @sensitivity:internal
+  retryCount       Int               @default(0)
+  /// @sensitivity:internal
+  createdAt        DateTime          @default(now())
+  /// @sensitivity:internal
+  updatedAt        DateTime          @updatedAt
+
+  @@unique([personId, targetKind, targetRef])
+  @@index([lastIntentActorId])
+}
+
+/// An address on a program's external contact list that is not a checkin person,
+/// kept by program staff.
+model ProgramExternalContact {
+  /// @sensitivity:internal
+  id          Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  programId   Int
+  program     Program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  /// @sensitivity:pii
+  email       String
+  /// @sensitivity:pii
+  name        String?
+  /// Ledger fields, as on ListSyncState: when the sync added it, and the contact's own
+  /// last choice (an unsubscribe is OUT and sticks). Removal is a stamp, not a delete,
+  /// so the sync can take the address off the group.
+  /// @sensitivity:internal
+  appliedAt   DateTime?
+  /// @sensitivity:internal
+  lastIntent  ListIntent?
+  /// @sensitivity:internal
+  lastIntentAt DateTime?
+  /// @sensitivity:internal
+  removedAt   DateTime?
+  /// @sensitivity:internal
+  createdAt   DateTime @default(now())
+  /// @sensitivity:internal
+  createdById Int?
+  createdBy   Person?  @relation(fields: [createdById], references: [id])
+
+  @@unique([programId, email])
+  @@index([createdById])
 }

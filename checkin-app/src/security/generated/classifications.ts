@@ -160,6 +160,8 @@ export const classifications = {
         devSigningTarget: 'internal',
         emailFromAddress: 'public',
         emailReplyToAddress: 'public',
+        membersGoogleGroupEmail: 'internal',
+        newsletterGoogleGroupEmail: 'internal',
         scholarshipNotifyEmail: 'internal',
         alertEmailAddress: 'internal',
         boardEmailAddress: 'internal',
@@ -286,6 +288,10 @@ export const classifications = {
         shopifyStockParked: 'internal',
         shopifySyncStartedAt: 'internal',
         shopifySyncToken: 'internal',
+        participantsGoogleGroupEmail: 'internal',
+        parentsGoogleGroupEmail: 'internal',
+        mentorsGoogleGroupEmail: 'internal',
+        externalGoogleGroupEmail: 'internal',
     },
     ProgramInstance: {
         id: 'public',
@@ -608,6 +614,36 @@ export const classifications = {
         dismissedById: 'internal',
         dismissedAt: 'internal',
     },
+    ListSyncState: {
+        id: 'internal',
+        personId: 'internal',
+        targetKind: 'internal',
+        targetRef: 'internal',
+        appliedEmail: 'pii',
+        appliedAt: 'internal',
+        reasons: 'internal',
+        lastIntent: 'internal',
+        lastIntentAt: 'internal',
+        lastIntentSource: 'internal',
+        lastIntentActorId: 'internal',
+        lastNoticeYear: 'internal',
+        lastError: 'internal',
+        retryCount: 'internal',
+        createdAt: 'internal',
+        updatedAt: 'internal',
+    },
+    ProgramExternalContact: {
+        id: 'internal',
+        programId: 'internal',
+        email: 'pii',
+        name: 'pii',
+        appliedAt: 'internal',
+        lastIntent: 'internal',
+        lastIntentAt: 'internal',
+        removedAt: 'internal',
+        createdAt: 'internal',
+        createdById: 'internal',
+    },
 } as const;
 
 export const relations = {
@@ -627,6 +663,9 @@ export const relations = {
         budgetOwnersOwned: { model: 'BudgetOwner', isList: true },
         budgetOwnerTreasurerships: { model: 'BudgetOwnerTreasurer', isList: true },
         mailAliases: { model: 'PersonMailAlias', isList: true },
+        listSyncStates: { model: 'ListSyncState', isList: true },
+        listIntentsRecorded: { model: 'ListSyncState', isList: true },
+        externalContactsAdded: { model: 'ProgramExternalContact', isList: true },
         programParticipants: { model: 'ProgramParticipant', isList: true },
         programsLed: { model: 'Program', isList: true },
         instancesLed: { model: 'ProgramInstance', isList: true },
@@ -724,6 +763,7 @@ export const relations = {
         participants: { model: 'ProgramParticipant', isList: true },
         events: { model: 'Event', isList: true },
         instances: { model: 'ProgramInstance', isList: true },
+        externalContacts: { model: 'ProgramExternalContact', isList: true },
     },
     ProgramInstance: {
         program: { model: 'Program', isList: false },
@@ -826,6 +866,14 @@ export const relations = {
     QuickBooksPostingQueue: {
     },
     ProblemDismissal: {
+    },
+    ListSyncState: {
+        person: { model: 'Person', isList: false },
+        lastIntentActor: { model: 'Person', isList: false },
+    },
+    ProgramExternalContact: {
+        program: { model: 'Program', isList: false },
+        createdBy: { model: 'Person', isList: false },
     },
 } as const;
 
