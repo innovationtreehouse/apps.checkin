@@ -64,7 +64,7 @@ Everything awkward falls out of a plain diff against observed reality: program-b
 
 Nothing runs between triggers: removal happens at the next nightly reconcile, or sooner when an immediate trigger fires (§8).
 
-**Lapse is the Board's revoke [Decision — owner, 2026-11-19]:** the members list follows `OrgMembership.status` alone. A household past its valid-through day (`isMembershipLapsed`) stays ACTIVE, and stays on the list, until the Board revokes it; the Board cleans up households that do not renew. If a GRACE/INACTIVE layer (backlog M1) ever lands, its statuses become inputs to `computeDesiredState` with no engine change.
+**Lapse leaves the members list [Decision — owner, 2026-11-27, replacing 2026-11-19]:** the members list is every person with an email in a *current-member* household: `OrgMembership.status = ACTIVE` **and** `membershipValidThrough` reaches today. A lapsed household stays ACTIVE until the Board revokes it, but it drops off the members list at once. The newsletter is unaffected (§2.3).
 
 ### 2.2 `ListSyncState` is a cache, not a source of truth
 
@@ -78,16 +78,18 @@ One row per `(personId, targetKind, targetRef)`. The list address or channel id 
 
 Every person query filters with `IN_LIVE_HOUSEHOLD`, so an archived household's people are desired nowhere.
 
-- **Program team list:** every household lead of **any enrolled minor** (regardless of the minor's age), plus enrolled persons **13+** themselves, plus the program's leader and core volunteers (`ProgramVolunteer.isCore`). A household with only an 8-year-old enrolled is on the list via its leads — the younger the child, the more the parent needs the list.
+- **Program lists (§2.4):** participants = enrolled persons **13+**; parents = every household lead of **any enrolled participant** (regardless of age); mentors = the leader and core volunteers. A household with only an 8-year-old enrolled is on the parents list via its leads.
 
   **Who counts as enrolled [Decision — owner, 2026-11-20; #1248 Q29]:** someone carried over from the previous run counts in any state (`RESERVED`, any `PENDING_*`, `ACTIVE`); someone new to the chain counts only once their place is `ACTIVE` (paid, comped or free). A declined or released reservation stops counting. `WITHDRAWN` and removed enrollments never count. When an ended run's people come off is §2.6.
-- **Members list:** baseline = the household leads of every ACTIVE household — minimum one per household (§3.5 covers opt-outs dropping a household below that). Others — including 13+ youth — may join at their own discretion; there are no secrets on the members list. Discretionary joins arrive by hand (Google-side) or by in-app opt-in and are respected per §3.2/§5.
-- **Newsletter:** default = one household lead per family, opted in on activation (per CM10); anyone else opts in freely. The default records an IN (`DEFAULT`) the first time it applies, so it never re-applies. DENIED or household archive records an OUT (`BOARD`, the acting Board member as actor) on every newsletter row of that household, so a later restore (DENIED → NONE, or un-archive) re-adds no one; the person opts in again from the app [Decision — owner, 2026-11-19].
+- **Members list:** every live person with an email in a current-member household (§2.1), 13+ (an unknown date of birth counts only for a household lead or a declared adult). The baseline is no longer leads only.
+- **Newsletter:** every live person with an email in a live household, all history: former members and email-only contacts included, lapsed households included, under-13 excluded. `emailSuppressed` is unused in the app and is not read. Opt-in defaults, the DEFAULT intent and the DENIED/archive OUT of §3.2 are unchanged.
 - **Under-13:** no one under 13 is on any app-managed list or channel, by any path: the sync never adds them, and an in-app opt-in is refused. Their household leads are on the program list in their place.
 
-### 2.4 Scope: the team list only, for now
+### 2.4 Program lists
 
-This design models **one** Google group per program — the team list. The fuller CM6 shape (up to three lists per team: team / parents-only / mentors-only) exists today outside checkin's control and is **deliberately deferred**. The model extends to it without engine change (more `targetRef`s per program, role-filtered population rules).
+Each program has up to four lists, each off until its address is set (the app never creates a group): participants (enrolled, 13+), parents (household leads of enrolled participants, any age), mentors (leader plus `ProgramVolunteer.isCore`) and external (`ProgramExternalContact` addresses not in checkin, kept by program staff). Enrolled here means a participant with status `ACTIVE` in a program whose phase is not `FINISHED`. Lists on one address, across years, are one list.
+
+An external contact is its own ledger row: `ProgramExternalContact` carries `appliedAt`, `lastIntent` and `lastIntentAt`, so an external unsubscribe sticks like anyone else's, and staff removal stamps `removedAt` instead of deleting the row, so the sync can take the address off the group.
 
 The team-list address is a **field on `Program`**. Today each year's program row repeats the address; after the program→instance restructure it sits on the year-less definition. Because the ledger keys on the address, either shape works and only `computeDesiredState` changes. Slack configuration is its own table attached to `Program` (§6); a program "uses Slack" by having a row.
 
@@ -288,7 +290,6 @@ What it does take: the ops sync status surface is a `validate()`-style **invaria
 - **No newsletter removal the person did not ask for, except DENIED or household archive**, and no re-add on restore (§2.3). A person's own opt-out or unsubscribe always removes them (§3.2).
 - **No removal in the gap after an ongoing run ends** — its people stay until the next run starts (§2.6).
 - **No auto re-add on coverage loss** (§3.5).
-- **No parents-only / mentors-only lists yet** (§2.4).
 
 ## 10. Open questions
 

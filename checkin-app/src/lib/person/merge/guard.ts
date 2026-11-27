@@ -112,3 +112,36 @@ export function disputedCheckBlock(keep: CheckSide, merge: CheckSide, carriesDat
     const change = carriesDate ? "carry in a newer background-check date" : "move a second check review onto this person";
     return `Cannot merge: this person's background check is disputed by review #${review.id}, and the merge would ${change}. The Board settles that review first: a reset and two new approvals, or the rejection stands and the merge goes ahead without changing the check.`;
 }
+
+export type ListChoiceRow = {
+    personId: number;
+    targetKind: string;
+    targetRef: string;
+    lastIntent: "IN" | "OUT" | null;
+    appliedAt: Date | null;
+};
+
+/** A row's standing on its list: OUT, IN (chosen or applied), or no choice yet. */
+export function listChoice(r: Pick<ListChoiceRow, "lastIntent" | "appliedAt">): "IN" | "OUT" | null {
+    if (r.lastIntent === "OUT") return "OUT";
+    return r.lastIntent === "IN" || r.appliedAt ? "IN" : null;
+}
+
+/**
+ * Why this merge must be refused over the two people's list choices, or null. Both
+ * having a row for one list, one OUT and the other IN or applied, has no safe winner;
+ * a Board member records the person's answer on one record first.
+ */
+export function listChoiceBlock(keepId: number, rows: ListChoiceRow[]): string | null {
+    const kept = new Map(rows.filter((r) => r.personId === keepId).map((r) => [`${r.targetKind}|${r.targetRef}`, listChoice(r)]));
+    const lists = rows
+        .filter((r) => r.personId !== keepId)
+        .filter((r) => {
+            const other = kept.get(`${r.targetKind}|${r.targetRef}`);
+            const mine = listChoice(r);
+            return other && mine && other !== mine;
+        })
+        .map((r) => r.targetRef);
+    if (lists.length === 0) return null;
+    return `Cannot merge: the two records made different choices about ${lists.join(", ")} (one is off the list, the other on it). Ask the person which they want, record it on one record, then merge.`;
+}

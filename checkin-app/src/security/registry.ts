@@ -1359,3 +1359,18 @@ defineOutbound({
     // own mailbox, named by the operator running consent, not a model field, so no tier.
     tiers: [],
 });
+
+defineOutbound({
+    surface: 'google.directory.group-members',
+    // packages/google-workspace/src/client.ts → admin.googleapis.com Directory API,
+    // groups/{groupKey}/members list, insert and delete. The group address and each
+    // member's email address ('pii'); no names, ages or other model data.
+    tiers: ['public', 'pii'],
+});
+
+defineOutbound({
+    surface: 'google.oauth',
+    // packages/google-workspace/src/client.ts → oauth2.googleapis.com/token. The app's
+    // client credentials and a refresh token; no model data.
+    tiers: [],
+});
