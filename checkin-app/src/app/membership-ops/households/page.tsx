@@ -139,6 +139,20 @@ export default function AdminHouseholdsPage() {
     await doSetDenied(householdId, false);
   };
 
+  const exportMembers = async () => {
+    try {
+      const { csv } = await api<{ csv: string }>('/api/membership-ops/members/export');
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `members-${orgToday().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      showError(errorMessage(e), { key: 'members-export' });
+    }
+  };
+
   const doSetDenied = async (householdId: number, deny: boolean) => {
     clearError('deny-membership');
     try {
@@ -188,6 +202,8 @@ export default function AdminHouseholdsPage() {
         shop access and other organizational privileges. Denying membership blocks login for every
         member of the household — a household containing a board member must have that role removed first.
       </Text>
+
+      {isBoard && <Button variant="default" onClick={exportMembers} maw={260}>Download current members (CSV)</Button>}
 
       {error && <LoadError what="the households" message={error} onRetry={reload} />}
 
