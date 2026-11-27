@@ -60,6 +60,20 @@ describe("membership-ops/households page", () => {
     expect(container.textContent).not.toContain("Aug 14, 2024");
   });
 
+  it("shows the members CSV download to the Board only", async () => {
+    mockFetchJson({ "/api/membership-ops/households": households });
+    setSession({ id: 1, isSysadmin: true });
+    const { unmount } = renderWithProviders(<AdminHouseholdsPage />);
+    await screen.findByText("The Smiths");
+    expect(screen.queryByRole("button", { name: /Download current members/ })).not.toBeInTheDocument();
+    unmount();
+
+    setSession({ id: 1, isBoardMember: true });
+    renderWithProviders(<AdminHouseholdsPage />);
+    await screen.findByText("The Smiths");
+    expect(screen.getByRole("button", { name: /Download current members/ })).toBeInTheDocument();
+  });
+
   it("offers the year's renewal beside Revoke only on a lapsed active household", async () => {
     setSession({ id: 1, isBoardMember: true, householdId: 500 });
     mockFetchJson({
