@@ -272,6 +272,10 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     'MatchAuditEnrollmentRow',
     // Served only nested in Expense. A their_own binding on userId would drop staff views only from a top-level response.
     'ExpenseAuditLog',
+    // Queued ahead of the Google Groups sync schema (#3896). Board/ops sync state and a
+    // program's external contacts are read only by staff routes, never a self view.
+    'ListSyncState',
+    'ProgramExternalContact',
 ]);
 
 /**
