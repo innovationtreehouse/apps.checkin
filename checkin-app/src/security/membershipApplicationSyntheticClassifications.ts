@@ -18,6 +18,10 @@
  * households swept, check reviews opened, households that failed. All
  * `internal`, and no field names a household or person.
  *
+ * MembersExport — the Board's current-members CSV (GET
+ * /api/membership-ops/members/export): the CSV text, whose rows carry Person
+ * email and name (`pii`), and its row count (`public`).
+ *
  * Hand-authored, not generated: this describes an API response, not a table.
  * This is a security-boundary artifact — changes ship in a boundary PR.
  */
@@ -39,6 +43,10 @@ export const classifications = {
     households: "internal",
     opened: "internal",
     failed: "internal",
+  },
+  MembersExport: {
+    csv: "pii",
+    count: "public",
   },
 } as const;
 
