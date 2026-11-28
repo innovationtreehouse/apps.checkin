@@ -2,8 +2,8 @@
 
 Design for issue #1248 (backlog P25), with the leader-reserves-a-place half of
 #1235 (backlog P2). Every owner question in §10 is settled; two wait on the
-Board (Q28, Q31), and the design records the owner's default for each until
-then. Code read at `main` `8858af535`. Paths are under
+Board (Q28, Q31; B33 and B34 in the Board's question list), and the design records the owner's default for each until
+then: no to both. Code read at `main` `8858af535`. Paths are under
 `checkin-app/src/` unless they start with `docs/`.
 
 ## Problem
@@ -64,15 +64,15 @@ Rules that shape the design (program rules in the rules register):
 1. **A run knows the run it follows** (§3).
 2. **The Board starts the next run** with "Start next run": a copy (the P9 copy,
    #156) plus the link. The copy carries no price. The Board prices it.
-3. **The Board switches reservations on** for the run. The Board or the
-   leader sets its **confirmation deadline**, one date for the whole program,
-   and the leader sets its reminder schedule (§4).
+3. **The Board switches reservations on** for the run. The Board sets its
+   **confirmation deadline**, one date for the whole program, and the leader
+   sets its reminder schedule (§4).
 4. **The leader or a program administrator reserves places**: one at a time,
    or by carrying over the previous run's roster (§5). A reserved place holds a
    seat and owes nothing. Each household gets one nightly summary of its changes.
 5. **The family confirms or declines** (§6). Confirming turns the reservation
    into an ordinary claim, paid like any other. Declining frees the seat.
-6. **Reminders** go out on the days before the deadline the leader set (§7).
+6. **Reminders** go out on the days the leader chose before the deadline (§7).
 7. **On the deadline** the nightly sweep releases every unconfirmed
    reservation; the seats go back to everyone.
 
@@ -167,18 +167,15 @@ confirmationRemindersSent    Int[]     @default([])     // days-before already s
 ```
 
 - Reservations need both the switch on and a deadline in the future.
-- **Decided (owner, Q17):** the Board and the program leader both set the
-  deadline; the latest edit stands, with no override between them. Each edit
-  writes an audit row. Pending a Board check on whether a leader-moved deadline
-  conflicts with dates locked at budget approval (Q28).
+- **Owner default until the Board answers Q28: no.** The deadline is fixed by
+  the Board; only the Board (or a sysadmin) sets or moves it, and the program
+  leader does not. Each edit writes an audit row. If the Board answers yes,
+  the leader regains the edit described in Q17.
 - **Decided (owner, Q18):**
   - The switch cannot be turned off while the run holds any `RESERVED` row:
     the PATCH refuses with the count. Switching off with reservations
     outstanding is almost always a mistake, and allowing it leaves states
     nobody wants to define.
-  - While the run holds any `RESERVED` row, only the Board (or a sysadmin)
-    may move the deadline. The leader may move it only when nothing is
-    outstanding.
   - Outstanding reservations always run to whatever the current deadline is.
     Moving it clears `confirmationRemindersSent`, so reminders count back from
     the new date.
@@ -473,7 +470,7 @@ Each a registry entry before its route (boundary isolation):
 | `POST api/programs/[id]/reservations/[personId]/confirm`, `/decline` | the person (adult) or their household lead |
 | `PATCH api/programs/[id]` gains `reservationsEnabled` | Board, sysadmin |
 | `PATCH api/programs/[id]` gains `ongoing` | Board, sysadmin |
-| `PATCH api/programs/[id]` gains `confirmationDeadline` | Board, sysadmin; the run's program leader while the run holds no `RESERVED` row |
+| `PATCH api/programs/[id]` gains `confirmationDeadline` | Board, sysadmin |
 
 `reservedById`, `reservedAt`: `personal`, the roster's tier. A leader's grant on
 the carry-over route reads the previous run's roster only through the link of a
@@ -533,7 +530,7 @@ Numbers are fixed; a settled question is struck, not renumbered.
 | ~~Q14~~ | ~~Emergency contact.~~ **Settled with Q15:** checked at confirmation. | — | — |
 | ~~Q15~~ | ~~A leader creating enrollments.~~ **Decided:** a leader may reserve (including their own household) on a run the Board has switched on; every reservation needs the family's confirmation by the shared deadline. | — | — |
 | ~~Q16~~ | ~~Reminder schedule.~~ **Decided:** set per program by its leader; a run with reservations on cannot open or go on sale until it is set (§4). | — | — |
-| ~~Q17~~ | ~~Who sets the deadline.~~ **Decided:** the Board and the program leader both set it; latest edit stands, no override (§4). | — | — |
+| ~~Q17~~ | ~~Who sets the deadline.~~ **Decided:** the Board and the program leader both set it; latest edit stands, no override. **Held by Q28's default:** until the Board answers Q28, only the Board sets it (§4). | — | — |
 | ~~Q18~~ | ~~Moving the deadline or switching off.~~ **Decided:** switching off refused while reservations exist; only the Board moves the deadline while any are outstanding; warnings on a past date and on skipped reminders (§4). | — | — |
 | ~~Q19~~ | ~~What a reserved person is.~~ **Decided:** on the roster marked reserved; may check in at the kiosk; may sign up for sessions (§5). | — | — |
 | ~~Q20~~ | ~~Reserving beyond carry-over.~~ **Settled by Q26:** anyone the existing people picker returns; administrators added to it (§5). | — | — |
@@ -544,8 +541,8 @@ Numbers are fixed; a settled question is struck, not renumbered.
 | ~~Q25~~ | ~~What an administrator sees.~~ **Decided:** previous and current rosters; reserved, confirmed, paid/unpaid, contact details, never how anyone pays; administrators, leader and Board may unreserve; leader and Board appoint and remove (§5). | — | — |
 | ~~Q26~~ | ~~Moving people between teams.~~ **Decided:** (a) reserve on the new team, then unreserve on the old; a GitHub issue for (b) is opened once the design is built (§5, §9 step 7). | — | — |
 | ~~Q27~~ | ~~Telling the family about an unreserve.~~ **Decided:** no immediate emails; a nightly per-household summary of net changes from a notice table (A → B → C same day reads "moved from A to C"); late reservations warned, never refused (§7). | — | — |
-| Q28 | **Board: deadline vs budget approval.** May a leader move the confirmation deadline after the Board approves the program's budget, or is it fixed in that approval? Put to the Board. | Leader and Board both edit (owner's position) | Championships results land late; the leader moves the deadline a week. |
+| Q28 | **Board: deadline vs budget approval.** May a leader move the confirmation deadline after the Board approves the program's budget, or is it fixed in that approval? Put to the Board. | **No, for now (owner):** only the Board sets and moves it | Championships results land late; the leader asks the Board to move the deadline a week. |
 | ~~Q29~~ | ~~Team lists for reserved people.~~ **Decided:** someone carried over from the previous run stays on the team list in any state (reserved, confirmed, paid); if declined or released they stop counting on the new run and leave the list when the run they are on ends or hands over (a family declining Fall Training 2027 in July while on Summer 2026 stays on through Summer); someone new to the chain joins only once paid (`ACTIVE`, or a free place). A requirement on the membership-sync design. | — | — |
 | ~~Q30~~ | ~~Treasurer.~~ **Decided:** the policies' "program treasurer" is the budget bucket's treasurer in the software. The bucket outlasts every run, so the copy has nothing to carry; no program-to-bucket link is added. | — | — |
-| Q31 | **Board: who sees lapsed staff checks.** The Board's compliance dashboard already lists them. Should a program leader also see their own runs' staff (volunteers, administrators) whose check has lapsed, name and "check lapsed" only? A balance of privacy and security; put to the Board. | Board only until the Board answers | A core volunteer's check lapsed in October; the Fall Training leader sees it on their program page and reminds them. |
+| Q31 | **Board: who sees lapsed staff checks.** The Board's compliance dashboard already lists them. Should a program leader also see their own runs' staff (volunteers, administrators) whose check has lapsed, name and "check lapsed" only? A balance of privacy and security; put to the Board. | **No, for now (owner):** Board only until the Board answers | A core volunteer's check lapsed in October; the Fall Training leader sees it on their program page and reminds them. |
 | ~~Q32~~ | ~~Ongoing checkbox.~~ **Decided:** Board only, from the approved budget template; "Start next run" copies it; the Board is reminded from 30 days before an ongoing run ends while it has no next run, then weekly (§3). | — | — |
