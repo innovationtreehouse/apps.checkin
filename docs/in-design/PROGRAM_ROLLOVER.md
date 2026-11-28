@@ -291,9 +291,10 @@ need not volunteer, and `isCore` on that table already drives security scope.
 The security boundary gains one claim (`programsAdministered`) and one resolver
 case, used only by the reservation and carry-over routes.
 
-**Decided (owner, Q33):** administrators are on the program's mentor list with
-its leader and core volunteers. This is a requirement on the membership-sync
-design.
+**Decided (owner, Q33):** administrators are on both the program's full team
+list and its mentors-only list, as its leader and core volunteers are. An
+administrator who is also a parent of an enrolled child appears on a list once.
+This is a requirement on the membership-sync design.
 
 **Decided (owner, Q24):** the program leader appoints administrators. An
 administrator meets the same requirements as a program leader (at least 23, a
@@ -555,5 +556,5 @@ Numbers are fixed; a settled question is struck, not renumbered.
 | ~~Q30~~ | ~~Treasurer.~~ **Decided:** the policies' "program treasurer" is the budget bucket's treasurer in the software. The bucket outlasts every run, so the copy has nothing to carry; no program-to-bucket link is added. | — | — |
 | Q31 | **Board: who sees lapsed staff checks.** The Board's compliance dashboard already lists them. Should a program leader also see their own runs' staff (volunteers, administrators) whose check has lapsed, name and "check lapsed" only? A balance of privacy and security; put to the Board. | **No, for now (owner):** Board only until the Board answers | A core volunteer's check lapsed in October; the Fall Training leader sees it on their program page and reminds them. |
 | ~~Q32~~ | ~~Ongoing checkbox.~~ **Decided:** Board only, from the approved budget template; "Start next run" copies it; the Board is reminded from 30 days before an ongoing run ends while it has no next run, then weekly (§3). | — | — |
-| ~~Q33~~ | ~~Administrators on the mentor list.~~ **Decided:** a program's administrators are on its mentor list with its leader and core volunteers: the mentors list where the sync models one, else the staff part of the team list. A requirement on the membership-sync design. | — | — |
+| ~~Q33~~ | ~~Administrators on the mentor list.~~ **Decided:** a program's administrators are on both its full team list and its mentors-only list, as its leader and core volunteers are. Someone who is an administrator and also a parent of an enrolled child appears on a list once. A requirement on the membership-sync design. | — | — |
 | Q34 | **Which lists Q29 governs.** The list-sync engine (#3902) proposes four lists per program: participants, parents, mentors, external. Q29's carry-over rule is written for one team list. Does it govern the participants and parents lists (a reserved child keeps their household lead on the parents list), with mentors following the staff copy and external contacts outside the chain? | None; waits on the owner | A child carried over to Fall Training 2027 is still `RESERVED` in August; is their parent on the parents list? |
