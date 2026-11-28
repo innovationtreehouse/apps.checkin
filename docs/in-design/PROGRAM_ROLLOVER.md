@@ -259,8 +259,9 @@ first session they hold a badge. On team lists (Q29), someone carried over
 stays on in any state; if declined or released they stop counting on the new
 run but leave the list only when the run they are on ends (or, if it is
 ongoing, when the next run starts); someone new to the
-chain joins only once paid. Membership sync is not built; this is a
-requirement on its design. They may also sign up for sessions; a declined or
+chain joins only once paid. The rule covers every list built from the
+program's people, not the external list of hand-entered addresses (Q34).
+Membership sync is not built; this is a requirement on its design. They may also sign up for sessions; a declined or
 released reservation loses its sign-ups for sessions not yet started, through
 the existing leave path.
 
@@ -557,4 +558,4 @@ Numbers are fixed; a settled question is struck, not renumbered.
 | Q31 | **Board: who sees lapsed staff checks.** The Board's compliance dashboard already lists them. Should a program leader also see their own runs' staff (volunteers, administrators) whose check has lapsed, name and "check lapsed" only? A balance of privacy and security; put to the Board. | **No, for now (owner):** Board only until the Board answers | A core volunteer's check lapsed in October; the Fall Training leader sees it on their program page and reminds them. |
 | ~~Q32~~ | ~~Ongoing checkbox.~~ **Decided:** Board only, from the approved budget template; "Start next run" copies it; the Board is reminded from 30 days before an ongoing run ends while it has no next run, then weekly (§3). | — | — |
 | ~~Q33~~ | ~~Administrators on the mentor list.~~ **Decided:** a program's administrators are on both its full team list and its mentors-only list, as its leader and core volunteers are. Someone who is an administrator and also a parent of an enrolled child appears on a list once. A requirement on the membership-sync design. | — | — |
-| Q34 | **Which lists Q29 governs.** The list-sync engine (#3902) proposes four lists per program: participants, parents, mentors, external. Q29's carry-over rule is written for one team list. Does it govern the participants and parents lists (a reserved child keeps their household lead on the parents list), with mentors following the staff copy and external contacts outside the chain? | None; waits on the owner | A child carried over to Fall Training 2027 is still `RESERVED` in August; is their parent on the parents list? |
+| ~~Q34~~ | ~~Which lists Q29 governs.~~ **Decided:** every list the sync computes from the program's people (the team list, or the participants, parents and mentors lists if the sync splits it). A child carried over and still `RESERVED` keeps their household lead on the parents list. The external list holds addresses typed in by hand, not people on a run, so Q29 does not apply to it. A requirement on the membership-sync design. | — | — |
